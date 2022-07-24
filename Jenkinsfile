@@ -3,7 +3,7 @@ pipeline {
   stages {
     stage('Pull Submodules') {
       steps {
-        sh 'git pull --recurse-submodules '
+        sh 'git submodule update --init --recursive'
       }
     }
 
