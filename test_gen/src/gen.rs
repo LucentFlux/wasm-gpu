@@ -25,7 +25,6 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
     let mut tests = Vec::new();
     let test_files =
         glob(path.to_str().expect("failed to make glob")).expect("failed to read glob pattern");
-    assert!(test_files.count() != 0, "found no test files");
     for entry in test_files {
         let entry = entry.expect("error reading file");
 
@@ -75,6 +74,8 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
             i += 1;
         }
     }
+
+    assert!(!tests.is_empty(), "found no tests");
 
     return quote! {
         #(#tests)*
