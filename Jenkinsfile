@@ -3,13 +3,13 @@ pipeline {
   stages {
     stage('Build') {
       steps {
-        sh 'cargo build'
+        sh 'cargo build --package wasm-spirv'
       }
     }
 
     stage('Test') {
       steps {
-        sh 'cargo test'
+        sh 'cargo test --package wasm-spirv'
       }
     }
 
