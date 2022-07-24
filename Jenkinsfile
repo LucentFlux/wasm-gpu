@@ -9,7 +9,7 @@ pipeline {
 
     stage('Test') {
       steps {
-        sh 'cargo test --package wasm-spirv'
+        sh 'cargo test --no-fail-fast --package wasm-spirv -- --test-threads 16'
       }
     }
 

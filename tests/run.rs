@@ -13,7 +13,7 @@ pub fn check(path: &str, test_index: u32) {
 
     let mut i = 0;
     for kind in wast.directives {
-        match kind.clone() {
+        match &kind {
             WastDirective::Wat(quote_wast) => {}
             WastDirective::Register { span, name, module } => {}
             WastDirective::Invoke(wast_invoke) => {}
