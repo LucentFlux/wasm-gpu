@@ -1,8 +1,26 @@
 [package]
-name = "WASM-SPIRV"
+name = "wasm-spirv"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MIT"
+description = "Transpiles WASM to SPIRV"
+homepage = "https://github.com/Solid-Flux/WASM-SPIRV/"
+repository = "https://github.com/Solid-Flux/WASM-SPIRV/"
+readme = "README.md"
+keywords = []
+categories = []
+include = [
+    "/Cargo.toml",
+    "/LICENSE",
+    "/README.md",
+    "/src/**",
+    "/tests/**",
+]
 
 [dependencies]
+
+
+
+[dev-dependencies]
+wast = "44.0"
+wasm-spirv-test-gen = {path = "test_gen"}
