@@ -39,7 +39,6 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
         let wast = parse::<Wast>(&buffer)
             .expect(&format!("could not parse WAST {}", entry.to_str().unwrap()));
 
-        let mut i = 0u32;
         for kind in wast.directives {
             match kind {
                 WastDirective::AssertMalformed { .. }
@@ -49,6 +48,8 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
                 | WastDirective::AssertExhaustion { .. }
                 | WastDirective::AssertUnlinkable { .. }
                 | WastDirective::AssertException { .. } => {
+                    let span = kind.span();
+
                     let entry_name = entry
                         .file_name()
                         .expect("glob matched non-file")
@@ -60,18 +61,24 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
                         .unwrap()
                         .to_string();
                     let entry_name = entry_name.replace("-", "_");
-                    let test_name = format_ident!("{}_{}_{}", fn_name, entry_name, i);
+                    let (test_line, _) = span.linecol_in(&source);
+                    let test_name =
+                        format_ident!("{}_{}_line_{}", fn_name, entry_name, test_line.to_string());
                     let test_path_literal = LitStr::new(entry.to_str().unwrap(), f.span());
+                    let i = span.offset();
                     tests.push(quote! {
                         #[test]
                         pub fn #test_name() {
                             #fn_name(#test_path_literal, #i)
                         }
                     });
+
+                    if std::env::var("FULL_TESTS") != Ok("true".to_owned()) {
+                        break;
+                    }
                 }
                 _ => {}
             }
-            i += 1;
         }
     }
 

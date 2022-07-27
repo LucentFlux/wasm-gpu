@@ -1,17 +1,26 @@
+use wasm_spirv::compiler::SPIRVCompilerConfig;
+use wasmer::{Module, Store, Universal};
+use wast::lexer::Lexer;
+use wast::token::Span;
 use wast::{
     parser::{parse, ParseBuffer},
-    Wast, WastDirective,
+    QuoteWat, Wast, WastDirective,
 };
 
 #[wasm_spirv_test_gen::wast("tests/testsuite/*.wast")]
-pub fn check(path: &str, test_index: u32) {
+fn gen_check(path: &str, test_index: usize) {
+    check(path, test_index);
+}
+
+fn check(path: &str, test_offset: usize) {
     let source = std::fs::read_to_string(path).unwrap();
-    let buffer = ParseBuffer::new(&source).unwrap();
+    let mut lexer = Lexer::new(&source);
+    lexer.allow_confusing_unicode(true);
+    let buffer = ParseBuffer::new_with_lexer(lexer)
+        .expect(&format!("could not create parse buffer {}", path));
     let wast = parse::<Wast>(&buffer).unwrap();
 
     // Parsed things
-
-    let mut i = 0;
     for kind in wast.directives {
         match &kind {
             WastDirective::Wat(quote_wast) => {}
@@ -19,11 +28,10 @@ pub fn check(path: &str, test_index: u32) {
             WastDirective::Invoke(wast_invoke) => {}
             _ => {}
         }
-        if i == test_index {
+        if kind.span().offset() == test_offset {
             run_test(kind);
             return;
         }
-        i += 1;
     }
 }
 
@@ -42,9 +50,7 @@ fn run_test(directive: WastDirective) {
             span,
             module,
             message,
-        } => {
-            panic!("assertion not implemented")
-        }
+        } => test_assert_malformed(span, module, message),
         WastDirective::AssertInvalid { .. } => {
             panic!("assertion not implemented")
         }
@@ -64,4 +70,20 @@ fn run_test(directive: WastDirective) {
             panic!("assertion not implemented")
         }
     }
+}
+
+fn test_assert_malformed(span: Span, mut module: QuoteWat, message: &str) {
+    let bytes = match module.encode() {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let mut store = Store::new(&Universal::new(SPIRVCompilerConfig::new()).engine());
+
+    assert!(
+        Module::new(&store, bytes).is_err(),
+        "assert malformed failed: {} at {:?}",
+        message,
+        span
+    );
 }
