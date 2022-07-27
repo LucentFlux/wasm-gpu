@@ -61,9 +61,18 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
                         .unwrap()
                         .to_string();
                     let entry_name = entry_name.replace("-", "_");
-                    let (test_line, _) = span.linecol_in(&source);
-                    let test_name =
-                        format_ident!("{}_{}_line_{}", fn_name, entry_name, test_line.to_string());
+                    let (test_line, test_col) = span.linecol_in(&source);
+                    let test_name = if test_col == 0 {
+                        format_ident!("{}_{}_line_{}", fn_name, entry_name, test_line.to_string())
+                    } else {
+                        format_ident!(
+                            "{}_{}_line_{}_col_{}",
+                            fn_name,
+                            entry_name,
+                            test_line.to_string(),
+                            test_col.to_string()
+                        )
+                    };
                     let test_path_literal = LitStr::new(entry.to_str().unwrap(), f.span());
                     let i = span.offset();
                     tests.push(quote! {
