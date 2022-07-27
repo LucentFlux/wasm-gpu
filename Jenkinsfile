@@ -1,8 +1,5 @@
 pipeline {
   agent any
-  environment {
-    FULL_TESTS = 'false'
-  }
   stages {
     stage('Pull Submodules') {
       steps {
@@ -19,9 +16,13 @@ pipeline {
     stage('Test') {
       steps {
         sh 'cargo test --no-fail-fast --package wasm-spirv --test run > ./test_results.txt || true'
-        sh 'python gen_test_report.py'
+        sh 'python3 gen_test_report.py'
         junit 'test_results.xml'
       }
     }
+
+  }
+  environment {
+    FULL_TESTS = 'false'
   }
 }
