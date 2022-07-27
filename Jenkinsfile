@@ -1,10 +1,9 @@
 pipeline {
   agent any
+  environment {
+    FULL_TESTS = 'true'
+  }
   stages {
-    environment {
-      FULL_TESTS = 'true'
-    }
-
     stage('Pull Submodules') {
       steps {
         sh 'git submodule update --init --recursive'
