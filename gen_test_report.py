@@ -34,8 +34,8 @@ skipped = total - passed - failed
 
 with open("test_results.xml", "w") as f:
     f.write("<assemblies>\n")
-    f.write(f"\t<assembly total={total} passed={passed} failed={failed} skipped={skipped}>\n")
-    f.write(f"\t\t<collection total={total} passed={passed} failed={failed} skipped={skipped}>\n")
+    f.write(f"\t<assembly total=\"{total}\" passed=\"{passed}\" failed=\"{failed}\" skipped=\"{skipped}\">\n")
+    f.write(f"\t\t<collection total=\"{total}\" passed=\"{passed}\" failed=\"{failed}\" skipped=\"{skipped}\">\n")
     
     for name, test in tests.items():
         result = "Skip"
