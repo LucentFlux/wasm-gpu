@@ -17,7 +17,10 @@ pipeline {
       steps {
         sh 'cargo test --no-fail-fast --package wasm-spirv --test run > ./test_results.txt || true'
         sh 'python3 gen_test_report.py'
-        junit 'test_results.xml'
+        sh 'pwd'
+        sh 'ls -al ./'
+        archiveArtifacts '**/test_results.xml'
+        junit '**/test_results.xml'
       }
     }
 
