@@ -24,6 +24,6 @@ pipeline {
 
   }
   environment {
-    FULL_TESTS = 'false'
+    FULL_TESTS = 'true'
   }
 }
