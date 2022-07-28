@@ -15,10 +15,10 @@ pipeline {
 
     stage('Test') {
       steps {
-        sh 'cargo test --no-fail-fast --package wasm-spirv --test run > ./test_results.txt || true'
-        sh 'python3 gen_test_report.py'
-        archiveArtifacts '**/test_results.xml'
-        xunit (tools: [ BoostTest(pattern: '**/test_results.xml') ], skipPublishingChecks: false)
+		sh 'cargo install cargo2junit'
+        sh 'cargo test -- -Z unstable-options --format json --report-time | cargo2junit > results.xml || true'
+        archiveArtifacts '**/results.xml'
+        junit 'results.xml'
       }
     }
 
