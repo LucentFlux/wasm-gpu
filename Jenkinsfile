@@ -16,7 +16,7 @@ pipeline {
     stage('Test') {
       steps {
 		sh 'cargo install cargo2junit'
-        sh 'cargo test -- -Z unstable-options --format json --report-time | cargo2junit > results.xml || true'
+        sh 'cargo test -- -Z unstable-options --format json --test-threads 48 --report-time | cargo2junit > results.xml || true'
         archiveArtifacts '**/results.xml'
         junit 'results.xml'
       }

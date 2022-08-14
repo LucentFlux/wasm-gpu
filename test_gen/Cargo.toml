@@ -9,6 +9,7 @@ proc-macro2 = "1.0.40"
 quote = "1.0.20"
 glob = "0.3.0"
 wast = "44.0.0"
+enumset = "1.0.11"
 
 [lib]
 proc-macro = true
