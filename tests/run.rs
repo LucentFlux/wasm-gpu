@@ -1,5 +1,4 @@
-use wasm_spirv::compiler::SPIRVCompilerConfig;
-use wasmer::{Module, Store, Universal};
+use wasm_spirv::{wasp, Config, WgpuBackend};
 use wast::lexer::Lexer;
 use wast::token::Span;
 use wast::{
@@ -8,11 +7,11 @@ use wast::{
 };
 
 #[wasm_spirv_test_gen::wast("tests/testsuite/*.wast")]
-fn gen_check(path: &str, test_index: usize) {
-    check(path, test_index);
+async fn gen_check(path: &str, test_index: usize) {
+    check(path, test_index).await
 }
 
-fn check(path: &str, test_offset: usize) {
+async fn check(path: &str, test_offset: usize) {
     let source = std::fs::read_to_string(path).unwrap();
     let mut lexer = Lexer::new(&source);
     lexer.allow_confusing_unicode(true);
@@ -29,13 +28,13 @@ fn check(path: &str, test_offset: usize) {
             _ => {}
         }
         if kind.span().offset() == test_offset {
-            run_test(kind);
+            run_test(kind).await;
             return;
         }
     }
 }
 
-fn run_test(directive: WastDirective) {
+async fn run_test(directive: WastDirective<'_>) {
     match directive {
         WastDirective::Wat(_) => {
             panic!("wat not assertion")
@@ -50,7 +49,7 @@ fn run_test(directive: WastDirective) {
             span,
             module,
             message,
-        } => test_assert_malformed(span, module, message),
+        } => test_assert_malformed(span, module, message).await,
         WastDirective::AssertInvalid { .. } => {
             panic!("assertion not implemented")
         }
@@ -72,16 +71,38 @@ fn run_test(directive: WastDirective) {
     }
 }
 
-fn test_assert_malformed(span: Span, mut module: QuoteWat, message: &str) {
+async fn get_backend() -> WgpuBackend {
+    // wgpu setup
+    let instance = wgpu::Instance::new(wgpu::Backends::all());
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            force_fallback_adapter: false,
+            compatible_surface: None,
+        })
+        .await
+        .unwrap();
+    let (device, queue) = adapter
+        .request_device(&Default::default(), None)
+        .await
+        .unwrap();
+    return wasp::WgpuBackend { device, queue };
+}
+
+async fn test_assert_malformed(span: Span, mut module: QuoteWat<'_>, message: &str) {
     let bytes = match module.encode() {
-        Ok(v) => v,
-        Err(_) => return,
+        Ok(bs) => bs,
+        Err(_) => return, // Failure to encode is fine if malformed
     };
 
-    let mut store = Store::new(&Universal::new(SPIRVCompilerConfig::new()).engine());
+    let backend = get_backend().await;
+
+    let engine = wasp::Engine::new(backend, Config::default());
+
+    let module = wasp::Module::new(&engine, bytes);
 
     assert!(
-        Module::new(&store, bytes).is_err(),
+        module.is_err(),
         "assert malformed failed: {} at {:?}",
         message,
         span

@@ -1,9 +1,11 @@
 use crate::Backend;
 use std::sync::Arc;
 use wasmparser::WasmFeatures;
+use wasmtime_environ::Tunables;
 
 pub struct Config {
     pub features: WasmFeatures,
+    pub tunables: Tunables,
 }
 
 impl Default for Config {
@@ -26,6 +28,19 @@ impl Default for Config {
                 memory64: false,
                 extended_const: false,
                 component_model: false,
+            },
+            tunables: Tunables {
+                static_memory_bound: 0,
+                static_memory_offset_guard_size: 0,
+                dynamic_memory_offset_guard_size: 0,
+                dynamic_memory_growth_reserve: 0,
+                generate_native_debuginfo: false,
+                parse_wasm_debuginfo: false,
+                consume_fuel: false,
+                epoch_interruption: false,
+                static_memory_bound_is_maximum: false,
+                guard_before_linear_memory: false,
+                generate_address_map: false,
             },
         }
     }

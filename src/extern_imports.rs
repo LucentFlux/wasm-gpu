@@ -1,5 +1,4 @@
 use crate::func::Func;
-use std::marker::PhantomData;
 
 pub enum Extern {
     Func(Func),

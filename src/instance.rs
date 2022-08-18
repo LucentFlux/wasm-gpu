@@ -1,23 +1,28 @@
 use crate::func::{Func, TypedFunc};
-use crate::typed::WaspParams;
+use crate::typed::WasmTyVec;
 use crate::{Backend, Engine, Extern, Module};
 use anyhow::Context;
-use wasmtime::WasmResults;
+use std::sync::Arc;
 
 pub struct Instance<T>
 where
-    T: Backend, {}
+    T: Backend,
+{
+    backend: Arc<T>,
+}
 
 impl<T> Instance<T>
 where
     T: Backend,
 {
     pub async fn new(
-        _engine: &Engine<T>,
+        engine: &Engine<T>,
         _module: &Module<T>,
         _imports: impl Into<&[Extern]>,
     ) -> anyhow::Result<Self> {
-        todo!()
+        return Ok(Self {
+            backend: engine.backend(),
+        });
     }
 
     /// Create an exported function that doesn't track its types, useful for runtime imports.
@@ -35,8 +40,8 @@ where
         name: &str,
     ) -> anyhow::Result<TypedFunc<Params, Results>>
     where
-        Params: WaspParams,
-        Results: WasmResults,
+        Params: WasmTyVec,
+        Results: WasmTyVec,
     {
         let untyped = self
             .get_func(name)

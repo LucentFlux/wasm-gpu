@@ -1,8 +1,12 @@
-use crate::typed::WaspParams;
-use anyhow::Context;
-use std::marker::PhantomData;
-use wasmparser::FuncType;
-use wasmtime::{WasmParams, WasmResults};
+mod typed;
+
+use wasmtime::{FuncType, Val};
+
+pub use typed::TypedFunc;
+
+struct ExportFunction {}
+
+struct HostFunc {}
 
 enum FuncKind {
     Export(ExportFunction),
@@ -14,31 +18,15 @@ pub struct Func {
     ty: FuncType,
 }
 
-pub struct TypedFunc<Params, Results>
-where
-    Params: WaspParams,
-    Results: WasmResults,
-{
-    _a: PhantomData<fn(Params) -> Results>,
-    func: Func,
-}
-
-impl<Params, Results> TryFrom<Func> for TypedFunc<Params, Results>
-where
-    Params: WaspParams,
-    Results: WasmResults,
-{
-    type Error = anyhow::Error;
-
-    fn try_from(func: Func) -> Result<Self, Self::Error> {
-        Params::SingularType::typecheck(func.ty.params())
-            .context("type mismatch with parameters")?;
-        Results::typecheck(func.ty.results()).context("type mismatch with results")?;
-
-        return Ok(Self {
-            _a: Default::default(),
-            func,
-        });
+impl Func {
+    pub async fn call<Arg>(
+        &self,
+        _params: impl IntoIterator<Item = Arg>,
+    ) -> Vec<anyhow::Result<Vec<Val>>>
+    where
+        Arg: IntoIterator<Item = Val>,
+    {
+        todo!()
     }
 }
 

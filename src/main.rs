@@ -1,6 +1,8 @@
-use wasm_spirv::{wasp, Config};
+use itertools::Itertools;
+use wasm_spirv::{wasp, Config, Extern};
 
-async fn main() {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     // wgpu setup
@@ -33,13 +35,20 @@ async fn main() {
 
     let module = wasp::Module::new(&engine, module_wat.as_bytes())?;
 
-    let imports = [];
+    let imports: Vec<Extern> = vec![];
 
-    let instance = wasp::Instance::new(&engine, &module, &imports).await?;
+    let instance = wasp::Instance::new(&engine, &module, imports.as_slice()).await?;
 
-    let parallel_add_one_func = instance.get_typed_func::<(&[i32]), i32>("add_one")?;
+    let parallel_add_one_func = instance.get_typed_func::<i32, i32>("add_one")?;
 
     // Evaluate
-    let parallel_result = parallel_add_one_func(&[1, 6, 4, 2, 7]).await?;
-    assert_eq!([2, 7, 5, 3, 8], parallel_result);
+    let parallel_result = parallel_add_one_func.call([1, 6, 4, 2, 7]).await;
+    let parallel_result = parallel_result
+        .into_iter()
+        .enumerate()
+        .map(|(i, v)| v.expect(format!("got error: {}", i).as_str()))
+        .collect_vec();
+    assert_eq!(vec![2, 7, 5, 3, 8], parallel_result);
+
+    return Ok(());
 }

@@ -1,40 +1,110 @@
 use crate::for_each_function_signature;
-use wasmtime::{WasmParams, WasmResults, WasmTy};
+use anyhow::Error;
+use std::fmt::{Display, Formatter};
+use wasmtime::{Val, WasmParams};
 
-/// A parallel version of [`wasmtime::WasmParams`] where one of the inputs is marked as a range and
-/// the rest are marked as constant. For example, (i32, &\[f32], i64) but not (i32, &\[f32], &\[i64]) or (i32,)
-pub unsafe trait WaspParams: Send {
-    #[doc(hidden)]
-    type SingularType: WasmParams; // The type of the parameters without the slice type, in wasmtime space
+pub(crate) trait WasmTyVal: WasmParams + Sized {
+    fn try_from_val(v: Val) -> anyhow::Result<Self>;
+    fn to_val(self: &Self) -> Val;
 }
 
-unsafe impl<T> WaspParams for &[T]
-where
-    T: WasmTy,
-{
-    type SingularType = T;
+pub trait WasmTyVec: WasmParams + Sized {
+    fn try_from_val_vec(v: Vec<Val>) -> anyhow::Result<Self>;
+    fn to_val_vec(self: &Self) -> Vec<Val>;
 }
 
-#[cps::cps]
-macro_rules! impl_wasm_params {
-    (@iter $n:tt ($($t1:ident)*) () | ($($tall:ident)*)) => {};
+#[derive(Debug)]
+pub(crate) struct WasmTyVecError {}
 
-    (@iter $n:tt ($($t1:ident)*) ($t:ident $($t2:ident)*) | ($($tall:ident)*)) =>
-    {
-        unsafe impl<$($tall),*> WaspParams for ($($t1,)* &[$t], $($t2),*)
-        where
-            T: WasmTy,
-        {
-            type SingularType = ($($tall),*);
-        }
-
-        impl_wasm_params!(@iter $n ($($t1)* $t) ($($t2)*) | ($($tall)*))
-    };
-
-    ($n:tt $($t:ident)*) =>
-    {
-        impl_wasm_params!(@iter $n () ($($t)*) | ($($t)*))
+impl Display for WasmTyVecError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "wasmy type to vec error")
     }
 }
 
-for_each_function_signature!(impl_wasm_params);
+impl std::error::Error for WasmTyVecError {}
+
+macro_rules! impl_vec_base {
+    ($t:ty as $wt:path) => {
+        impl WasmTyVal for $t {
+            #[inline(always)]
+            fn try_from_val(v: Val) -> anyhow::Result<Self> {
+                if let $wt(i) = v {
+                    return Ok(i);
+                }
+                Err(WasmTyVecError {})?
+            }
+
+            #[inline(always)]
+            fn to_val(self: &Self) -> Val {
+                $wt(self.clone())
+            }
+        }
+    };
+}
+
+impl_vec_base!(i32 as Val::I32);
+impl_vec_base!(i64 as Val::I64);
+impl_vec_base!(u32 as Val::F32);
+impl_vec_base!(u64 as Val::F64);
+
+impl<T> WasmTyVec for T
+where
+    T: WasmTyVal,
+    (T,): WasmParams,
+{
+    #[inline(always)]
+    fn try_from_val_vec(v: Vec<Val>) -> anyhow::Result<Self> {
+        if let [t] = v.as_slice() {
+            return Ok(T::try_from_val(t.clone())?);
+        }
+
+        return Err(Error::from(WasmTyVecError {}));
+    }
+
+    #[inline(always)]
+    fn to_val_vec(self: &Self) -> Vec<Val> {
+        return vec![self.to_val()];
+    }
+}
+
+macro_rules! impl_vec_rec {
+    (0) => {};
+
+    ($n:tt $($t:ident)*) => {
+        impl<$($t),*> WasmTyVec for ($($t,)*)
+        where
+            $(
+                $t: WasmTyVal,
+            )*
+            ($($t,)*): WasmParams,
+        {
+            #[inline(always)]
+            #[allow(non_snake_case)]
+            fn try_from_val_vec(v: Vec<Val>) -> anyhow::Result<Self> {
+                if let [$($t),*] = v.as_slice() {
+                    return Ok((
+                        $(
+                            $t::try_from_val($t.clone())?,
+                        )*
+                    ));
+                }
+
+                return Err(Error::from(WasmTyVecError {}));
+            }
+
+            #[inline(always)]
+            #[allow(non_snake_case)]
+            fn to_val_vec(self: &Self) -> Vec<Val> {
+                let ($($t,)*) = self;
+                return vec![
+                    $(
+                        $t.to_val(),
+                    )*
+                ];
+            }
+        }
+    };
+}
+
+for_each_function_signature!(impl_vec_rec);

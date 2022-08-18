@@ -12,8 +12,8 @@ pub mod wasp {
     use super::*;
 
     // Backends
+    pub use crate::wgpu::WgpuBackend;
     pub use backend::Backend;
-    pub use wgpu::WgpuBackend;
     // Engine
     pub use engine::Config;
     pub use engine::Engine;
@@ -24,12 +24,15 @@ pub mod wasp {
     // Externs
     pub use extern_imports::Extern;
     pub mod externs {
-        pub use extern_imports::Func;
+        use super::*;
+
         pub use extern_imports::Global;
         pub use extern_imports::Memory;
         pub use extern_imports::SharedMemory;
         pub use extern_imports::Table;
     }
+    // Func
+    pub use func::Func;
 }
 
 pub use wasp::*;

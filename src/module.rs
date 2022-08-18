@@ -1,8 +1,7 @@
-use crate::func::{Func, TypedFunc};
-use crate::{Backend, Engine, ExportedFunc, Extern};
+use crate::{Backend, Engine};
 use anyhow::{Context, Error};
 use std::sync::Arc;
-use wasmtime_environ::{ModuleEnvironment, ModuleTranslation};
+use wasmtime_environ::ModuleEnvironment;
 
 /// A SPIR-V module that has not been told which parameters are Static and which are Ranges
 pub struct Module<T>
@@ -24,9 +23,10 @@ where
             wasmparser::Validator::new_with_features(engine.config().features.clone());
         let parser = wasmparser::Parser::new(0);
         let mut types = Default::default();
-        let _translation = ModuleEnvironment::new(tunables, &mut validator, &mut types)
-            .translate(parser, &wasm)
-            .context("failed to parse WebAssembly module")?;
+        let _translation =
+            ModuleEnvironment::new(&engine.config().tunables, &mut validator, &mut types)
+                .translate(parser, &wasm)
+                .context("failed to parse WebAssembly module")?;
         let _types = types.finish();
 
         todo!();

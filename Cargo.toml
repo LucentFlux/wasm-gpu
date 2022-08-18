@@ -26,6 +26,10 @@ wasmparser = "0.86"
 wasmtime = "0.39"
 wasmtime-environ = "0.39"
 cps = "0.1.0"
+itertools = "0.10"
+
+# Tmp dependencies
+tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
 wast = "44.0"
