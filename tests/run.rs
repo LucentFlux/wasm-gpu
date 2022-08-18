@@ -1,3 +1,4 @@
+use tokio::runtime::Runtime;
 use wasm_spirv::{wasp, Config, WgpuBackend};
 use wast::lexer::Lexer;
 use wast::token::Span;
@@ -7,11 +8,12 @@ use wast::{
 };
 
 #[wasm_spirv_test_gen::wast("tests/testsuite/*.wast")]
-async fn gen_check(path: &str, test_index: usize) {
-    check(path, test_index).await
+fn gen_check(path: &str, test_index: usize) {
+    check(path, test_index)
 }
 
-async fn check(path: &str, test_offset: usize) {
+#[inline(never)] // Reduce code bloat to avoid OOM sigkill
+fn check(path: &str, test_offset: usize) {
     let source = std::fs::read_to_string(path).unwrap();
     let mut lexer = Lexer::new(&source);
     lexer.allow_confusing_unicode(true);
@@ -28,7 +30,7 @@ async fn check(path: &str, test_offset: usize) {
             _ => {}
         }
         if kind.span().offset() == test_offset {
-            run_test(kind).await;
+            Runtime::new().unwrap().block_on(run_test(kind));
             return;
         }
     }
@@ -92,26 +94,6 @@ async fn get_backend() -> WgpuBackend {
 }
 
 async fn test_assert_malformed_or_invalid(span: Span, mut module: QuoteWat<'_>, message: &str) {
-    let bytes = match module.encode() {
-        Ok(bs) => bs,
-        Err(_) => return, // Failure to encode is fine if malformed
-    };
-
-    let backend = get_backend().await;
-
-    let engine = wasp::Engine::new(backend, Config::default());
-
-    let module = wasp::Module::new(&engine, bytes);
-
-    assert!(
-        module.is_err(),
-        "assert malformed/invalid failed: {} at {:?}",
-        message,
-        span
-    );
-}
-
-async fn test_assert_trap(span: Span, mut module: QuoteWat<'_>, message: &str) {
     let bytes = match module.encode() {
         Ok(bs) => bs,
         Err(_) => return, // Failure to encode is fine if malformed

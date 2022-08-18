@@ -76,9 +76,9 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
                     let test_path_literal = LitStr::new(entry.to_str().unwrap(), f.span());
                     let i = span.offset();
                     tests.push(quote! {
-                        #[tokio::test]
-                        pub async fn #test_name() {
-                            #fn_name(#test_path_literal, #i).await
+                        #[test]
+                        pub fn #test_name() {
+                            #fn_name(#test_path_literal, #i)
                         }
                     });
 
