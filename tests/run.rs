@@ -49,10 +49,12 @@ async fn run_test(directive: WastDirective<'_>) {
             span,
             module,
             message,
-        } => test_assert_malformed(span, module, message).await,
-        WastDirective::AssertInvalid { .. } => {
-            panic!("assertion not implemented")
-        }
+        } => test_assert_malformed_or_invalid(span, module, message).await,
+        WastDirective::AssertInvalid {
+            span,
+            module,
+            message,
+        } => test_assert_malformed_or_invalid(span, module, message).await,
         WastDirective::AssertTrap { .. } => {
             panic!("assertion not implemented")
         }
@@ -89,7 +91,7 @@ async fn get_backend() -> WgpuBackend {
     return wasp::WgpuBackend { device, queue };
 }
 
-async fn test_assert_malformed(span: Span, mut module: QuoteWat<'_>, message: &str) {
+async fn test_assert_malformed_or_invalid(span: Span, mut module: QuoteWat<'_>, message: &str) {
     let bytes = match module.encode() {
         Ok(bs) => bs,
         Err(_) => return, // Failure to encode is fine if malformed
@@ -103,7 +105,27 @@ async fn test_assert_malformed(span: Span, mut module: QuoteWat<'_>, message: &s
 
     assert!(
         module.is_err(),
-        "assert malformed failed: {} at {:?}",
+        "assert malformed/invalid failed: {} at {:?}",
+        message,
+        span
+    );
+}
+
+async fn test_assert_trap(span: Span, mut module: QuoteWat<'_>, message: &str) {
+    let bytes = match module.encode() {
+        Ok(bs) => bs,
+        Err(_) => return, // Failure to encode is fine if malformed
+    };
+
+    let backend = get_backend().await;
+
+    let engine = wasp::Engine::new(backend, Config::default());
+
+    let module = wasp::Module::new(&engine, bytes);
+
+    assert!(
+        module.is_err(),
+        "assert malformed/invalid failed: {} at {:?}",
         message,
         span
     );
