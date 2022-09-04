@@ -1,15 +1,24 @@
+#![feature(generic_associated_types)]
+
+mod atomic_counter;
 mod backend;
 mod engine;
 mod extern_imports;
 mod func;
-mod instance;
+mod memory;
 mod module;
+mod panic_on_any;
+mod session;
+mod store;
 mod typed;
 mod wgpu;
 
 // Manually define our API
 pub mod wasp {
     use super::*;
+
+    // Utilities
+    pub use panic_on_any::PanicOnAny;
 
     // Backends
     pub use crate::wgpu::WgpuBackend;
@@ -19,8 +28,6 @@ pub mod wasp {
     pub use engine::Engine;
     // Module
     pub use module::Module;
-    // Instance
-    pub use instance::Instance;
     // Externs
     pub use extern_imports::Extern;
     pub mod externs {
@@ -31,8 +38,20 @@ pub mod wasp {
         pub use extern_imports::SharedMemory;
         pub use extern_imports::Table;
     }
+    // Store
+    pub use store::FuncPtr;
+    pub use store::Store;
+    pub use store::StoreSet;
     // Func
+    pub use func::Caller;
     pub use func::Func;
+    pub use func::MultiCallable;
+    pub mod typed {
+        use super::*;
+
+        pub use func::TypedFuncPtr;
+        pub use func::TypedMultiCallable;
+    }
 }
 
 pub use wasp::*;
