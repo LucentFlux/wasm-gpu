@@ -1,15 +1,17 @@
 use crate::for_each_function_signature;
 use anyhow::Error;
 use std::fmt::{Display, Formatter};
-use wasmtime::{Val, WasmParams};
+use wasmtime::{Val, ValType, WasmParams};
 
 pub(crate) trait WasmTyVal: WasmParams + Sized {
+    const VAL_TYPE: ValType;
     fn try_from_val(v: Val) -> anyhow::Result<Self>;
     fn to_val(self: &Self) -> Val;
 }
 
 pub trait WasmTyVec: WasmParams + Sized {
-    fn try_from_val_vec(v: Vec<Val>) -> anyhow::Result<Self>;
+    const VAL_TYPES: &'static [ValType];
+    fn try_from_val_vec(v: &Vec<Val>) -> anyhow::Result<Self>;
     fn to_val_vec(self: &Self) -> Vec<Val>;
 }
 
@@ -25,11 +27,13 @@ impl Display for WasmTyVecError {
 impl std::error::Error for WasmTyVecError {}
 
 macro_rules! impl_vec_base {
-    ($t:ty as $wt:path) => {
+    ($t:ty as $wt:tt) => {
         impl WasmTyVal for $t {
+            const VAL_TYPE: ValType = ValType::$wt;
+
             #[inline(always)]
             fn try_from_val(v: Val) -> anyhow::Result<Self> {
-                if let $wt(i) = v {
+                if let Val::$wt(i) = v {
                     return Ok(i);
                 }
                 Err(WasmTyVecError {})?
@@ -37,24 +41,44 @@ macro_rules! impl_vec_base {
 
             #[inline(always)]
             fn to_val(self: &Self) -> Val {
-                $wt(self.clone())
+                Val::$wt(self.clone())
             }
         }
     };
 }
 
-impl_vec_base!(i32 as Val::I32);
-impl_vec_base!(i64 as Val::I64);
-impl_vec_base!(u32 as Val::F32);
-impl_vec_base!(u64 as Val::F64);
+impl_vec_base!(i32 as I32);
+impl_vec_base!(i64 as I64);
+impl_vec_base!(u32 as F32);
+impl_vec_base!(u64 as F64);
+
+impl WasmTyVec for () {
+    const VAL_TYPES: &'static [ValType] = &[];
+
+    #[inline(always)]
+    fn try_from_val_vec(v: &Vec<Val>) -> anyhow::Result<Self> {
+        if v.len() == 0 {
+            return Ok(());
+        }
+
+        return Err(Error::from(WasmTyVecError {}));
+    }
+
+    #[inline(always)]
+    fn to_val_vec(self: &Self) -> Vec<Val> {
+        return vec![];
+    }
+}
 
 impl<T> WasmTyVec for T
 where
     T: WasmTyVal,
     (T,): WasmParams,
 {
+    const VAL_TYPES: &'static [ValType] = &[T::VAL_TYPE];
+
     #[inline(always)]
-    fn try_from_val_vec(v: Vec<Val>) -> anyhow::Result<Self> {
+    fn try_from_val_vec(v: &Vec<Val>) -> anyhow::Result<Self> {
         if let [t] = v.as_slice() {
             return Ok(T::try_from_val(t.clone())?);
         }
@@ -79,9 +103,11 @@ macro_rules! impl_vec_rec {
             )*
             ($($t,)*): WasmParams,
         {
+            const VAL_TYPES: &'static [ValType] = &[$($t::VAL_TYPE),*];
+
             #[inline(always)]
             #[allow(non_snake_case)]
-            fn try_from_val_vec(v: Vec<Val>) -> anyhow::Result<Self> {
+            fn try_from_val_vec(v: &Vec<Val>) -> anyhow::Result<Self> {
                 if let [$($t),*] = v.as_slice() {
                     return Ok((
                         $(

@@ -7,37 +7,61 @@ use crate::wgpu::buffer_ring::BufferRing;
 use crate::wgpu::memory::{WgpuMappedMemoryBlock, WgpuUnmappedMemoryBlock};
 use crate::Backend;
 use std::future::Future;
+use std::ops::DerefMut;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Waker};
 use wgpu::{Device, Maintain, MaintainBase, MapMode, Queue};
 
-struct WgpuFuture {
-    device: Arc<Device>,
-    done: AtomicBool,
+struct WgpuFutureSharedState<T> {
+    result: Option<T>,
+    waker: Option<Waker>,
 }
 
-impl WgpuFuture {
+struct WgpuFuture<T> {
+    device: Arc<Device>,
+    state: Arc<Mutex<WgpuFutureSharedState<T>>>,
+}
+
+impl<T: Send + 'static> WgpuFuture<T> {
     pub fn new(device: Arc<Device>) -> Self {
         Self {
             device,
-            done: AtomicBool::new(false),
+            state: Arc::new(Mutex::new(WgpuFutureSharedState {
+                result: None,
+                waker: None,
+            })),
         }
     }
 
-    pub fn complete(&self) {
-        self.done.store(true, Ordering::Release);
+    pub fn callback(&self) -> Box<dyn FnOnce(T) -> () + Send + 'static> {
+        let shared_state = self.state.clone();
+        return Box::new(move |res: T| {
+            let mut lock = shared_state
+                .lock()
+                .expect("wgpu future was poisoned on complete");
+            let shared_state = lock.deref_mut();
+            shared_state.result = Some(res);
+
+            if let Some(waker) = shared_state.waker.take() {
+                waker.wake()
+            }
+        });
     }
 }
 
-impl Future for WgpuFuture {
-    type Output = ();
+impl<T> Future for WgpuFuture<T> {
+    type Output = T;
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.done.load(Ordering::Acquire) {
-            return Poll::Ready(());
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut lock = self.state.lock().expect("wgpu future was poisoned on poll");
+
+        if let Some(res) = lock.result.take() {
+            return Poll::Ready(res);
         }
+
+        lock.waker = Some(cx.waker().clone());
 
         self.device.poll(Maintain::Poll);
 

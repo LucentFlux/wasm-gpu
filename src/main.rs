@@ -1,5 +1,8 @@
-use itertools::Itertools;
-use wasm_spirv::{wasp, Config, Extern};
+#![feature(async_closure)]
+
+use futures::FutureExt;
+use wasm_spirv::wasp::typed::TypedMultiCallable;
+use wasm_spirv::{wasp, Caller, Config, PanicOnAny};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -21,34 +24,42 @@ async fn main() -> anyhow::Result<()> {
         .unwrap();
 
     // wasm setup
-    let module_wat = r#"
-    (module
-      (type $t0 (func (param i32) (result i32)))
-      (func $add_one (export "add_one") (type $t0) (param $p0 i32) (result i32)
-        get_local $p0
-        i32.const 1
-        i32.add))
-    "#;
-
-    let spirv_backend = wasp::WgpuBackend { device, queue };
+    let spirv_backend = wasp::WgpuBackend::new(device, queue);
     let engine = wasp::Engine::new(spirv_backend, Config::default());
+    let wat = r#"
+        (module
+            (import "host" "hello" (func $host_hello (param i32)))
 
-    let module = wasp::Module::new(&engine, module_wat.as_bytes())?;
+            (func (export "hello")
+                i32.const 3
+                call $host_hello)
+        )
+    "#;
+    let module = wasp::Module::new(&engine, wat)?;
 
-    let imports: Vec<Extern> = vec![];
+    let mut stores = wasp::StoreSet::new(&engine, 0..10);
 
-    let instance = wasp::Instance::new(&engine, &module, imports.as_slice()).await?;
+    let host_hello = wasp::Func::wrap(&stores, |caller: Caller<_, u32>, param: i32| {
+        Box::pin(async move {
+            println!("Got {} from WebAssembly", param);
+            println!("my host state is: {}", caller.data());
 
-    let parallel_add_one_func = instance.get_typed_func::<i32, i32>("add_one")?;
+            return Ok(());
+        })
+    });
 
-    // Evaluate
-    let parallel_result = parallel_add_one_func.call([1, 6, 4, 2, 7]).await;
-    let parallel_result = parallel_result
-        .into_iter()
-        .enumerate()
-        .map(|(i, v)| v.expect(format!("got error: {}", i).as_str()))
-        .collect_vec();
-    assert_eq!(vec![2, 7, 5, 3, 8], parallel_result);
+    stores
+        .instantiate_module(&module, &[host_hello])
+        .await
+        .expect_all("could not instantiate all modules");
+    let hellos = stores
+        .get_typed_funcs::<(), ()>("hello")
+        .expect_all("could not get hello function from all instances");
 
-    return Ok(());
+    hellos
+        .call_all(&mut stores, |_| ())
+        .await
+        .expect_all("could not call all hello functions");
+
+    Ok(())
 }

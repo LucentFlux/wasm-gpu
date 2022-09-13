@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub struct AtomicCounter(AtomicUsize);
 
 impl AtomicCounter {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self(AtomicUsize::new(0))
     }
 

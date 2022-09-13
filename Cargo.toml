@@ -27,6 +27,12 @@ wasmtime = "0.39"
 wasmtime-environ = "0.39"
 cps = "0.1.0"
 itertools = "0.10"
+async-trait = "0.1"
+elsa = "1.7"
+rayon = "1.5"
+pod = "0.5"
+futures = "0.3"
+stable_deref_trait = "1.2"
 
 # Tmp dependencies
 tokio = { version = "1", features = ["full"] }

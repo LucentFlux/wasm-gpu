@@ -8,5 +8,5 @@ pub trait Backend: Sized {
         &mut self,
         size: usize,
         initial_data: Option<&[u8]>,
-    ) -> dyn DeviceMemoryBlock<Self>;
+    ) -> Self::DeviceMemoryBlock;
 }

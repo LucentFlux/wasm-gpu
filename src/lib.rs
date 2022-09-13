@@ -1,4 +1,7 @@
 #![feature(generic_associated_types)]
+#![feature(async_closure)]
+#![feature(macro_metavar_expr)]
+#![feature(associated_type_defaults)]
 
 mod atomic_counter;
 mod backend;
@@ -8,6 +11,7 @@ mod func;
 mod memory;
 mod module;
 mod panic_on_any;
+mod read_only;
 mod session;
 mod store;
 mod typed;
