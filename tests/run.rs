@@ -90,7 +90,7 @@ async fn get_backend() -> WgpuBackend {
         .request_device(&Default::default(), None)
         .await
         .unwrap();
-    return wasp::WgpuBackend { device, queue };
+    return wasp::WgpuBackend::new(device, queue);
 }
 
 async fn test_assert_malformed_or_invalid(span: Span, mut module: QuoteWat<'_>, message: &str) {
