@@ -1,15 +1,8 @@
 mod typed;
 
-use anyhow::anyhow;
-use async_trait::async_trait;
-use futures::future::{join_all, BoxFuture, FutureExt};
+use futures::future::{BoxFuture, FutureExt};
 use itertools::Itertools;
-use rayon::prelude::*;
-use std::collections::{BinaryHeap, HashMap};
-use std::future::Future;
 use std::marker::PhantomData;
-use std::process::Output;
-use tokio::task::JoinHandle;
 use wasmtime::{FuncType, Val, ValType};
 
 use crate::session::Session;

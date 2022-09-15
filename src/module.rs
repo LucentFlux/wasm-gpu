@@ -19,9 +19,10 @@ where
         let bytes = bytes.as_ref();
         let wasm = wat::parse_bytes(bytes)?;
 
-        let mut validator =
-            wasmparser::Validator::new_with_features(engine.config().features.clone());
-        let parser = wasmparser::Parser::new(0);
+        let mut validator = wasmtime_environ::wasmparser::Validator::new_with_features(
+            engine.config().features.clone(),
+        );
+        let parser = wasmtime_environ::wasmparser::Parser::new(0);
         let mut types = Default::default();
         let _translation =
             ModuleEnvironment::new(&engine.config().tunables, &mut validator, &mut types)

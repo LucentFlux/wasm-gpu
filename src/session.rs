@@ -1,7 +1,5 @@
-use crate::func::ExportFunction;
 use crate::{Backend, FuncPtr, Store};
 use futures::future::BoxFuture;
-use itertools::Itertools;
 use std::sync::Arc;
 use wasmtime::Val;
 

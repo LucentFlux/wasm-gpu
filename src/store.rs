@@ -1,20 +1,16 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::func::TypedFuncPtr;
 use crate::read_only::ReadOnly;
-use crate::typed::{WasmTyVal, WasmTyVec};
+use crate::typed::WasmTyVec;
 use crate::{Backend, Engine, Extern, Func, Module};
 use anyhow::{anyhow, Context};
 use elsa::sync::{FrozenMap, FrozenVec};
 use itertools::Itertools;
-use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::error::Error;
-use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use wasmtime::{FuncType, ValType, WasmParams};
+use std::sync::Arc;
+use wasmtime::{FuncType, ValType};
 
 static STORE_COUNTER: AtomicCounter = AtomicCounter::new(); // Use as store hash & equality
 

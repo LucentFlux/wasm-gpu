@@ -1,6 +1,5 @@
 #![feature(async_closure)]
 
-use futures::FutureExt;
 use wasm_spirv::wasp::typed::TypedMultiCallable;
 use wasm_spirv::{wasp, Caller, Config, PanicOnAny};
 
@@ -24,7 +23,8 @@ async fn main() -> anyhow::Result<()> {
         .unwrap();
 
     // wasm setup
-    let spirv_backend = wasp::WgpuBackend::new(device, queue);
+    let spirv_backend = wasp::WgpuBackend::new(device, queue, Default::default());
+
     let engine = wasp::Engine::new(spirv_backend, Config::default());
     let wat = r#"
         (module

@@ -2,15 +2,10 @@ use crate::func::MultiCallable;
 use crate::typed::WasmTyVec;
 use crate::{Backend, FuncPtr, StoreSet};
 use anyhow::Context;
-use async_trait::async_trait;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use itertools::Itertools;
-use std::future::Future;
 use std::marker::PhantomData;
-use std::pin::Pin;
-use std::sync::Mutex;
-use wasmtime::Val;
 
 pub struct TypedFuncPtr<B, T, Params, Results>
 where

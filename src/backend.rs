@@ -1,5 +1,3 @@
-use crate::memory::{DeviceMemoryBlock, MainMemoryBlock};
-
 pub trait Backend: Sized {
     type DeviceMemoryBlock: crate::memory::DeviceMemoryBlock<Self>;
     type MainMemoryBlock: crate::memory::MainMemoryBlock<Self>;

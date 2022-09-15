@@ -1,18 +1,18 @@
 mod buffer_ring;
 mod memory;
 
+pub use crate::wgpu::buffer_ring::BufferRingConfig;
+
 use crate::atomic_counter::AtomicCounter;
-use crate::memory::{DeviceMemoryBlock, MainMemoryBlock};
 use crate::wgpu::buffer_ring::BufferRing;
 use crate::wgpu::memory::{WgpuMappedMemoryBlock, WgpuUnmappedMemoryBlock};
 use crate::Backend;
 use std::future::Future;
 use std::ops::DerefMut;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
-use wgpu::{Device, Maintain, MaintainBase, MapMode, Queue};
+use wgpu::{Device, Maintain, MapMode, Queue};
 
 struct WgpuFutureSharedState<T> {
     result: Option<T>,
@@ -55,17 +55,36 @@ impl<T> Future for WgpuFuture<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut lock = self.state.lock().expect("wgpu future was poisoned on poll");
+        // Check with scoped lock
+        {
+            let mut lock = self.state.lock().expect("wgpu future was poisoned on poll");
 
-        if let Some(res) = lock.result.take() {
-            return Poll::Ready(res);
+            if let Some(res) = lock.result.take() {
+                return Poll::Ready(res);
+            }
+
+            lock.waker = Some(cx.waker().clone());
         }
-
-        lock.waker = Some(cx.waker().clone());
 
         self.device.poll(Maintain::Poll);
 
+        // Treat as green thread - we pass back but are happy to sit in a spin loop and poll
+        cx.waker().wake_by_ref();
+
         return Poll::Pending;
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct WgpuBackendConfig {
+    pub buffer_ring_config: BufferRingConfig,
+}
+
+impl Default for WgpuBackendConfig {
+    fn default() -> Self {
+        Self {
+            buffer_ring_config: Default::default(),
+        }
     }
 }
 
@@ -80,7 +99,7 @@ pub struct WgpuBackend {
 }
 
 impl WgpuBackend {
-    pub fn new(device: Device, queue: Queue) -> Self {
+    pub fn new(device: Device, queue: Queue, conf: WgpuBackendConfig) -> Self {
         let device = Arc::new(device);
         let queue = Arc::new(queue);
         Self {
@@ -88,11 +107,13 @@ impl WgpuBackend {
                 device.clone(),
                 "Upload".to_owned(),
                 MapMode::Write,
+                conf.buffer_ring_config,
             )),
             download_buffers: Arc::new(BufferRing::new(
                 device.clone(),
                 "Download".to_owned(),
                 MapMode::Read,
+                conf.buffer_ring_config,
             )),
             queue,
             device,

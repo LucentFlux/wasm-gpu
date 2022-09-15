@@ -1,4 +1,3 @@
-use crate::func::Func;
 use crate::{Backend, FuncPtr};
 
 pub enum Extern<B, T>

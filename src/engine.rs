@@ -1,6 +1,6 @@
 use crate::Backend;
 use std::sync::Arc;
-use wasmparser::WasmFeatures;
+use wasmtime_environ::wasmparser::WasmFeatures;
 use wasmtime_environ::Tunables;
 
 pub struct Config {
@@ -41,6 +41,7 @@ impl Default for Config {
                 static_memory_bound_is_maximum: false,
                 guard_before_linear_memory: false,
                 generate_address_map: false,
+                debug_adapter_modules: false,
             },
         }
     }

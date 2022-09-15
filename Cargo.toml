@@ -22,17 +22,14 @@ wat = "1.0"
 anyhow = "1.0"
 wgpu = "0.13"
 env_logger = "0.9"
-wasmparser = "0.86"
-wasmtime = "0.39"
-wasmtime-environ = "0.39"
+wasmtime = "0.40"
+wasmtime-environ = "0.40"
 cps = "0.1.0"
 itertools = "0.10"
 async-trait = "0.1"
 elsa = "1.7"
-rayon = "1.5"
-pod = "0.5"
 futures = "0.3"
-stable_deref_trait = "1.2"
+paste = "1.0"
 
 # Tmp dependencies
 tokio = { version = "1", features = ["full"] }
@@ -40,3 +37,4 @@ tokio = { version = "1", features = ["full"] }
 [dev-dependencies]
 wast = "44.0"
 wasm-spirv-test-gen = {path = "test_gen"}
+rand = "0.8"

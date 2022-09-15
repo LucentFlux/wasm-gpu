@@ -25,8 +25,14 @@ pub mod wasp {
     pub use panic_on_any::PanicOnAny;
 
     // Backends
+    pub use crate::wgpu::BufferRingConfig;
     pub use crate::wgpu::WgpuBackend;
+    pub use crate::wgpu::WgpuBackendConfig;
     pub use backend::Backend;
+    // Memory
+    pub use memory::DeviceMemoryBlock;
+    pub use memory::MainMemoryBlock;
+    pub use memory::MemoryBlock;
     // Engine
     pub use engine::Config;
     pub use engine::Engine;
