@@ -2,15 +2,30 @@ use crate::for_each_function_signature;
 use anyhow::Error;
 use std::fmt::{Display, Formatter};
 use wasmtime::{Val, ValType, WasmParams};
+use wasmtime_environ::WasmType;
+
+pub(crate) fn wasm_ty_bytes(ty: WasmType) -> usize {
+    match ty {
+        WasmType::I32 => 4,
+        WasmType::I64 => 8,
+        WasmType::F32 => 4,
+        WasmType::F64 => 8,
+        WasmType::V128 => 16,
+        WasmType::FuncRef => 4,
+        WasmType::ExternRef => 4,
+    }
+}
 
 pub(crate) trait WasmTyVal: WasmParams + Sized {
     const VAL_TYPE: ValType;
+    const WASM_TYPE: WasmType;
     fn try_from_val(v: Val) -> anyhow::Result<Self>;
     fn to_val(self: &Self) -> Val;
 }
 
 pub trait WasmTyVec: WasmParams + Sized {
     const VAL_TYPES: &'static [ValType];
+    const WASM_TYPES: &'static [WasmType];
     fn try_from_val_vec(v: &Vec<Val>) -> anyhow::Result<Self>;
     fn to_val_vec(self: &Self) -> Vec<Val>;
 }
@@ -30,6 +45,7 @@ macro_rules! impl_vec_base {
     ($t:ty as $wt:tt) => {
         impl WasmTyVal for $t {
             const VAL_TYPE: ValType = ValType::$wt;
+            const WASM_TYPE: WasmType = WasmType::$wt;
 
             #[inline(always)]
             fn try_from_val(v: Val) -> anyhow::Result<Self> {
@@ -54,6 +70,7 @@ impl_vec_base!(u64 as F64);
 
 impl WasmTyVec for () {
     const VAL_TYPES: &'static [ValType] = &[];
+    const WASM_TYPES: &'static [WasmType] = &[];
 
     #[inline(always)]
     fn try_from_val_vec(v: &Vec<Val>) -> anyhow::Result<Self> {
@@ -76,6 +93,7 @@ where
     (T,): WasmParams,
 {
     const VAL_TYPES: &'static [ValType] = &[T::VAL_TYPE];
+    const WASM_TYPES: &'static [WasmType] = &[T::WASM_TYPE];
 
     #[inline(always)]
     fn try_from_val_vec(v: &Vec<Val>) -> anyhow::Result<Self> {
@@ -104,6 +122,7 @@ macro_rules! impl_vec_rec {
             ($($t,)*): WasmParams,
         {
             const VAL_TYPES: &'static [ValType] = &[$($t::VAL_TYPE),*];
+            const WASM_TYPES: &'static [WasmType] = &[$($t::WASM_TYPE),*];
 
             #[inline(always)]
             #[allow(non_snake_case)]

@@ -1,7 +1,6 @@
 #![feature(async_closure)]
 
-use wasm_spirv::wasp::typed::TypedMultiCallable;
-use wasm_spirv::{wasp, Caller, Config, PanicOnAny};
+use wasm_spirv::{wasp, Caller, Config, FuncSet, InstanceSet, PanicOnAny};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -37,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
     "#;
     let module = wasp::Module::new(&engine, wat)?;
 
-    let mut stores = wasp::StoreSet::new(&engine, 0..10);
+    let mut stores = wasp::StoreSetBuilder::new(&engine);
 
     let host_hello = wasp::Func::wrap(&stores, |caller: Caller<_, u32>, param: i32| {
         Box::pin(async move {
@@ -48,11 +47,11 @@ async fn main() -> anyhow::Result<()> {
         })
     });
 
-    stores
+    let instances = stores
         .instantiate_module(&module, &[host_hello])
         .await
         .expect_all("could not instantiate all modules");
-    let hellos = stores
+    let hellos = instances
         .get_typed_funcs::<(), ()>("hello")
         .expect_all("could not get hello function from all instances");
 

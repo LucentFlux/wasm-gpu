@@ -47,19 +47,19 @@ impl Default for Config {
     }
 }
 
-pub struct Engine<T>
+pub struct Engine<B>
 where
-    T: Backend,
+    B: Backend,
 {
-    backend: Arc<T>,
+    backend: Arc<B>,
     config: Config,
 }
 
-impl<T> Engine<T>
+impl<B> Engine<B>
 where
-    T: Backend,
+    B: Backend,
 {
-    pub fn new(backend: T, config: Config) -> Self {
+    pub fn new(backend: B, config: Config) -> Self {
         Self {
             backend: Arc::new(backend),
             config,
@@ -70,7 +70,7 @@ where
         return &self.config;
     }
 
-    pub fn backend(&self) -> Arc<T> {
+    pub fn backend(&self) -> Arc<B> {
         return self.backend.clone();
     }
 }

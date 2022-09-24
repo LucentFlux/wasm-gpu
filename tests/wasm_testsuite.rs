@@ -1,5 +1,5 @@
 use tokio::runtime::Runtime;
-use wasm_spirv::{wasp, Config, WgpuBackend};
+use wasm_spirv::{wasp, BufferRingConfig, Config, WgpuBackend, WgpuBackendConfig};
 use wast::lexer::Lexer;
 use wast::token::Span;
 use wast::{
@@ -10,6 +10,30 @@ use wast::{
 #[wasm_spirv_test_gen::wast("tests/testsuite/*.wast")]
 fn gen_check(path: &str, test_index: usize) {
     check(path, test_index)
+}
+
+pub async fn get_backend() -> wasp::WgpuBackend {
+    let instance = wgpu::Instance::new(wgpu::Backends::all());
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            force_fallback_adapter: false,
+            compatible_surface: None,
+        })
+        .await
+        .unwrap();
+    let (device, queue) = adapter
+        .request_device(&Default::default(), None)
+        .await
+        .unwrap();
+    let conf = WgpuBackendConfig {
+        buffer_ring_config: BufferRingConfig {
+            // Minimal memory footprint for tests
+            total_mem: 128,
+            buffer_size: 128,
+        },
+    };
+    return wasp::WgpuBackend::new(device, queue, conf);
 }
 
 #[inline(never)] // Reduce code bloat to avoid OOM sigkill
@@ -73,24 +97,6 @@ async fn run_test(directive: WastDirective<'_>) {
             panic!("assertion not implemented")
         }
     }
-}
-
-async fn get_backend() -> WgpuBackend {
-    // wgpu setup
-    let instance = wgpu::Instance::new(wgpu::Backends::all());
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        })
-        .await
-        .unwrap();
-    let (device, queue) = adapter
-        .request_device(&Default::default(), None)
-        .await
-        .unwrap();
-    return wasp::WgpuBackend::new(device, queue);
 }
 
 async fn test_assert_malformed_or_invalid(span: Span, mut module: QuoteWat<'_>, message: &str) {

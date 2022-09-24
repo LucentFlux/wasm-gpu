@@ -3,12 +3,17 @@ mod typed;
 use futures::future::{BoxFuture, FutureExt};
 use itertools::Itertools;
 use std::marker::PhantomData;
-use wasmtime::{FuncType, Val, ValType};
+use wasmtime::{Val, ValType};
+use wasmtime_environ::{WasmFuncType, WasmType};
 
+use crate::instance::ModuleInstance;
+use crate::memory::{DynamicMemoryBlock, Memory};
 use crate::session::Session;
+use crate::store::ptrs::FuncPtr;
+use crate::store::store::Store;
 use crate::typed::WasmTyVec;
-use crate::{Backend, FuncPtr, Store, StoreSet};
-pub use typed::{TypedFuncPtr, TypedMultiCallable};
+use crate::{Backend, StoreSet, StoreSetBuilder};
+pub use typed::TypedFuncPtr;
 
 pub(crate) struct ExportFunction {
     signature: String, // TODO: make this something more reasonable
@@ -68,7 +73,7 @@ where
     B: Backend,
 {
     kind: FuncKind<B, T>,
-    ty: FuncType,
+    ty: WasmFuncType,
 }
 
 impl<B, T> Func<B, T>
@@ -83,7 +88,7 @@ where
         return self.ty.results();
     }
 
-    pub fn ty(&self) -> FuncType {
+    pub fn ty(&self) -> WasmFuncType {
         self.ty.clone()
     }
 }
@@ -93,7 +98,7 @@ where
     B: Backend + 'static,
     T: 'static,
 {
-    pub fn wrap<Params, Results, F>(stores: &StoreSet<B, T>, func: F) -> Vec<FuncPtr<B, T>>
+    pub fn wrap<Params, Results, F>(stores: &StoreSetBuilder<B, T>, func: F) -> FuncPtr<B, T>
     where
         Params: WasmTyVec + 'static,
         Results: WasmTyVec + 'static,
@@ -107,9 +112,17 @@ where
                 func,
                 _phantom: Default::default(),
             })),
-            ty: FuncType::new(
-                Params::VAL_TYPES.iter().map(ValType::clone),
-                Results::VAL_TYPES.iter().map(ValType::clone),
+            ty: WasmFuncType::new(
+                Params::WASM_TYPES
+                    .iter()
+                    .map(WasmType::clone)
+                    .collect_vec()
+                    .into_boxed_slice(),
+                Results::WASM_TYPES
+                    .iter()
+                    .map(WasmType::clone)
+                    .collect_vec()
+                    .into_boxed_slice(),
             ),
         };
 
@@ -117,27 +130,67 @@ where
     }
 }
 
-pub trait MultiCallable<'a, B, T>
+pub trait FuncSet<'a, B, T>
 where
     B: Backend,
 {
+    type Params;
+    type Results;
+
     /// Entry-point method
     ///
     /// # Panics
-    /// If the number of arguments is not the same as the number of functions in this set
-    /// or if any of the functions reference stores not in the store set
+    /// If any of the functions reference stores not in the store set
     fn call_all(
         self,
         stores: &'a mut StoreSet<B, T>,
-        args_fn: impl FnMut(&T) -> Vec<Val>,
-    ) -> BoxFuture<'a, Vec<anyhow::Result<Vec<Val>>>>;
+        args_fn: impl FnMut(&T) -> Self::Params,
+    ) -> BoxFuture<'a, Vec<anyhow::Result<Self::Results>>>;
 }
 
-impl<'a, V, B: 'a, T: 'a> MultiCallable<'a, B, T> for V
+/// Used to abstract over both FuncPtr and TypedFuncPtr for sessions
+pub trait AbstractFuncPtr<B, T>
 where
-    V: IntoIterator<Item = &'a FuncPtr<B, T>>,
     B: Backend,
 {
+    type Params;
+    type Results;
+
+    fn parse_params(params: Self::Params) -> Vec<Val>;
+    fn gen_results(results: Vec<Val>) -> anyhow::Result<Self::Results>;
+
+    fn get_ptr(&self) -> FuncPtr<B, T>;
+}
+
+impl<B, T> AbstractFuncPtr<B, T> for FuncPtr<B, T>
+where
+    B: Backend,
+{
+    type Params = Vec<Val>;
+    type Results = Vec<Val>;
+
+    fn parse_params(params: Self::Params) -> Vec<Val> {
+        params
+    }
+
+    fn gen_results(results: Vec<Val>) -> anyhow::Result<Self::Results> {
+        Ok(results)
+    }
+
+    fn get_ptr(&self) -> FuncPtr<B, T> {
+        self.clone()
+    }
+}
+
+impl<'a, V, F, B: 'a, T: 'a> FuncSet<'a, B, T> for V
+where
+    V: IntoIterator<Item = F>,
+    F: AbstractFuncPtr<B, T>,
+    B: Backend,
+{
+    type Params = F::Params;
+    type Results = F::Results;
+
     /// # Panics
     /// This function panics if:
     ///  - two function pointers refer to the same store
@@ -145,28 +198,36 @@ where
     fn call_all(
         self,
         stores: &'a mut StoreSet<B, T>,
-        mut args_fn: impl FnMut(&T) -> Vec<Val>,
-    ) -> BoxFuture<'a, Vec<anyhow::Result<Vec<Val>>>> {
+        mut args_fn: impl FnMut(&T) -> Self::Params,
+    ) -> BoxFuture<'a, Vec<anyhow::Result<Self::Results>>> {
         let backend = stores.backend();
 
-        // Sort based on store ID
-        let funcs: Vec<_> = self.into_iter().collect();
+        let funcs: Vec<F> = self.into_iter().collect();
+        let ptrs: Vec<FuncPtr<B, T>> = funcs.iter().map(|f| f.get_ptr()).collect();
 
         // Get store references
-        let stores = stores.funcs_stores(funcs.clone());
+        let stores = stores.stores(&ptrs);
 
-        let funcs_and_args = funcs
+        let funcs_and_args: Vec<(usize, &mut Store<B, T>, FuncPtr<B, T>, Vec<Val>)> = funcs
             .into_iter()
             .zip_eq(stores)
             .enumerate()
             .map(|(i, (func, store))| {
                 let arg = args_fn(store.data());
-                (i, store, func, arg)
+                let arg = F::parse_params(arg);
+                (i, store, func.get_ptr(), arg)
             })
-            .collect_vec();
+            .collect();
 
         let session = Session::new(backend, funcs_and_args);
-        return session.run();
+        return session
+            .run()
+            .map(|res| {
+                res.into_iter()
+                    .map(|v| v.and_then(F::gen_results))
+                    .collect_vec()
+            })
+            .boxed();
     }
 }
 
@@ -200,6 +261,7 @@ where
     B: Backend,
 {
     store: &'a mut Store<B, T>,
+    instance: &'a ModuleInstance<B, T>,
 }
 
 impl<B, T> Caller<'_, B, T>
@@ -208,5 +270,96 @@ where
 {
     pub fn data(&self) -> &T {
         return self.store.data();
+    }
+
+    /// Requires Self to be callable as invoking this for the first time maps the GPU memory to RAM,
+    /// which requires state changes.
+    pub fn get_memory(&mut self, name: &str) -> anyhow::Result<&mut DynamicMemoryBlock<B>> {
+        let memptr = self.instance.get_memory_export(name)?;
+        self.store.get_memory(memptr)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instance::InstanceSet;
+    use crate::tests_lib::{gen_test_data, get_backend};
+    use crate::{block_test, Config, PanicOnAny};
+    use crate::{
+        wasp, Backend, BufferRingConfig, DeviceMemoryBlock, MainMemoryBlock, MemoryBlock,
+        WgpuBackend, WgpuBackendConfig,
+    };
+    use paste::paste;
+    use tokio::runtime::Runtime;
+
+    macro_rules! backend_buffer_tests {
+        ($($value:expr,)*) => {
+        $(
+            block_test!($value, test_host_func_memory_read);
+        )*
+        };
+    }
+
+    backend_buffer_tests!(0, 1, 7, 8, 9, 1023, 1024, 1025, 2047, 2048, 2049);
+
+    #[inline(never)]
+    async fn test_host_func_memory_read(size: usize) {
+        let mut backend = get_backend().await;
+
+        let expected_data = gen_test_data(size, (size * 65) as u32);
+
+        let engine = wasp::Engine::new(backend, Config::default());
+
+        let mut stores_builder = wasp::StoreSetBuilder::new(&engine);
+        let mut data_string = "".to_owned();
+        for byte in expected_data.iter() {
+            data_string += format!("\\{:02x?}", byte).as_str();
+        }
+        let wat = r#"
+            (module
+                (import "host" "read" (func $host_read))
+                (export "read" (func $host_read))
+
+                (memory (export "mem") (data ""#
+            .to_owned()
+            + data_string.as_str()
+            + r#""))
+            )
+        "#;
+        let module = wasp::Module::new(&engine, wat).unwrap();
+
+        let host_read = wasp::Func::wrap(
+            &stores_builder,
+            move |mut caller: Caller<_, u32>, _param: i32| {
+                let expected_data = expected_data.clone();
+                let size = size.clone();
+                Box::pin(async move {
+                    let mem = caller.get_memory("mem").unwrap();
+                    let mem = mem.as_slice(0..size).await.unwrap();
+
+                    for (b1, b2) in expected_data.iter().zip_eq(mem) {
+                        assert_eq!(*b1, *b2);
+                    }
+
+                    return Ok(());
+                })
+            },
+        );
+
+        let instance = stores_builder
+            .instantiate_module(&module, &[host_read])
+            .await
+            .expect("could not instantiate all modules");
+        let module_read = instance
+            .get_typed_func::<(), ()>("read")
+            .expect("could not get hello function from all instances");
+
+        let mut stores = stores_builder.build(0..1).await;
+
+        module_read
+            .call_all(&mut stores, |_| ())
+            .await
+            .expect_all("could not call all hello functions");
     }
 }

@@ -2,12 +2,17 @@
 #![feature(async_closure)]
 #![feature(macro_metavar_expr)]
 #![feature(associated_type_defaults)]
+#![feature(future_join)]
+
+extern crate core;
 
 mod atomic_counter;
 mod backend;
 mod engine;
-mod extern_imports;
+mod externs;
 mod func;
+mod global_instance;
+mod instance;
 mod memory;
 mod module;
 mod panic_on_any;
@@ -16,6 +21,9 @@ mod session;
 mod store;
 mod typed;
 mod wgpu;
+
+#[cfg(test)]
+pub mod tests_lib;
 
 // Manually define our API
 pub mod wasp {
@@ -39,28 +47,23 @@ pub mod wasp {
     // Module
     pub use module::Module;
     // Externs
-    pub use extern_imports::Extern;
-    pub mod externs {
-        use super::*;
-
-        pub use extern_imports::Global;
-        pub use extern_imports::Memory;
-        pub use extern_imports::SharedMemory;
-        pub use extern_imports::Table;
-    }
+    pub use externs::Extern;
     // Store
+    pub use store::builder::StoreSetBuilder;
     pub use store::FuncPtr;
     pub use store::Store;
     pub use store::StoreSet;
+    // Instance
+    pub use instance::InstanceSet;
+    pub use instance::ModuleInstance;
     // Func
     pub use func::Caller;
     pub use func::Func;
-    pub use func::MultiCallable;
+    pub use func::FuncSet;
     pub mod typed {
         use super::*;
 
         pub use func::TypedFuncPtr;
-        pub use func::TypedMultiCallable;
     }
 }
 

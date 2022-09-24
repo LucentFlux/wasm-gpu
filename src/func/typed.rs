@@ -1,4 +1,4 @@
-use crate::func::MultiCallable;
+use crate::func::{AbstractFuncPtr, FuncSet};
 use crate::typed::WasmTyVec;
 use crate::{Backend, FuncPtr, StoreSet};
 use anyhow::Context;
@@ -6,6 +6,7 @@ use futures::future::BoxFuture;
 use futures::FutureExt;
 use itertools::Itertools;
 use std::marker::PhantomData;
+use wasmtime::Val;
 
 pub struct TypedFuncPtr<B, T, Params, Results>
 where
@@ -47,45 +48,24 @@ where
     }
 }
 
-pub trait TypedMultiCallable<'a, B, T, Params, Results>
+impl<B, T, Params, Results> AbstractFuncPtr<B, T> for TypedFuncPtr<B, T, Params, Results>
 where
     B: Backend,
     Params: WasmTyVec,
     Results: WasmTyVec,
 {
-    /// A typed version of MultiCallable<B, T>
-    fn call_all(
-        self,
-        stores: &'a mut StoreSet<B, T>,
-        args_fn: impl FnMut(&T) -> Params,
-    ) -> BoxFuture<'a, Vec<anyhow::Result<Results>>>;
-}
+    type Params = Params;
+    type Results = Results;
 
-impl<'a, B: 'a, T: 'a, Params, Results, V> TypedMultiCallable<'a, B, T, Params, Results> for V
-where
-    V: IntoIterator<Item = &'a TypedFuncPtr<B, T, Params, Results>>,
-    B: Backend,
-    Params: WasmTyVec + 'a,
-    Results: WasmTyVec + 'a,
-{
-    fn call_all(
-        self,
-        stores: &'a mut StoreSet<B, T>,
-        mut args_fn: impl FnMut(&T) -> Params,
-    ) -> BoxFuture<'a, Vec<anyhow::Result<Results>>> {
-        let funcs: Vec<&FuncPtr<B, T>> = self.into_iter().map(|v| &v.func).collect_vec();
+    fn parse_params(params: Self::Params) -> Vec<Val> {
+        params.to_val_vec()
+    }
 
-        let futures = funcs
-            .call_all(stores, move |v| args_fn(v).to_val_vec())
-            .then(async move |results| {
-                results
-                    .into_iter()
-                    .map_ok(move |res| {
-                        Results::try_from_val_vec(&res)
-                            .expect("typechecking failed, function returned invalid result")
-                    })
-                    .collect_vec()
-            });
-        return Box::pin(futures);
+    fn gen_results(results: Vec<Val>) -> anyhow::Result<Self::Results> {
+        Results::try_from_val_vec(&results)
+    }
+
+    fn get_ptr(&self) -> FuncPtr<B, T> {
+        self.func.get_ptr()
     }
 }

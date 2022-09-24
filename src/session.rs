@@ -1,5 +1,7 @@
 use crate::{Backend, FuncPtr, Store};
 use futures::future::BoxFuture;
+use itertools::Itertools;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use wasmtime::Val;
 
@@ -17,7 +19,7 @@ where
     B: Backend,
 {
     backend: Arc<B>,
-    tasks: Vec<(usize, &'a mut Store<B, T>, &'a FuncPtr<B, T>, Vec<Val>)>,
+    tasks: Vec<(usize, &'a mut Store<B, T>, FuncPtr<B, T>, Vec<Val>)>,
 }
 
 impl<'a, B, T> Session<'a, B, T>
@@ -26,7 +28,7 @@ where
 {
     pub fn new(
         backend: Arc<B>,
-        entry_funcs: Vec<(usize, &'a mut Store<B, T>, &'a FuncPtr<B, T>, Vec<Val>)>,
+        entry_funcs: Vec<(usize, &'a mut Store<B, T>, FuncPtr<B, T>, Vec<Val>)>,
     ) -> Self {
         Self {
             backend,
@@ -35,6 +37,6 @@ where
     }
 
     pub fn run(self) -> BoxFuture<'a, Vec<anyhow::Result<Vec<Val>>>> {
-        todo!()
+        unimplemented!()
     }
 }

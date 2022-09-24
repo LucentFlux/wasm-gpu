@@ -1,4 +1,6 @@
 use crate::atomic_counter::AtomicCounter;
+use crate::wgpu::async_buffer::AsyncBuffer;
+use crate::wgpu::async_device::AsyncDevice;
 use crate::wgpu::WgpuFuture;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -26,7 +28,7 @@ impl Default for BufferRingConfig {
 pub struct BufferRingBuffer {
     semaphore: OwnedSemaphorePermit,
     buffer_size: usize,
-    pub(crate) buffer: wgpu::Buffer,
+    pub(crate) buffer: AsyncBuffer,
 }
 
 impl BufferRingBuffer {
@@ -38,8 +40,8 @@ impl BufferRingBuffer {
 pub struct BufferRing {
     config: BufferRingConfig,
 
-    device: Arc<wgpu::Device>,
-    unused_buffers: Mutex<VecDeque<wgpu::Buffer>>,
+    device: Arc<AsyncDevice>,
+    unused_buffers: Mutex<VecDeque<AsyncBuffer>>,
     free_buffers: Arc<Semaphore>, // Tracks the above dequeue
     map_mode: MapMode,
 
@@ -49,7 +51,7 @@ pub struct BufferRing {
 
 impl BufferRing {
     pub fn new(
-        device: Arc<wgpu::Device>,
+        device: Arc<AsyncDevice>,
         label: String,
         map_mode: MapMode,
         config: BufferRingConfig,
@@ -97,9 +99,6 @@ impl BufferRing {
     /// Gets a new buffer of size STAGING_BUFFER_SIZE. If map_mode is MapMode::Write, then the whole
     /// buffer is already mapped to CPU memory
     pub async fn pop(&self) -> BufferRingBuffer {
-        // On mapping we need to poll to trigger the callback
-        self.device.poll(Maintain::Poll);
-
         let semaphore = self.free_buffers.clone().acquire_owned().await.unwrap();
         let buffer = self
             .unused_buffers
@@ -121,21 +120,18 @@ impl BufferRing {
             semaphore, buffer, ..
         } = buffer;
 
-        let future = WgpuFuture::new(self.device.clone());
-
         match self.map_mode {
             MapMode::Read => {
                 buffer.unmap();
                 future.callback()(Ok(()));
             }
             MapMode::Write => {
-                buffer
-                    .slice(..)
-                    .map_async(MapMode::Write, future.callback());
+                self.device
+                    .do_async(|callback| buffer.slice(..).map_async(MapMode::Write, callback))
+                    .await
+                    .expect("error mapping buffer");
             }
         };
-
-        future.await.expect("error mapping buffer");
 
         self.unused_buffers.lock().unwrap().push_back(buffer);
         drop(semaphore);
