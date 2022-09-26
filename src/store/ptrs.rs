@@ -1,20 +1,19 @@
 use crate::Backend;
+use wasmparser::{FuncType, MemoryType, TableType};
 use wasmtime_environ::{MemoryPlan, TablePlan, WasmFuncType, WasmType};
 
 /// Since all stores in a store set are instantiated the same from a builder,
 /// this pointer actually points to a collection of locations,
 /// i.e. all locations that correspond to the same logical WASM location inside any of the
 /// stores created by a StoreSet with the ID held by this ptr.
-///
-/// Pointers should be created by a `StoreSetBuilder`, and then queried by a `Store`
 pub trait StorePtr {
     fn get_store_id(&self) -> usize;
-    fn get_ptr(&self) -> usize;
 }
 
 #[macro_export]
 macro_rules! impl_ptr {
-    (pub struct $name:ident <B, T> {... $($e_vis:vis $e_ident:ident : $e_type:ty ,)*}) => {
+    (pub struct $name:ident <B, T> {... $($e_vis:vis $e_ident:ident : $e_type:ty),* $(,)?}) => {
+        #[derive(Debug)]
         pub struct $name<B, T>
         where
             B: Backend,
@@ -62,9 +61,6 @@ macro_rules! impl_ptr {
         {
             fn get_store_id(&self) -> usize {
                 self.store_id
-            }
-            fn get_ptr(&self) -> usize {
-                self.ptr
             }
         }
 
@@ -117,7 +113,7 @@ impl_ptr!(
     pub struct FuncPtr<B, T> {
         ...
         // Copied from Func
-        ty: WasmFuncType,
+        ty: FuncType,
     }
 );
 
@@ -125,18 +121,7 @@ impl_ptr!(
     pub struct MemoryPtr<B, T> {
         ...
         // Copied from Memory
-        minimum: u64,
-        maximum: Option<u64>,
-    }
-);
-
-impl_ptr!(
-    pub struct TablePtr<B, T> {
-        ...
-        // Copied from Table
-        wasm_ty: WasmType,
-        minimum: u32,
-        maximum: Option<u32>,
+        ty: MemoryType,
     }
 );
 
@@ -152,7 +137,7 @@ where
         return self.ty.returns();
     }
 
-    pub fn is_type(&self, ty: &WasmFuncType) -> bool {
+    pub fn is_type(&self, ty: &FuncType) -> bool {
         return self.ty.eq(ty);
     }
 }
@@ -172,26 +157,7 @@ impl<B, T> MemoryPtr<B, T>
 where
     B: Backend,
 {
-    pub fn is_memory_type(&self, ty: &wasmtime_environ::Memory) -> bool {
-        // Imagine: Can this be used as a memory of type ty
-        limits_match(self.minimum, self.maximum, ty.minimum, ty.maximum)
-    }
-
-    pub fn is_type(&self, ty: &MemoryPlan) -> bool {
-        self.is_memory_type(&ty.memory)
-    }
-}
-
-impl<B, T> TablePtr<B, T>
-where
-    B: Backend,
-{
-    pub fn is_table_type(&self, ty: &wasmtime_environ::Table) -> bool {
-        return self.wasm_ty.eq(&ty.wasm_ty)
-            && limits_match(self.minimum, self.maximum, ty.minimum, ty.maximum);
-    }
-
-    pub fn is_type(&self, ty: &TablePlan) -> bool {
-        self.is_table_type(&ty.table)
+    pub fn is_type(&self, ty: &MemoryType) -> bool {
+        limits_match(self.ty.initial, self.ty.maximum, ty.initial, ty.maximum)
     }
 }

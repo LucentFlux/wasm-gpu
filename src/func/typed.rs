@@ -1,12 +1,12 @@
-use crate::func::{AbstractFuncPtr, FuncSet};
-use crate::typed::WasmTyVec;
-use crate::{Backend, FuncPtr, StoreSet};
+use crate::func::AbstractFuncPtr;
+use crate::store::ptrs::FuncPtr;
+use crate::typed::{Val, WasmTyVec};
+use crate::Backend;
 use anyhow::Context;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use itertools::Itertools;
 use std::marker::PhantomData;
-use wasmtime::Val;
 
 pub struct TypedFuncPtr<B, T, Params, Results>
 where

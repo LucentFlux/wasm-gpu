@@ -76,7 +76,7 @@ where
 
         return match self {
             Self::Main(m) => m,
-            _ => panic!("failed to move to main memory"),
+            _ => unreachable!(),
         };
     }
 
@@ -94,7 +94,7 @@ where
 
         return match self {
             Self::Device(m) => m,
-            _ => panic!("failed to move to device memory"),
+            _ => unreachable!(),
         };
     }
 }

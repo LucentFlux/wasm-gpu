@@ -5,6 +5,7 @@ mod buffer_ring;
 mod memory;
 
 pub use crate::wgpu::buffer_ring::BufferRingConfig;
+use std::fmt::{Debug, Formatter};
 
 use crate::atomic_counter::AtomicCounter;
 use crate::wgpu::async_device::AsyncDevice;
@@ -63,6 +64,12 @@ impl WgpuBackend {
             device,
             block_counter: AtomicCounter::new(),
         }
+    }
+}
+
+impl Debug for WgpuBackend {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "wgpu backend ({:?})", self.device)
     }
 }
 

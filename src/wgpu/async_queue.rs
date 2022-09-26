@@ -2,6 +2,7 @@ use crate::wgpu::async_device::AsyncDevice;
 use std::sync::Arc;
 use wgpu::{CommandBuffer, Queue};
 
+#[derive(Clone, Debug)]
 pub struct AsyncQueue {
     device: Arc<AsyncDevice>,
     queue: Queue,

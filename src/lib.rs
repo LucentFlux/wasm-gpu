@@ -5,13 +5,13 @@
 #![feature(future_join)]
 
 extern crate core;
+extern crate core;
 
 mod atomic_counter;
 mod backend;
 mod engine;
 mod externs;
 mod func;
-mod global_instance;
 mod instance;
 mod memory;
 mod module;

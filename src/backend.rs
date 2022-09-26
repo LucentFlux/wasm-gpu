@@ -1,4 +1,6 @@
-pub trait Backend: Sized {
+use std::fmt::Debug;
+
+pub trait Backend: Sized + Debug {
     type DeviceMemoryBlock: crate::memory::DeviceMemoryBlock<Self>;
     type MainMemoryBlock: crate::memory::MainMemoryBlock<Self>;
 

@@ -37,3 +37,14 @@ impl<T> AppendOnlyVec<T> {
         return self.inner.get(i).map(|v| v.inner.read().unwrap());
     }
 }
+
+impl<T> FromIterator<T> for AppendOnlyVec<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let vec: FrozenVec<_> = iter
+            .into_iter()
+            .map(|v| Box::new(ReadOnly::new(v)))
+            .collect();
+
+        Self { inner: vec }
+    }
+}

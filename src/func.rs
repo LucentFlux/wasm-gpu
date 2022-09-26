@@ -1,17 +1,17 @@
-mod typed;
+pub mod typed;
+pub mod func_ir;
 
 use futures::future::{BoxFuture, FutureExt};
 use itertools::Itertools;
 use std::marker::PhantomData;
-use wasmtime::{Val, ValType};
-use wasmtime_environ::{WasmFuncType, WasmType};
+use wasmparser::{FuncType, ValType, WasmFuncType};
 
 use crate::instance::ModuleInstance;
 use crate::memory::{DynamicMemoryBlock, Memory};
 use crate::session::Session;
 use crate::store::ptrs::FuncPtr;
 use crate::store::store::Store;
-use crate::typed::WasmTyVec;
+use crate::typed::{Val, WasmTyVec};
 use crate::{Backend, StoreSet, StoreSetBuilder};
 pub use typed::TypedFuncPtr;
 
@@ -73,7 +73,7 @@ where
     B: Backend,
 {
     kind: FuncKind<B, T>,
-    ty: WasmFuncType,
+    ty: FuncType,
 }
 
 impl<B, T> Func<B, T>
@@ -88,7 +88,7 @@ where
         return self.ty.results();
     }
 
-    pub fn ty(&self) -> WasmFuncType {
+    pub fn ty(&self) -> FuncType {
         self.ty.clone()
     }
 }
@@ -327,7 +327,7 @@ mod tests {
             + r#""))
             )
         "#;
-        let module = wasp::Module::new(&engine, wat).unwrap();
+        let module = wasp::Module::new(&engine, wat.into_bytes()).unwrap();
 
         let host_read = wasp::Func::wrap(
             &stores_builder,

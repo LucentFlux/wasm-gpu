@@ -1,24 +1,23 @@
 use crate::externs::Extern;
 use crate::func::TypedFuncPtr;
-use crate::global_instance::GlobalPtr;
+use crate::instance::table::TablePtr;
 use crate::memory::Memory;
+use crate::module::module_environ::ModuleExport;
 use crate::read_only::{AppendOnlyVec, ReadOnly};
-use crate::store::ptrs::{FuncPtr, MemoryPtr, TablePtr};
+use crate::store::ptrs::{FuncPtr, MemoryPtr};
 use crate::typed::WasmTyVec;
 use crate::{Backend, FuncPtr};
 use anyhow::{anyhow, Context};
 use elsa::sync::{FrozenMap, FrozenVec};
+use global::GlobalPtr;
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::ops::Deref;
 use std::sync::Arc;
 
-pub enum ModuleExport {
-    Func(usize),
-    Table(usize),
-    Memory(usize),
-    Global(usize),
-}
+pub mod element;
+pub mod global;
+pub mod table;
 
 pub struct ModuleInstance<B, T>
 where
@@ -36,6 +35,24 @@ impl<B, T> ModuleInstance<B, T>
 where
     B: Backend,
 {
+    pub fn new(
+        store_id: usize,
+        funcs: AppendOnlyVec<FuncPtr<B, T>>,
+        tables: AppendOnlyVec<TablePtr<B, T>>,
+        memories: AppendOnlyVec<MemoryPtr<B, T>>,
+        globals: AppendOnlyVec<GlobalPtr<B, T>>,
+        exports: FrozenMap<String, Arc<ReadOnly<ModuleExport>>>,
+    ) -> Self {
+        Self {
+            store_id,
+            funcs,
+            tables,
+            memories,
+            globals,
+            exports,
+        }
+    }
+
     pub fn get_export(&self, name: &str) -> Option<Extern<B, T>> {
         let mod_exp = self.exports.get(name)?;
         return Some(match mod_exp.read().unwrap().deref() {

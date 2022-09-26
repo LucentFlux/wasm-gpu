@@ -1,8 +1,6 @@
-use crate::global_instance::GlobalPtr;
-use crate::store::{FuncPtr, GlobalPtr, MemoryPtr, StorePtr, TablePtr};
-use crate::{Backend, Module};
-use wasmparser::types::EntityType;
-use wasmtime_environ::{EntityIndex, FunctionType};
+use crate::instance::global::GlobalPtr;
+use crate::store::ptrs::{FuncPtr, MemoryPtr, StorePtr, TablePtr};
+use crate::Backend;
 
 pub struct NamedExtern<'a, B, T>
 where
@@ -23,6 +21,7 @@ impl<'a, B, T> Clone for NamedExtern<'a, B, T> {
     }
 }
 
+#[derive(Debug)]
 pub enum Extern<B, T>
 where
     B: Backend,
@@ -39,10 +38,17 @@ where
 {
     fn get_store_id(&self) -> usize {
         match self {
-            Extern::Func(f) => f.get_store_id(),
-            Extern::Global(g) => g.get_store_id(),
-            Extern::Table(t) => t.get_store_id(),
-            Extern::Memory(m) => m.get_store_id(),
+            Extern::Func(sp) | Extern::Global(sp) | Extern::Table(sp) | Extern::Memory(sp) => {
+                sp.get_store_id()
+            }
+        }
+    }
+
+    fn get_ptr(&self) -> usize {
+        match self {
+            Extern::Func(sp) | Extern::Global(sp) | Extern::Table(sp) | Extern::Memory(sp) => {
+                sp.get_ptr()
+            }
         }
     }
 }

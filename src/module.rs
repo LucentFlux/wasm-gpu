@@ -1,22 +1,27 @@
+pub mod error;
+pub mod module_environ;
+
 use crate::externs::NamedExtern;
-use crate::global_instance::{GlobalInstance, GlobalPtr};
-use crate::store::ptrs::{FuncPtr, MemoryPtr, TablePtr};
-use crate::typed::wasm_ty_bytes;
+use crate::instance::element::{ElementInstance, ElementPtr};
+use crate::instance::global::{GlobalInstance, GlobalPtr};
+use crate::instance::table::{TableInstance, TableInstanceSet, TablePtr};
+use crate::module::module_environ::ModuleExport::Table;
+use crate::module::module_environ::{
+    Global, ImportTypeRef, ModuleEnviron, ParsedElementItems, ParsedElementKind, ParsedModule,
+};
+use crate::store::ptrs::{ElementPtr, FuncPtr, MemoryPtr};
+use crate::typed::{wasm_ty_bytes, FuncRef, Val};
 use crate::{Backend, Engine, Extern};
 use anyhow::{anyhow, Context, Error};
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
+use std::intrinsics::{size_of, unreachable};
 use std::ops::Index;
 use std::slice::Iter;
 use std::sync::Arc;
 use wasmparser::types::{EntityType, TypeId};
-use wasmparser::Validator;
-use wasmtime_environ::{
-    EntityIndex, FuncIndex, FunctionType, Global, GlobalIndex, Initializer, MemoryIndex,
-    MemoryPlan, ModuleEnvironment, ModuleTranslation, ModuleTypes, SignatureIndex, TableIndex,
-    TablePlan, WasmFuncType,
-};
+use wasmparser::{ElementKind, Type, ValType, Validator};
 
 /// A wasm module that has not been instantiated
 pub struct Module<'a, B>
@@ -24,10 +29,8 @@ where
     B: Backend,
 {
     backend: Arc<B>,
-    source: Cow<'a, [u8]>,
-    translation: ModuleTranslation<'a>,
-    types: ModuleTypes,
-    validator: Validator,
+    source: Vec<u8>,
+    parsed: ParsedModule<'a>,
 }
 
 pub struct ValidatedImports<B, T>
@@ -62,146 +65,32 @@ impl<'a, B> Module<'a, B>
 where
     B: Backend,
 {
-    pub fn new(engine: &Engine<B>, bytes: impl AsRef<[u8]>) -> Result<Self, Error> {
-        let bytes = bytes.as_ref();
-        let wasm: Cow<'a, [u8]> = wat::parse_bytes(bytes)?;
+    pub fn new(engine: &Engine<B>, bytes: Vec<u8>) -> Result<Self, Error> {
+        let wasm: Cow<'a, [u8]> = wat::parse_bytes(bytes.as_slice())?;
 
         let mut validator = Validator::new_with_features(engine.config().features.clone());
         let parser = wasmparser::Parser::new(0);
-        let mut types = Default::default();
-        let translation =
-            ModuleEnvironment::new(&engine.config().tunables, &mut validator, &mut types)
-                .translate(parser, &wasm)
-                .context("failed to parse WebAssembly module")?;
-        let types = types.finish();
-
-        // TODO: Typecheck and compile functions
+        let parsed = ModuleEnviron::new(validator)
+            .translate(parser, &wasm)
+            .context("failed to parse WebAssembly module")?;
 
         return Ok(Self {
             backend: engine.backend(),
-            source: wasm,
-            translation,
-            types,
-            validator,
+            source: bytes,
+            parsed,
         });
-    }
-
-    /// Returns an iterator of all the imports in this module
-    pub(crate) fn initializers(&self) -> Vec<Initializer> {
-        return self.translation.module.initializers.clone();
-    }
-
-    /// Extends a globals memory buffer and indirection buffer to fit the globals contained in this
-    /// module, then writes the initial values
-    pub(crate) async fn initialize_globals<T>(
-        &self,
-        globals_instance: &mut GlobalInstance<B>,
-        globals: impl Iterator<Item = GlobalPtr<B, T>>,
-    ) -> anyhow::Result<BTreeMap<GlobalIndex, GlobalPtr<B, T>>> {
-        let globals = globals.collect_vec();
-
-        // Make space for the values
-        let values_len: usize = self
-            .translation
-            .module
-            .globals
-            .iter()
-            .map(|(_, g)| wasm_ty_bytes(g.wasm_ty))
-            .sum();
-        let values_len = values_len - globals.len(); // The imports don't take any space
-        globals_instance.reserve(values_len);
-
-        // Sort globals by index
-        let sorted: BTreeMap<GlobalIndex, Global> =
-            self.translation.module.globals.iter().collect();
-
-        // Add the values
-        let mut imports_iter = globals.into_iter();
-        let mut futures = Vec::new();
-        for (global_index, global) in sorted.into_iter() {
-            let future = globals_instance
-                .add_global(global, &mut imports_iter)
-                .map(move |v| (global_index, v));
-            futures.push(future);
-        }
-
-        // Await all - this should be fast because the only thing to wait for is to map the memory the first time
-        let results: anyhow::Result<BTreeMap<GlobalIndex, GlobalPtr<B, T>>> =
-            futures::future::join_all(futures)
-                .await
-                .into_iter()
-                .collect();
-
-        return results;
-    }
-
-    fn extern_is_type<T>(&self, provided: &Extern<B, T>, ty: EntityIndex) -> bool {
-        match (provided, ty) {
-            (Extern::Func(f1), EntityIndex::Function(f2)) => {
-                let ty = self.translation.module.functions.get(f2);
-                let ty = match ty {
-                    None => return false,
-                    Some(ty) => ty,
-                };
-                let ty = self.types.index(ty.signature);
-                f1.is_type(ty)
-            }
-            (Extern::Memory(m1), EntityIndex::Memory(m2)) => {
-                let ty = self.translation.module.memory_plans.get(m2);
-                let ty = match ty {
-                    None => return false,
-                    Some(ty) => ty,
-                };
-                m1.is_type(ty)
-            }
-            (Extern::Global(g1), EntityIndex::Global(g2)) => {
-                let ty = self.translation.module.globals.get(g2);
-                let ty = match ty {
-                    None => return false,
-                    Some(ty) => ty,
-                };
-                g1.is_type(ty)
-            }
-            (Extern::Table(t1), EntityIndex::Table(t2)) => {
-                let ty = self.translation.module.table_plans.get(t2);
-                let ty = match ty {
-                    None => return false,
-                    Some(ty) => ty,
-                };
-                t1.is_type(ty)
-            }
-            (_, _) => false,
-        }
     }
 
     /// See 4.5.4 of WASM spec 2.0
     /// Performs 1-4
-    pub fn typecheck_imports<B>(
+    pub fn typecheck_imports<T>(
         &self,
-        imports: impl IntoIterator<Item = &NamedExtern<B, T>>,
-    ) -> anyhow::Result<ValidatedImports<B, T>>
-    where
-        B: Backend,
-    {
+        provided_imports: &Vec<NamedExtern<B, T>>,
+    ) -> anyhow::Result<ValidatedImports<B, T>> {
         // 1, 2. ASSERT module is valid, done in Module construction
 
         // 3. Import count matches required imports
-        let provided_imports: Vec<NamedExtern<B, T>> = imports
-            .into_iter()
-            .map(NamedExtern::<B, T>::clone)
-            .collect_vec();
-        let initializers = self.initializers();
-
-        // Separate types
-        // For now this is just imports
-        let mut required_imports = Vec::new();
-        for initializer in initializers {
-            match initializer {
-                Initializer::Import { name, field, index } => {
-                    required_imports.push((name, field, index))
-                }
-            }
-        }
+        // Not required since we link on names instead
 
         // 4. Match imports
         // First link on names
@@ -219,36 +108,202 @@ where
             tables: vec![],
             memories: vec![],
         };
-        for (module_name, import_name, required_import) in required_imports {
-            // 4.a. Check types are valid
-            // Check name exists
-            let provided_import: &Extern<B, T> = import_by_name
-                .get(&(module_name, import_name))
-                .ok_or(anyhow!("import with name {} not found", import_name))?;
+        for (module, name, required_import) in self.parsed.imports.iter() {
+            // Get provided
+            let provided_import = import_by_name
+                .get(&(module.to_owned(), name.to_owned()))
+                .ok_or(anyhow!(
+                    "missing import with module {} and name {}",
+                    module,
+                    name
+                ))?;
 
-            // Check provided import matches
-            if provided_import.get_store_id() != self.id {
-                anyhow!("imported extern is from a different store")?;
-            }
-
-            // 4.b. Check types match
-            if !self.extern_is_type(&provided_import, required_import) {
-                anyhow!(
-                    "invalid import type: got {} but expected {:?}",
-                    provided_import.type_name(),
-                    required_type
-                )?;
-            }
-
-            // Put in vec in order of import
-            match provided_import.clone() {
-                Extern::Func(fp) => validated_imports.functions.push(fp),
-                Extern::Global(gp) => validated_imports.globals.push(gp),
-                Extern::Table(tp) => validated_imports.tables.push(tp),
-                Extern::Memory(mp) => validated_imports.memories.push(mp),
+            // Check type
+            let matches = match required_import {
+                ImportTypeRef::Func(f_id) => {
+                    let ty = self
+                        .parsed
+                        .types
+                        .get((*f_id) as usize)
+                        .expect("import function id was out of range");
+                    match (ty, provided_import) {
+                        (Type::Func(f1), Extern::Func(f2)) => f2.is_type(f1),
+                        _ => false,
+                    }
+                }
+                ImportTypeRef::Table(t1) => match provided_import {
+                    Extern::Table(t2) => t2.is_type(t1),
+                    _ => false,
+                },
+                ImportTypeRef::Memory(m1) => match provided_import {
+                    Extern::Memory(m2) => m2.is_type(m1),
+                    _ => false,
+                },
+                ImportTypeRef::Global(g1) => match provided_import {
+                    Extern::Global(g2) => g2.is_type(g1),
+                    _ => false,
+                },
             };
+
+            if !matches {
+                return Err(anyhow!(
+                    "import types do not match - expected {:?} but got {:?}",
+                    required_import,
+                    provided_import
+                ));
+            }
         }
 
         return Ok(validated_imports);
+    }
+
+    /// Extends a globals memory buffer and indirection buffer to fit the globals contained in this
+    /// module, then writes the initial values
+    pub(crate) async fn initialize_globals<T>(
+        &self,
+        globals_instance: &mut GlobalInstance<B>,
+        globals: impl Iterator<Item = GlobalPtr<B, T>>,
+    ) -> anyhow::Result<Vec<GlobalPtr<B, T>>> {
+        let globals = globals.collect_vec();
+
+        // Make space for the values
+        let values_len: usize = self
+            .translation
+            .module
+            .globals
+            .iter()
+            .map(|(_, g)| wasm_ty_bytes(g.wasm_ty))
+            .sum();
+        let values_len = values_len - globals.len(); // The imports don't take any space
+        globals_instance.reserve(values_len).await;
+
+        // Add the values
+        let mut imports_iter = globals.into_iter();
+        let mut results = Vec::new();
+        for (global) in globals.into_iter() {
+            let ptr: GlobalPtr<B, T> = globals_instance
+                .add_global(global, &mut imports_iter, results.as_slice())
+                .await?;
+            results.push(ptr);
+        }
+
+        return Ok(results);
+    }
+
+    pub(crate) fn predict_functions<T>(&self, id: usize, start: usize) -> Vec<FuncPtr<B, T>> {
+        self.parsed
+            .functions
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                FuncPtr::new(
+                    start + i,
+                    id,
+                    match self
+                        .parsed
+                        .types
+                        .get(f.type_id as usize)
+                        .expect("function type index out of range")
+                    {
+                        Type::Func(f) => f.clone(),
+                    },
+                )
+            })
+            .collect_vec()
+    }
+
+    /// Extends elements buffers to be shared by all stores of a set, as passive elements are immutable
+    pub(crate) async fn initialize_elements<T>(
+        &self,
+        elements: &mut ElementInstance<B>,
+        // Needed for const expr evaluation
+        globals: &mut GlobalInstance<B>,
+        global_ptrs: &Vec<GlobalPtr<B, T>>,
+        func_ptrs: &Vec<FuncPtr<B, T>>,
+    ) -> anyhow::Result<Vec<ElementPtr<B, T>>> {
+        // Reserve space first
+        let size: usize =
+            size_of::<FuncRef>() * self.parsed.elements.iter().map(|e| e.range.len()).sum();
+        elements.reserve(size).await;
+
+        // Then add
+        let mut ptrs = Vec::new();
+        for element in self.parsed.elements.iter() {
+            // Evaluate values
+            let vals = match &element.items {
+                ParsedElementItems::Func(vs) => vs,
+                ParsedElementItems::Expr(exprs) => {
+                    let mut vs = Vec::new();
+                    for expr in exprs.iter() {
+                        let v = globals
+                            .interpret_constexpr(expr, global_ptrs, func_ptrs)
+                            .await;
+                        let v = match (v, &element.ty) {
+                            (Val::FuncRef(fr), ValType::FuncRef) => fr.as_u32(),
+                            (Val::ExternRef(er), ValType::ExternRef) => er.as_u32(),
+                            _ => unreachable!(),
+                        };
+                        vs.push(v);
+                    }
+
+                    &vs
+                }
+            };
+
+            let ptr = elements.add_element(vals).await?;
+            ptrs.push(ptr);
+        }
+
+        return Ok(ptrs);
+    }
+
+    pub(crate) async fn initialize_tables<T>(
+        &self,
+        tables: &mut TableInstanceSet<B>,
+        imported_tables: Iter<TablePtr<B, T>>,
+        elements: &mut ElementInstance<B>,
+        module_element_ptrs: &Vec<ElementPtr<B, T>>,
+        // Needed for const expr evaluation
+        globals: &mut GlobalInstance<B>,
+        global_ptrs: &Vec<GlobalPtr<B, T>>,
+        func_ptrs: &Vec<FuncPtr<B, T>>,
+    ) -> Vec<TablePtr<B, T>> {
+        // Pointers starts with imports
+        let mut ptrs = Vec::from(imported_tables.map(|tp| tp.clone()));
+
+        // Create tables first
+        for table_plan in self.parsed.tables.iter() {
+            let ptr = tables.add_table(table_plan).await;
+            ptrs.push(ptr);
+        }
+
+        // Initialise from elements
+        for (element, element_ptr) in self.parsed.elements.iter().zip_eq(module_element_ptrs) {
+            match &element.kind {
+                ParsedElementKind::Active {
+                    table_index,
+                    offset_expr,
+                } => {
+                    let table_ptr = ptrs
+                        .get((*table_index) as usize)
+                        .expect("table index out of range");
+                    let v = globals
+                        .interpret_constexpr(offset_expr, global_ptrs, func_ptrs)
+                        .await;
+                    let offset = match v {
+                        Val::I32(v) => v as usize,
+                        Val::I64(v) => v as usize,
+                        _ => unreachable!(),
+                    };
+
+                    let data = elements.get(element_ptr).await?;
+
+                    tables.initialize(table_ptr, data, offset)
+                }
+                _ => {}
+            }
+        }
+
+        return ptrs;
     }
 }

@@ -1,20 +1,26 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::externs::NamedExtern;
 use crate::func::TypedFuncPtr;
-use crate::global_instance::{GlobalInstance, GlobalType};
+use crate::instance::element::ElementInstance;
+use crate::instance::global::{GlobalInstance, GlobalPtr, GlobalType};
+use crate::instance::table::{TableInstance, TableInstanceSet};
 use crate::instance::ModuleInstance;
 use crate::memory::{DynamicMemoryBlock, Memory};
+use crate::module::module_environ::Global;
 use crate::read_only::{AppendOnlyVec, ReadOnly};
 use crate::store::ptrs::{FuncPtr, MemoryPtr, StorePtr};
-use crate::typed::WasmTyVec;
+use crate::typed::{ExternRef, FuncRef, Val, WasmTyVec};
 use crate::{Backend, Engine, Extern, Func, Module, StoreSet};
 use anyhow::{anyhow, Context};
-use elsa::sync::{FrozenMap, FrozenVec};
+use elsa::{FrozenMap, FrozenVec};
+use futures::StreamExt;
 use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::intrinsics::unreachable;
 use std::marker::PhantomData;
 use std::sync::{Arc, RwLock};
+use wasmparser::{Operator, ValType};
 use wasmtime::{FuncType, ValType};
 use wasmtime_environ::{
     EntityIndex, FunctionType, Global, Initializer, MemoryPlan, TablePlan, WasmFuncType, WasmType,
@@ -31,17 +37,17 @@ where
 {
     backend: Arc<B>,
 
-    functions: Arc<AppendOnlyVec<Func<B, T>>>,
-    tables: Vec<()>,
+    functions: Vec<Func<B, T>>,
+    tables: TableInstanceSet<B>,
     memories: Vec<DynamicMemoryBlock<B>>,
     globals: GlobalInstance<B>,
-    elements: Arc<AppendOnlyVec<()>>,
-    datas: Arc<AppendOnlyVec<DynamicMemoryBlock<B>>>,
+    elements: ElementInstance<B>,
+    datas: Vec<DynamicMemoryBlock<B>>,
 
     id: usize,
 }
 
-impl<'a, B: 'a, T: 'a> StoreSetBuilder<B, T>
+impl<B, T> StoreSetBuilder<B, T>
 where
     B: Backend,
 {
@@ -50,12 +56,12 @@ where
         Self {
             backend: engine.backend(),
 
-            functions: Arc::new(AppendOnlyVec::new()),
-            tables: Vec::new(),
+            functions: Vec::new(),
+            tables: TableInstanceSet::new(),
             memories: Vec::new(),
             globals: GlobalInstance::new(engine.backend(), id),
-            elements: Arc::new(AppendOnlyVec::new()),
-            datas: Arc::new(AppendOnlyVec::new()),
+            elements: ElementInstance::new(engine.backend(), id),
+            datas: Vec::new(),
 
             id,
         }
@@ -65,20 +71,86 @@ where
         self.backend.clone()
     }
 
+    /// Instantiation within a builder moves all of the data to the device. This means that constructing
+    /// stores from the builder involves no copying of data from the CPU to the GPU, only within the GPU.
     pub async fn instantiate_module(
         &mut self,
         module: &Module<B>,
         imports: impl IntoIterator<Item = NamedExtern<B, T>>,
     ) -> anyhow::Result<ModuleInstance<B, T>> {
-        // Instantiation 1-4
+        // Validation
         let validated_imports = module.typecheck_imports(imports)?;
 
-        // Instantiation 5: Globals - shared instantiation which copies later
+        // Globals
         let global_ptrs = module
             .initialize_globals(&mut self.globals, validated_imports.globals())
-            .await;
+            .await?;
 
-        return Ok(ModuleInstance {});
+        // Predict the function pointers that we *will* be creating
+        let predicted_func_ptrs = module.predict_functions(self.id, self.functions.len());
+
+        // Elements
+        let element_ptrs = module
+            .initialize_elements(
+                &mut self.elements,
+                &mut self.globals,
+                &global_ptrs,
+                &predicted_func_ptrs,
+            )
+            .await?;
+
+        // Tables
+        let table_ptrs = module
+            .initialize_tables(
+                &mut self.tables,
+                validated_imports.tables(),
+                &mut self.elements,
+                &element_ptrs,
+                &mut self.globals,
+                &global_ptrs,
+                &predicted_func_ptrs,
+            )
+            .await?;
+
+        // Datas
+        let data_ptrs = module.initialize_datas(&mut self.datas).await?;
+
+        // Memories
+        let memory_ptrs = module
+            .initialize_memories(&mut self.memories, validated_imports.memories(), &data_ptrs)
+            .await?;
+
+        // Functions - they take everything
+        let func_ptrs = module
+            .initialize_functions(
+                &mut self.functions,
+                validated_imports.functions(),
+                &global_ptrs,
+                &element_ptrs,
+                &table_ptrs,
+                &data_ptrs,
+                &memory_ptrs,
+            )
+            .await?;
+        debug_assert_eq!(predicted_func_ptrs, func_ptrs);
+
+        // Final setup, consisting of the Start function, must be performed in the build step if it
+        // calls any host functions
+        if let Some(_start) = module.start_fn_index() {
+            unimplemented!()
+        }
+
+        // Collect exports from pointers
+        let exports =
+            module.collect_exports(&global_ptrs, &table_ptrs, &memory_ptrs, &func_ptrs)?;
+
+        let funcs = func_ptrs.into_values().collect();
+        let tables = table_ptrs.into_values().collect();
+        let memories = memory_ptrs.into_values().collect();
+        let globals = global_ptrs.into_values().collect();
+        return Ok(ModuleInstance::new(
+            self.id, funcs, tables, memories, globals, exports,
+        ));
     }
 
     pub fn register_function(&self, func: Func<B, T>) -> FuncPtr<B, T> {

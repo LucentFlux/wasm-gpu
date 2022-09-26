@@ -12,6 +12,7 @@ use wgpu::{
     MaintainBase,
 };
 
+#[derive(Clone, Debug)]
 pub struct AsyncDevice {
     device: Arc<Device>,
 }

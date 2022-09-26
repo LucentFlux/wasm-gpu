@@ -2,7 +2,7 @@
 //! created from the 'factory' of a StoreSet
 
 use crate::externs::NamedExtern;
-use crate::global_instance::GlobalInstance;
+use crate::instance::global::GlobalInstance;
 use crate::memory::DynamicMemoryBlock;
 use crate::read_only::{AppendOnlyVec, ReadOnly};
 use crate::store::ptrs::{FuncPtr, MemoryPtr, StorePtr};
