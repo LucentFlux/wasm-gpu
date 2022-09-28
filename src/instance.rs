@@ -15,9 +15,9 @@ use std::borrow::Cow;
 use std::ops::Deref;
 use std::sync::Arc;
 
+pub mod r#abstract;
+pub mod data;
 pub mod element;
-pub mod global;
-pub mod table;
 
 pub struct ModuleInstance<B, T>
 where

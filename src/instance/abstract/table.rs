@@ -1,11 +1,12 @@
+use crate::func::typed::limits_match;
 use crate::memory::DynamicMemoryBlock;
 use crate::{impl_ptr, Backend};
 use itertools::Itertools;
 use std::sync::Arc;
 use wasmparser::TableType;
 
-/// Context in which a table pointer is valid
-pub struct TableInstanceSet<B>
+/// Context in which an abstract table pointer is valid
+pub struct AbstractTableInstanceSet<B>
 where
     B: Backend,
 {
@@ -14,8 +15,8 @@ where
     tables: Vec<TableInstance<B>>,
 }
 
-impl TableInstanceSet<B> {
-    pub fn new(store_id: usize, backend: Arc<B>) -> Self {
+impl AbstractTableInstanceSet<B> {
+    pub fn new(backend: Arc<B>, store_id: usize) -> Self {
         Self {
             store_id,
             backend,
@@ -23,19 +24,19 @@ impl TableInstanceSet<B> {
         }
     }
 
-    pub async fn add_table<T>(&mut self, plan: &TableType) -> TablePtr<B, T> {
+    pub async fn add_table<T>(&mut self, plan: &TableType) -> AbstractTablePtr<B, T> {
         let ptr = self.tables.len();
         self.tables.push(TableInstance::new(
             self.backend.clone(),
             self.store_id,
             plan.initial as usize,
         ));
-        return TablePtr::new(ptr, self.store_id, plan.clone());
+        return AbstractTablePtr::new(ptr, self.store_id, plan.clone());
     }
 
     pub async fn initialize<T>(
         &mut self,
-        ptr: &TablePtr<B, T>,
+        ptr: &AbstractTablePtr<B, T>,
         data: &[u8],
         offset: usize,
     ) -> anyhow::Result<()> {
@@ -45,7 +46,7 @@ impl TableInstanceSet<B> {
     }
 }
 
-pub struct TableInstance<B>
+pub struct AbstractTableInstance<B>
 where
     B: Backend,
 {
@@ -56,7 +57,7 @@ where
     store_id: usize,
 }
 
-impl<B> TableInstance<B>
+impl<B> AbstractTableInstance<B>
 where
     B: Backend,
 {
@@ -69,12 +70,7 @@ where
     }
 
     pub async fn initialize<T>(&mut self, data: &[u8], offset: usize) -> anyhow::Result<()> {
-        let start = offset;
-        let end = start + data.len();
-        let slice = self.references.as_slice_mut(start..end).await?;
-        slice.copy_from_slice(data);
-
-        return Ok(());
+        return self.references.write(data, offset).await;
     }
 }
 
@@ -84,14 +80,12 @@ impl_ptr!(
         // Copied from Table
         ty: TableType,
     }
-);
 
-impl<B, T> TablePtr<B, T>
-where
-    B: Backend,
-{
-    pub fn is_type(&self, ty: &TableType) -> bool {
-        self.ty.element_type.eq(&ty.element_type)
-            && limits_match(self.ty.initial, self.ty.maximum, ty.initial, ty.maximum)
+    impl<B, T> TablePtr<B, T>
+    {
+        pub fn is_type(&self, ty: &TableType) -> bool {
+            self.ty.element_type.eq(&ty.element_type)
+                && limits_match(self.ty.initial, self.ty.maximum, ty.initial, ty.maximum)
+        }
     }
-}
+);

@@ -2,16 +2,20 @@ pub mod error;
 pub mod module_environ;
 
 use crate::externs::NamedExtern;
+use crate::instance::data::{DataInstance, DataPtr};
 use crate::instance::element::{ElementInstance, ElementPtr};
 use crate::instance::global::{GlobalInstance, GlobalPtr};
+use crate::instance::r#abstract::global::AbstractGlobalInstance;
+use crate::instance::r#abstract::memory::AbstractMemoryInstanceSet;
+use crate::instance::r#abstract::table::AbstractTableInstanceSet;
 use crate::instance::table::{TableInstance, TableInstanceSet, TablePtr};
+use crate::memory::DynamicMemoryBlock;
 use crate::module::module_environ::ModuleExport::Table;
 use crate::module::module_environ::{
     Global, ImportTypeRef, ModuleEnviron, ParsedElementItems, ParsedElementKind, ParsedModule,
 };
-use crate::store::ptrs::{ElementPtr, FuncPtr, MemoryPtr};
 use crate::typed::{wasm_ty_bytes, FuncRef, Val};
-use crate::{Backend, Engine, Extern};
+use crate::{Backend, Engine, Extern, Func};
 use anyhow::{anyhow, Context, Error};
 use itertools::Itertools;
 use std::borrow::Cow;
@@ -37,26 +41,26 @@ pub struct ValidatedImports<B, T>
 where
     B: Backend,
 {
-    functions: Vec<FuncPtr<B, T>>,
-    globals: Vec<GlobalPtr<B, T>>,
-    tables: Vec<TablePtr<B, T>>,
-    memories: Vec<MemoryPtr<B, T>>,
+    functions: Vec<AbstractFuncPtr<B, T>>,
+    globals: Vec<AbstractGlobalPtr<B, T>>,
+    tables: Vec<AbsractTablePtr<B, T>>,
+    memories: Vec<AbstractMemoryPtr<B, T>>,
 }
 
 impl<B, T> ValidatedImports<B, T>
 where
     B: Backend,
 {
-    pub fn functions(&self) -> Iter<FuncPtr<B, T>> {
+    pub fn functions(&self) -> Iter<AbstractFuncPtr<B, T>> {
         self.functions.iter()
     }
-    pub fn globals(&self) -> Iter<GlobalPtr<B, T>> {
+    pub fn globals(&self) -> Iter<AbstractGlobalPtr<B, T>> {
         self.globals.iter()
     }
-    pub fn tables(&self) -> Iter<TablePtr<B, T>> {
+    pub fn tables(&self) -> Iter<AbsractTablePtr<B, T>> {
         self.tables.iter()
     }
-    pub fn memories(&self) -> Iter<MemoryPtr<B, T>> {
+    pub fn memories(&self) -> Iter<AbstractMemoryPtr<B, T>> {
         self.memories.iter()
     }
 }
@@ -161,9 +165,9 @@ where
     /// module, then writes the initial values
     pub(crate) async fn initialize_globals<T>(
         &self,
-        globals_instance: &mut GlobalInstance<B>,
-        globals: impl Iterator<Item = GlobalPtr<B, T>>,
-    ) -> anyhow::Result<Vec<GlobalPtr<B, T>>> {
+        globals_instance: &mut AbstractGlobalInstance<B>,
+        globals: impl Iterator<Item = AbstractGlobalPtr<B, T>>,
+    ) -> anyhow::Result<Vec<AbstractGlobalPtr<B, T>>> {
         let globals = globals.collect_vec();
 
         // Make space for the values
@@ -215,15 +219,15 @@ where
     /// Extends elements buffers to be shared by all stores of a set, as passive elements are immutable
     pub(crate) async fn initialize_elements<T>(
         &self,
-        elements: &mut ElementInstance<B>,
+        elements: &mut AbstractElementInstance<B>,
         // Needed for const expr evaluation
-        globals: &mut GlobalInstance<B>,
-        global_ptrs: &Vec<GlobalPtr<B, T>>,
-        func_ptrs: &Vec<FuncPtr<B, T>>,
-    ) -> anyhow::Result<Vec<ElementPtr<B, T>>> {
+        globals: &mut AbstractGlobalInstance<B>,
+        global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
+        func_ptrs: &Vec<AbstractFuncPtr<B, T>>,
+    ) -> anyhow::Result<Vec<AbstractElementPtr<B, T>>> {
         // Reserve space first
         let size: usize =
-            size_of::<FuncRef>() * self.parsed.elements.iter().map(|e| e.range.len()).sum();
+            size_of::<FuncRef>() * self.parsed.elements.iter().map(|e| e.items.len()).sum();
         elements.reserve(size).await;
 
         // Then add
@@ -259,15 +263,15 @@ where
 
     pub(crate) async fn initialize_tables<T>(
         &self,
-        tables: &mut TableInstanceSet<B>,
-        imported_tables: Iter<TablePtr<B, T>>,
-        elements: &mut ElementInstance<B>,
-        module_element_ptrs: &Vec<ElementPtr<B, T>>,
+        tables: &mut AbstractTableInstanceSet<B>,
+        imported_tables: Iter<AbstractTablePtr<B, T>>,
+        elements: &mut AbstractElementInstance<B>,
+        module_element_ptrs: &Vec<AbstractElementPtr<B, T>>,
         // Needed for const expr evaluation
-        globals: &mut GlobalInstance<B>,
-        global_ptrs: &Vec<GlobalPtr<B, T>>,
-        func_ptrs: &Vec<FuncPtr<B, T>>,
-    ) -> Vec<TablePtr<B, T>> {
+        globals: &mut AbstractGlobalInstance<B>,
+        global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
+        func_ptrs: &Vec<AbstractFuncPtr<B, T>>,
+    ) -> anyhow::Result<Vec<AbstractTablePtr<B, T>>> {
         // Pointers starts with imports
         let mut ptrs = Vec::from(imported_tables.map(|tp| tp.clone()));
 
@@ -304,6 +308,42 @@ where
             }
         }
 
-        return ptrs;
+        return Ok(ptrs);
+    }
+
+    pub(crate) async fn initialize_datas(
+        &self,
+        datas: &mut DataInstance<B>,
+    ) -> anyhow::Result<Vec<AbstractDataPtr<B, T>>> {
+        // Reserve space first
+        let size: usize = self.parsed.datas.iter().map(|e| e.data.len()).sum();
+        datas.reserve(size).await;
+
+        // Then add
+        let mut ptrs = Vec::new();
+        for data in self.parsed.datas.iter() {
+            let ptr = datas.add_data(data.data).await?;
+            ptrs.push(ptr);
+        }
+
+        return Ok(ptrs);
+    }
+
+    pub(crate) async fn initialize_memories<T>(
+        &self,
+        memory_set: &mut AbstractMemoryInstanceSet<B>,
+        imported_memories: Iter<AbstractMemoryPtr<B, T>>,
+        datas: &mut DataInstance<B>,
+        module_data_ptrs: &Vec<AbstractDataPtr<B, T>>,
+        // Needed for const expr evaluation
+        globals: &mut GlobalInstance<B>,
+        global_ptrs: &Vec<GlobalPtr<B, T>>,
+        func_ptrs: &Vec<FuncPtr<B, T>>,
+    ) -> anyhow::Result<Vec<AbstractMemoryPtr<B, T>>> {
+        unimplemented!()
+    }
+
+    pub(crate) async fn initialize_functions<T>(&self) -> anyhow::Result<Vec<MemoryPtr<B, T>>> {
+        unimplemented!()
     }
 }

@@ -1,5 +1,4 @@
-use crate::instance::global::GlobalPtr;
-use crate::store::ptrs::{FuncPtr, MemoryPtr, StorePtr, TablePtr};
+use crate::instance::global::AbstractGlobalPtr;
 use crate::Backend;
 
 pub struct NamedExtern<'a, B, T>
@@ -26,31 +25,10 @@ pub enum Extern<B, T>
 where
     B: Backend,
 {
-    Func(FuncPtr<B, T>),
-    Global(GlobalPtr<B, T>),
-    Table(TablePtr<B, T>),
-    Memory(MemoryPtr<B, T>),
-}
-
-impl<B, T> StorePtr for Extern<B, T>
-where
-    B: Backend,
-{
-    fn get_store_id(&self) -> usize {
-        match self {
-            Extern::Func(sp) | Extern::Global(sp) | Extern::Table(sp) | Extern::Memory(sp) => {
-                sp.get_store_id()
-            }
-        }
-    }
-
-    fn get_ptr(&self) -> usize {
-        match self {
-            Extern::Func(sp) | Extern::Global(sp) | Extern::Table(sp) | Extern::Memory(sp) => {
-                sp.get_ptr()
-            }
-        }
-    }
+    Func(AbstractFuncPtr<B, T>),
+    Global(AbstractGlobalPtr<B, T>),
+    Table(AbstractTablePtr<B, T>),
+    Memory(AbstractMemoryPtr<B, T>),
 }
 
 impl<B, T> Clone for Extern<B, T>
@@ -67,49 +45,38 @@ where
     }
 }
 
-impl<B, T> From<FuncPtr<B, T>> for Extern<B, T>
+impl<B, T> From<AbstractFuncPtr<B, T>> for Extern<B, T>
 where
     B: Backend,
 {
-    fn from(f: FuncPtr<B, T>) -> Self {
+    fn from(f: AbstractFuncPtr<B, T>) -> Self {
         Self::Func(f)
     }
 }
 
-impl<B, T> From<MemoryPtr<B, T>> for Extern<B, T>
+impl<B, T> From<AbstractMemoryPtr<B, T>> for Extern<B, T>
 where
     B: Backend,
 {
-    fn from(m: MemoryPtr<B, T>) -> Self {
+    fn from(m: AbstractMemoryPtr<B, T>) -> Self {
         Self::Memory(m)
     }
 }
 
-impl<B, T> From<GlobalPtr<B, T>> for Extern<B, T>
+impl<B, T> From<AbstractGlobalPtr<B, T>> for Extern<B, T>
 where
     B: Backend,
 {
-    fn from(g: GlobalPtr<B, T>) -> Self {
+    fn from(g: AbstractGlobalPtr<B, T>) -> Self {
         Self::Global(g)
     }
 }
 
-impl<B, T> From<TablePtr<B, T>> for Extern<B, T>
+impl<B, T> From<AbstractTablePtr<B, T>> for Extern<B, T>
 where
     B: Backend,
 {
-    fn from(t: TablePtr<B, T>) -> Self {
+    fn from(t: AbstractTablePtr<B, T>) -> Self {
         Self::Table(t)
-    }
-}
-
-impl<V, B, T> From<&V> for Extern<B, T>
-where
-    V: Clone,
-    Extern<B, T>: From<V>,
-    B: Backend,
-{
-    fn from(v: &V) -> Self {
-        Self::from(v.clone())
     }
 }

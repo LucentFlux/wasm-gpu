@@ -173,4 +173,14 @@ where
         let len = self.len().await;
         self.resize(len + extra).await
     }
+
+    /// Convenience method for writing blocks of data
+    pub async fn write(&mut self, data: &[u8], offset: usize) -> anyhow::Result<()> {
+        let start = offset;
+        let end = start + data.len();
+        let slice = self.as_slice_mut(start..end).await?;
+        slice.copy_from_slice(data);
+
+        return Ok(());
+    }
 }

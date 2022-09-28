@@ -1,8 +1,12 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::externs::NamedExtern;
 use crate::func::TypedFuncPtr;
+use crate::instance::data::DataInstance;
 use crate::instance::element::ElementInstance;
 use crate::instance::global::{GlobalInstance, GlobalPtr, GlobalType};
+use crate::instance::r#abstract::global::AbstractGlobalInstance;
+use crate::instance::r#abstract::memory::AbstractMemoryInstanceSet;
+use crate::instance::r#abstract::table::AbstractTableInstanceSet;
 use crate::instance::table::{TableInstance, TableInstanceSet};
 use crate::instance::ModuleInstance;
 use crate::memory::{DynamicMemoryBlock, Memory};
@@ -28,8 +32,7 @@ use wasmtime_environ::{
 
 static STORE_SET_COUNTER: AtomicCounter = AtomicCounter::new(); // Use as store hash & equality
 
-/// View like a 'set' of WASM state machines which we perform SIMD instantiation etc on.
-/// In reality acts more like a traditional OOP factory where we initialise modules into this before
+/// Acts like a traditional OOP factory where we initialise modules into this before
 /// creating single Stores after all initialization is done, to amortize the instantiation cost
 pub struct StoreSetBuilder<B, T>
 where
@@ -38,11 +41,12 @@ where
     backend: Arc<B>,
 
     functions: Vec<Func<B, T>>,
-    tables: TableInstanceSet<B>,
-    memories: Vec<DynamicMemoryBlock<B>>,
-    globals: GlobalInstance<B>,
+    tables: AbstractTableInstanceSet<B>,
+    memories: AbstractMemoryInstanceSet<B>,
+    globals: AbstractGlobalInstance<B>,
+    // Immutable so don't need to be abstract
     elements: ElementInstance<B>,
-    datas: Vec<DynamicMemoryBlock<B>>,
+    datas: DataInstance<B>,
 
     id: usize,
 }
@@ -57,11 +61,11 @@ where
             backend: engine.backend(),
 
             functions: Vec::new(),
-            tables: TableInstanceSet::new(),
-            memories: Vec::new(),
-            globals: GlobalInstance::new(engine.backend(), id),
+            tables: AbstractTableInstanceSet::new(engine.backend(), id),
+            memories: AbstractMemoryInstanceSet::new(engine.backend(), id),
+            globals: AbstractGlobalInstance::new(engine.backend(), id),
             elements: ElementInstance::new(engine.backend(), id),
-            datas: Vec::new(),
+            datas: DataInstance::new(engine.backend(), id),
 
             id,
         }
@@ -117,11 +121,19 @@ where
 
         // Memories
         let memory_ptrs = module
-            .initialize_memories(&mut self.memories, validated_imports.memories(), &data_ptrs)
+            .initialize_memories(
+                &mut self.memories,
+                validated_imports.memories(),
+                &mut self.datas,
+                &data_ptrs,
+                &mut self.globals,
+                &global_ptrs,
+                &predicted_func_ptrs,
+            )
             .await?;
 
         // Functions - they take everything
-        let func_ptrs = module
+        /*let func_ptrs = module
             .initialize_functions(
                 &mut self.functions,
                 validated_imports.functions(),
@@ -132,7 +144,7 @@ where
                 &memory_ptrs,
             )
             .await?;
-        debug_assert_eq!(predicted_func_ptrs, func_ptrs);
+        debug_assert_eq!(predicted_func_ptrs, func_ptrs);*/
 
         // Final setup, consisting of the Start function, must be performed in the build step if it
         // calls any host functions

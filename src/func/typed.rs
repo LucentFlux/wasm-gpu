@@ -1,4 +1,4 @@
-use crate::func::AbstractFuncPtr;
+use crate::func::AFuncPtr;
 use crate::store::ptrs::FuncPtr;
 use crate::typed::{Val, WasmTyVec};
 use crate::Backend;
@@ -48,7 +48,7 @@ where
     }
 }
 
-impl<B, T, Params, Results> AbstractFuncPtr<B, T> for TypedFuncPtr<B, T, Params, Results>
+impl<B, T, Params, Results> AFuncPtr<B, T> for TypedFuncPtr<B, T, Params, Results>
 where
     B: Backend,
     Params: WasmTyVec,
@@ -68,4 +68,15 @@ where
     fn get_ptr(&self) -> FuncPtr<B, T> {
         self.func.get_ptr()
     }
+}
+
+pub fn limits_match<V: Ord>(n1: V, m1: Option<V>, n2: V, m2: Option<V>) -> bool {
+    if n1 > n2 {
+        return false;
+    }
+    return match (m1, m2) {
+        (None, None) => true,
+        (Some(m1), Some(m2)) => (m1 >= m2),
+        (_, _) => false,
+    };
 }

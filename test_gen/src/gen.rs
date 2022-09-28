@@ -1,10 +1,8 @@
 use glob::glob;
-use proc_macro2::{Ident, Punct, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::env;
 use std::path::Path;
-use syn::ext::IdentExt;
-use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{parse2, ItemFn, LitStr};
 use wast::{

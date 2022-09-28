@@ -1,6 +1,6 @@
 use crate::memory::DynamicMemoryBlock;
 use crate::module::module_environ::{Global, GlobalInit};
-use crate::store::ptrs::{FuncPtr, StorePtr};
+use crate::store::ptrs::StorePtr;
 use crate::typed::{ExternRef, FuncRef, Val, WasmTyVal, WasmTyVec};
 use crate::{impl_ptr, Backend};
 use anyhow::anyhow;
@@ -10,7 +10,7 @@ use std::mem::size_of;
 use std::sync::Arc;
 use wasmparser::{GlobalType, Operator, ValType};
 
-pub struct GlobalInstance<B>
+pub struct AbstractGlobalInstance<B>
 where
     B: Backend,
 {
@@ -22,7 +22,7 @@ where
     store_id: usize,
 }
 
-impl<B> GlobalInstance<B>
+impl<B> AbstractGlobalInstance<B>
 where
     B: Backend,
 {
@@ -39,8 +39,8 @@ where
     pub async fn interpret_constexpr<T>(
         &mut self,
         constr_expr: &Vec<Operator>,
-        module_globals: &Vec<GlobalPtr<B, T>>,
-        module_functions: &Vec<FuncPtr<B, T>>,
+        module_globals: &Vec<AbstractGlobalPtr<B, T>>,
+        module_functions: &Vec<AbstractFuncPtr<B, T>>,
     ) -> Val {
         let mut stack = Vec::new();
 
@@ -68,7 +68,7 @@ where
                     let function_ptr = module_functions
                         .get(function_index)
                         .expect("function index out of range of module functions");
-                    stack.push(Val::FuncRef(FuncRef(function_ptr.get_ptr() as u32)))
+                    stack.push(Val::FuncRef(function_ptr.to_func_ref()))
                 }
                 Operator::GlobalGet { global_index } => {
                     let global_index = usize::try_from(global_index).unwrap();
@@ -133,7 +133,7 @@ where
         return Ok(start);
     }
 
-    pub async fn get<T>(&mut self, ptr: &GlobalPtr<B, T>) -> anyhow::Result<Val> {
+    pub async fn get<T>(&mut self, ptr: &AbstractGlobalPtr<B, T>) -> anyhow::Result<Val> {
         match &ptr.ty.content_type {
             ValType::I32 => self.get_typed::<T, i32>(ptr)?.to_val(),
             ValType::I64 => self.get_typed::<T, i64>(ptr)?.to_val(),
@@ -146,7 +146,7 @@ where
     }
 
     /// A typed version of `get`, panics if types mismatch
-    pub async fn get_typed<T, V>(&mut self, ptr: &GlobalPtr<B, T>) -> anyhow::Result<V>
+    pub async fn get_typed<T, V>(&mut self, ptr: &AbstractGlobalPtr<B, T>) -> anyhow::Result<V>
     where
         V: WasmTyVal,
     {
@@ -166,9 +166,9 @@ where
     pub async fn add_global<T>(
         &mut self,
         global: Global,
-        global_imports: &mut impl Iterator<Item = GlobalPtr<B, T>>,
-        module_globals_so_far: &[GlobalPtr<B, T>],
-    ) -> anyhow::Result<GlobalPtr<B, T>> {
+        global_imports: &mut impl Iterator<Item = AbstractGlobalPtr<B, T>>,
+        module_globals_so_far: &[AbstractGlobalPtr<B, T>],
+    ) -> anyhow::Result<AbstractGlobalPtr<B, T>> {
         // Add type info
         self.types.push(global.ty.clone());
 
@@ -208,23 +208,20 @@ where
             }
         }?;
 
-        return Ok(GlobalPtr::new(pos, self.store_id, global_type));
+        return Ok(AbstractGlobalPtr::new(pos, self.store_id, global_type));
     }
 }
 
 impl_ptr!(
     pub struct GlobalPtr<B, T> {
         ...
-        // Copied from Global
         ty: GlobalType,
     }
-);
 
-impl<B, T> GlobalPtr<B, T>
-where
-    B: Backend,
-{
-    pub fn is_type(&self, ty: &GlobalType) -> bool {
-        return self.ty.eq(ty);
+    impl<B, T> GlobalPtr<B, T>
+    {
+        pub fn is_type(&self, ty: &GlobalType) -> bool {
+            return self.ty.eq(ty);
+        }
     }
-}
+);

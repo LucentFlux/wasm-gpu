@@ -47,7 +47,7 @@ where
         slice.copy_from_slice(
             element
                 .iter()
-                .flat_map(<FuncRef as WasmTyVal>::to_bytes)
+                .flat_map(|v| <FuncRef as WasmTyVal>::to_bytes(&FuncRef(*v)))
                 .collect_vec()
                 .as_slice(),
         );

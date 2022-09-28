@@ -1,5 +1,5 @@
-pub mod typed;
 pub mod func_ir;
+pub mod typed;
 
 use futures::future::{BoxFuture, FutureExt};
 use itertools::Itertools;
@@ -9,10 +9,9 @@ use wasmparser::{FuncType, ValType, WasmFuncType};
 use crate::instance::ModuleInstance;
 use crate::memory::{DynamicMemoryBlock, Memory};
 use crate::session::Session;
-use crate::store::ptrs::FuncPtr;
 use crate::store::store::Store;
 use crate::typed::{Val, WasmTyVec};
-use crate::{Backend, StoreSet, StoreSetBuilder};
+use crate::{impl_ptr, Backend, StoreSet, StoreSetBuilder};
 pub use typed::TypedFuncPtr;
 
 pub(crate) struct ExportFunction {
@@ -149,7 +148,7 @@ where
 }
 
 /// Used to abstract over both FuncPtr and TypedFuncPtr for sessions
-pub trait AbstractFuncPtr<B, T>
+pub trait AFuncPtr<B, T>
 where
     B: Backend,
 {
@@ -162,7 +161,7 @@ where
     fn get_ptr(&self) -> FuncPtr<B, T>;
 }
 
-impl<B, T> AbstractFuncPtr<B, T> for FuncPtr<B, T>
+impl<B, T> AFuncPtr<B, T> for FuncPtr<B, T>
 where
     B: Backend,
 {
@@ -185,7 +184,7 @@ where
 impl<'a, V, F, B: 'a, T: 'a> FuncSet<'a, B, T> for V
 where
     V: IntoIterator<Item = F>,
-    F: AbstractFuncPtr<B, T>,
+    F: AFuncPtr<B, T>,
     B: Backend,
 {
     type Params = F::Params;
@@ -253,6 +252,33 @@ macro_rules! for_each_function_signature {
         $mac!(16 A1 A2 A3 A4 A5 A6 A7 A8 A9 A10 A11 A12 A13 A14 A15 A16);
     };
 }
+
+impl_ptr!(
+    pub struct FuncPtr<B, T> {
+        ...
+        // Copied from Func
+        ty: FuncType,
+    }
+
+    impl<B, T> FuncPtr<B, T>
+    {
+        pub fn params(&self) -> &[WasmType] {
+            return self.ty.params();
+        }
+
+        pub fn results(&self) -> &[WasmType] {
+            return self.ty.returns();
+        }
+
+        pub fn is_type(&self, ty: &FuncType) -> bool {
+            return self.ty.eq(ty);
+        }
+
+        pub fn to_func_ref(&self) -> FuncRef {
+            FuncRef(self.ptr as u32)
+        }
+    }
+);
 
 /// B is the backend type,
 /// T is the data associated with the store

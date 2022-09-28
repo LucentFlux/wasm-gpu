@@ -68,6 +68,14 @@ pub enum ParsedElementItems<'data> {
     Expr(Vec<Vec<Operator<'data>>>),
 }
 
+impl<'data> ParsedElementItems<'data> {
+    pub fn len(&self) -> usize {
+        match self {
+            ParsedElementItems::Func(v) | ParsedElementItems::Expr(v) => v.len(),
+        }
+    }
+}
+
 pub struct ParsedElement<'data> {
     pub kind: ParsedElementKind<'data>,
     /// The initial elements of the element segment.
