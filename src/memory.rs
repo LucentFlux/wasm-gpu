@@ -3,9 +3,8 @@
 //! these types
 
 use crate::Backend;
-use std::marker::PhantomData;
-use std::ops::{Range, RangeBounds};
-use std::sync::Arc;
+use std::ops::RangeBounds;
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 
@@ -22,7 +21,7 @@ pub trait MainMemoryBlock<B>: MemoryBlock<B>
 where
     B: Backend,
 {
-    async fn as_slice<S: RangeBounds<usize> + Send>(&mut self, bounds: S) -> anyhow::Result<&[u8]>;
+    async fn as_slice<S: RangeBounds<usize> + Send>(&self, bounds: S) -> anyhow::Result<&[u8]>;
     async fn as_slice_mut<S: RangeBounds<usize> + Send>(
         &mut self,
         bounds: S,
@@ -69,6 +68,13 @@ where
             Self::Device(m) => m.move_to_main_memory().await,
             Self::None => panic!("memory was lost"),
         });
+    }
+
+    fn try_as_main(&self) -> Option<&B::MainMemoryBlock> {
+        return match self {
+            Self::Main(m) => Some(m),
+            _ => None,
+        };
     }
 
     async fn as_main(&mut self) -> &mut B::MainMemoryBlock {
@@ -135,6 +141,20 @@ where
         return main_memory.as_slice(bounds).await;
     }
 
+    /// See [as_slice_mut](crate::Memory::as_slice_mut)
+    /// Returns None if the buffer is not already accessible. Fall back on as_slice
+    pub fn try_as_slice<S: RangeBounds<usize> + Send>(
+        &self,
+        bounds: S,
+    ) -> anyhow::Result<Option<&[u8]>> {
+        let mut main_memory: Option<&B::MainMemoryBlock> = self.memory.try_as_main();
+
+        match main_memory {
+            None => Ok(None),
+            Some(main_memory) => main_memory.as_slice(bounds),
+        }
+    }
+
     /// Maps the memory if needed, and marks the entire slice as dirty and needing to be written back.
     /// Prefer `as_slice` to reduce memory transfers, and if you need mutability make your accesses as
     /// small as possible!
@@ -183,4 +203,27 @@ where
 
         return Ok(());
     }
+}
+
+pub struct InterleavedDynamicBuffer<B>
+where
+    B: Backend,
+{
+    memory: Arc<RwLock<DynamicMemoryBlock<B>>>,
+    locks: Vec<RwLock<()>>, // Synchronisation for unsafe implementations of accessors for each portion of the buffer
+}
+
+impl InterleavedStaticBuffer<B> {
+    pub fn new() -> Self {}
+}
+
+pub fn limits_match<V: Ord>(n1: V, m1: Option<V>, n2: V, m2: Option<V>) -> bool {
+    if n1 > n2 {
+        return false;
+    }
+    return match (m1, m2) {
+        (None, None) => true,
+        (Some(m1), Some(m2)) => (m1 >= m2),
+        (_, _) => false,
+    };
 }

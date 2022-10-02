@@ -1,18 +1,15 @@
 pub mod func_ir;
-pub mod typed;
 
 use futures::future::{BoxFuture, FutureExt};
-use itertools::Itertools;
 use std::marker::PhantomData;
 use wasmparser::{FuncType, ValType, WasmFuncType};
 
+use crate::instance::func::{AbstractTypedFuncPtr, AbstractUntypedFuncPtr};
 use crate::instance::ModuleInstance;
-use crate::memory::{DynamicMemoryBlock, Memory};
-use crate::session::Session;
+use crate::memory::DynamicMemoryBlock;
 use crate::store::store::Store;
 use crate::typed::{Val, WasmTyVec};
-use crate::{impl_ptr, Backend, StoreSet, StoreSetBuilder};
-pub use typed::TypedFuncPtr;
+use crate::{Backend, StoreSetBuilder};
 
 pub(crate) struct ExportFunction {
     signature: String, // TODO: make this something more reasonable
@@ -97,7 +94,10 @@ where
     B: Backend + 'static,
     T: 'static,
 {
-    pub fn wrap<Params, Results, F>(stores: &StoreSetBuilder<B, T>, func: F) -> FuncPtr<B, T>
+    pub fn wrap<Params, Results, F>(
+        stores: &mut StoreSetBuilder<B, T>,
+        func: F,
+    ) -> AbstractTypedFuncPtr<B, T, Params, Results>
     where
         Params: WasmTyVec + 'static,
         Results: WasmTyVec + 'static,
@@ -111,122 +111,12 @@ where
                 func,
                 _phantom: Default::default(),
             })),
-            ty: WasmFuncType::new(
-                Params::WASM_TYPES
-                    .iter()
-                    .map(WasmType::clone)
-                    .collect_vec()
-                    .into_boxed_slice(),
-                Results::WASM_TYPES
-                    .iter()
-                    .map(WasmType::clone)
-                    .collect_vec()
-                    .into_boxed_slice(),
-            ),
+            ty: WasmFuncType::new(Params::VAL_TYPES, Results::VAL_TYPES),
         };
 
-        return stores.register_function(func);
-    }
-}
+        let fp: AbstractUntypedFuncPtr<B, T> = stores.register_function(func);
 
-pub trait FuncSet<'a, B, T>
-where
-    B: Backend,
-{
-    type Params;
-    type Results;
-
-    /// Entry-point method
-    ///
-    /// # Panics
-    /// If any of the functions reference stores not in the store set
-    fn call_all(
-        self,
-        stores: &'a mut StoreSet<B, T>,
-        args_fn: impl FnMut(&T) -> Self::Params,
-    ) -> BoxFuture<'a, Vec<anyhow::Result<Self::Results>>>;
-}
-
-/// Used to abstract over both FuncPtr and TypedFuncPtr for sessions
-pub trait AFuncPtr<B, T>
-where
-    B: Backend,
-{
-    type Params;
-    type Results;
-
-    fn parse_params(params: Self::Params) -> Vec<Val>;
-    fn gen_results(results: Vec<Val>) -> anyhow::Result<Self::Results>;
-
-    fn get_ptr(&self) -> FuncPtr<B, T>;
-}
-
-impl<B, T> AFuncPtr<B, T> for FuncPtr<B, T>
-where
-    B: Backend,
-{
-    type Params = Vec<Val>;
-    type Results = Vec<Val>;
-
-    fn parse_params(params: Self::Params) -> Vec<Val> {
-        params
-    }
-
-    fn gen_results(results: Vec<Val>) -> anyhow::Result<Self::Results> {
-        Ok(results)
-    }
-
-    fn get_ptr(&self) -> FuncPtr<B, T> {
-        self.clone()
-    }
-}
-
-impl<'a, V, F, B: 'a, T: 'a> FuncSet<'a, B, T> for V
-where
-    V: IntoIterator<Item = F>,
-    F: AFuncPtr<B, T>,
-    B: Backend,
-{
-    type Params = F::Params;
-    type Results = F::Results;
-
-    /// # Panics
-    /// This function panics if:
-    ///  - two function pointers refer to the same store
-    ///  - a function refers to a store not in stores
-    fn call_all(
-        self,
-        stores: &'a mut StoreSet<B, T>,
-        mut args_fn: impl FnMut(&T) -> Self::Params,
-    ) -> BoxFuture<'a, Vec<anyhow::Result<Self::Results>>> {
-        let backend = stores.backend();
-
-        let funcs: Vec<F> = self.into_iter().collect();
-        let ptrs: Vec<FuncPtr<B, T>> = funcs.iter().map(|f| f.get_ptr()).collect();
-
-        // Get store references
-        let stores = stores.stores(&ptrs);
-
-        let funcs_and_args: Vec<(usize, &mut Store<B, T>, FuncPtr<B, T>, Vec<Val>)> = funcs
-            .into_iter()
-            .zip_eq(stores)
-            .enumerate()
-            .map(|(i, (func, store))| {
-                let arg = args_fn(store.data());
-                let arg = F::parse_params(arg);
-                (i, store, func.get_ptr(), arg)
-            })
-            .collect();
-
-        let session = Session::new(backend, funcs_and_args);
-        return session
-            .run()
-            .map(|res| {
-                res.into_iter()
-                    .map(|v| v.and_then(F::gen_results))
-                    .collect_vec()
-            })
-            .boxed();
+        return fp.typed();
     }
 }
 
@@ -252,33 +142,6 @@ macro_rules! for_each_function_signature {
         $mac!(16 A1 A2 A3 A4 A5 A6 A7 A8 A9 A10 A11 A12 A13 A14 A15 A16);
     };
 }
-
-impl_ptr!(
-    pub struct FuncPtr<B, T> {
-        ...
-        // Copied from Func
-        ty: FuncType,
-    }
-
-    impl<B, T> FuncPtr<B, T>
-    {
-        pub fn params(&self) -> &[WasmType] {
-            return self.ty.params();
-        }
-
-        pub fn results(&self) -> &[WasmType] {
-            return self.ty.returns();
-        }
-
-        pub fn is_type(&self, ty: &FuncType) -> bool {
-            return self.ty.eq(ty);
-        }
-
-        pub fn to_func_ref(&self) -> FuncRef {
-            FuncRef(self.ptr as u32)
-        }
-    }
-);
 
 /// B is the backend type,
 /// T is the data associated with the store
@@ -309,18 +172,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instance::InstanceSet;
     use crate::tests_lib::{gen_test_data, get_backend};
     use crate::{block_test, Config, PanicOnAny};
-    use crate::{
-        wasp, Backend, BufferRingConfig, DeviceMemoryBlock, MainMemoryBlock, MemoryBlock,
-        WgpuBackend, WgpuBackendConfig,
-    };
+    use crate::{wasp, MainMemoryBlock};
     use paste::paste;
     use tokio::runtime::Runtime;
 
     macro_rules! backend_buffer_tests {
-        ($($value:expr,)*) => {
+        ($($value:expr),* $(,)?) => {
         $(
             block_test!($value, test_host_func_memory_read);
         )*
@@ -337,7 +196,7 @@ mod tests {
 
         let engine = wasp::Engine::new(backend, Config::default());
 
-        let mut stores_builder = wasp::StoreSetBuilder::new(&engine);
+        let mut stores_builder = StoreSetBuilder::new(&engine);
         let mut data_string = "".to_owned();
         for byte in expected_data.iter() {
             data_string += format!("\\{:02x?}", byte).as_str();
@@ -356,7 +215,7 @@ mod tests {
         let module = wasp::Module::new(&engine, wat.into_bytes()).unwrap();
 
         let host_read = wasp::Func::wrap(
-            &stores_builder,
+            &mut stores_builder,
             move |mut caller: Caller<_, u32>, _param: i32| {
                 let expected_data = expected_data.clone();
                 let size = size.clone();

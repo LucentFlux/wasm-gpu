@@ -1,4 +1,4 @@
-use crate::{for_each_function_signature, Func};
+use crate::for_each_function_signature;
 use anyhow::Error;
 use std::fmt::{Display, Formatter};
 use wasmparser::ValType;
@@ -25,8 +25,17 @@ impl FuncRef {
     pub fn to_le_bytes(self) -> [u8; 4] {
         self.0.to_le_bytes()
     }
-    pub fn as_u32(&self) -> u32 {
-        self.0
+    pub fn none() -> Self {
+        Self(0)
+    }
+    pub fn from_u32(v: u32) -> Self {
+        Self(v + 1)
+    }
+    pub fn as_u32(&self) -> Option<u32> {
+        if self.0 == 0 {
+            return None;
+        }
+        return Some(self.0 - 1);
     }
 }
 
@@ -40,8 +49,17 @@ impl ExternRef {
     pub fn to_le_bytes(self) -> [u8; 4] {
         self.0.to_le_bytes()
     }
-    pub fn as_u32(&self) -> u32 {
-        self.0
+    pub fn none() -> Self {
+        Self(0)
+    }
+    pub fn from_u32(v: u32) -> Self {
+        Self(v + 1)
+    }
+    pub fn as_u32(&self) -> Option<u32> {
+        if self.0 == 0 {
+            return None;
+        }
+        return Some(self.0 - 1);
     }
 }
 
@@ -70,7 +88,7 @@ impl Val {
     }
 }
 
-pub trait WasmTyVal: WasmParams + Sized {
+pub trait WasmTyVal: Sized {
     const VAL_TYPE: ValType;
     fn try_from_val(v: Val) -> anyhow::Result<Self>;
     fn to_val(self: &Self) -> Val;
@@ -78,7 +96,7 @@ pub trait WasmTyVal: WasmParams + Sized {
     fn to_bytes(self: &Self) -> Vec<u8>;
 }
 
-pub trait WasmTyVec: WasmParams + Sized {
+pub trait WasmTyVec: Sized {
     const VAL_TYPES: &'static [ValType];
     fn try_from_val_vec(v: &Vec<Val>) -> anyhow::Result<Self>;
     fn to_val_vec(self: &Self) -> Vec<Val>;
@@ -123,7 +141,7 @@ macro_rules! impl_vec_base {
 
                 let bsc = [0u8; std::mem::size_of::<$t>()];
                 bsc.copy_from_slice(bs);
-                Ok($t::from_le_bytes(bsc))
+                Ok(<$t>::from_le_bytes(bsc))
             }
 
             #[inline(always)]
@@ -175,7 +193,6 @@ impl WasmTyVec for () {
 impl<T> WasmTyVec for T
 where
     T: WasmTyVal,
-    (T,): WasmParams,
 {
     const VAL_TYPES: &'static [ValType] = &[T::VAL_TYPE];
 
@@ -213,7 +230,6 @@ macro_rules! impl_vec_rec {
             $(
                 $t: WasmTyVal,
             )*
-            ($($t,)*): WasmParams,
         {
             const VAL_TYPES: &'static [ValType] = &[$($t::VAL_TYPE),*];
 
@@ -260,7 +276,7 @@ macro_rules! impl_vec_rec {
             #[inline(always)]
             #[allow(non_snake_case)]
             fn to_bytes(self: &Self) -> Vec<u8> {
-                let ($($t),*) = self;
+                let ($($t,)*) = self;
                 let mut res = Vec::new();
                 $(
                     let mut next_bytes = <$t as WasmTyVal>::to_bytes($t);

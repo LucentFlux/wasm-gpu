@@ -1,11 +1,9 @@
+use crate::instance::func::AbstractUntypedFuncPtr;
 use crate::memory::DynamicMemoryBlock;
 use crate::module::module_environ::{Global, GlobalInit};
-use crate::store::ptrs::StorePtr;
 use crate::typed::{ExternRef, FuncRef, Val, WasmTyVal, WasmTyVec};
 use crate::{impl_ptr, Backend};
 use anyhow::anyhow;
-use std::future::join;
-use std::io::Write;
 use std::mem::size_of;
 use std::sync::Arc;
 use wasmparser::{GlobalType, Operator, ValType};
@@ -36,11 +34,11 @@ where
     }
 
     /// Used during instantiation to evaluate an expression in a single pass. Only requires this
-    pub async fn interpret_constexpr<T>(
+    pub async fn interpret_constexpr<'data, T>(
         &mut self,
-        constr_expr: &Vec<Operator>,
+        constr_expr: &Vec<Operator<'data>>,
         module_globals: &Vec<AbstractGlobalPtr<B, T>>,
-        module_functions: &Vec<AbstractFuncPtr<B, T>>,
+        module_functions: &Vec<AbstractUntypedFuncPtr<B, T>>,
     ) -> Val {
         let mut stack = Vec::new();
 
@@ -59,8 +57,8 @@ where
                     stack.push(Val::V128(u128::from_le_bytes(value.bytes().clone())))
                 }
                 Operator::RefNull { ty } => match ty {
-                    ValType::FuncRef => stack.push(Val::FuncRef(FuncRef(0))),
-                    ValType::ExternRef => stack.push(Val::ExternRef(ExternRef(0))),
+                    ValType::FuncRef => stack.push(Val::FuncRef(FuncRef::none())),
+                    ValType::ExternRef => stack.push(Val::ExternRef(ExternRef::none())),
                     _ => unreachable!(),
                 },
                 Operator::RefFunc { function_index } => {
@@ -153,7 +151,7 @@ where
         assert_eq!(ptr.store_id, self.store_id);
         assert!(ptr.ty.content_type.eq(&V::VAL_TYPE));
 
-        let start = index;
+        let start = ptr.ptr;
         let end = start + size_of::<V>();
 
         assert!(end <= self.values.len(), "index out of bounds");
@@ -179,12 +177,11 @@ where
             | GlobalInit::F32Const(v)
             | GlobalInit::F64Const(v)
             | GlobalInit::V128Const(v) => self.push_typed(v).await,
-            // Func refs are offset by 1 so that 0 is null and 1 is the function at index 0
-            GlobalInit::RefNullConst => self.push_typed(FuncRef(0)).await,
-            GlobalInit::RefFunc(f) => self.push_typed(FuncRef(f + 1)).await,
+            GlobalInit::RefNullConst => self.push_typed(FuncRef::none()).await,
+            GlobalInit::RefFunc(f) => self.push_typed(FuncRef::from_u32(f)).await,
             GlobalInit::GetGlobal(g) => {
                 // Gets and clones
-                let ptr: &GlobalPtr<B, T> = module_globals_so_far.get(g).expect(
+                let ptr: &AbstractGlobalPtr<B, T> = module_globals_so_far.get(g).expect(
                     format!(
                         "global get id {} not in globals processed so far ({})",
                         g,
@@ -208,7 +205,7 @@ where
             }
         }?;
 
-        return Ok(AbstractGlobalPtr::new(pos, self.store_id, global_type));
+        return Ok(AbstractGlobalPtr::new(pos, self.store_id, global.ty));
     }
 }
 

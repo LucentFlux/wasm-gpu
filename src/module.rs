@@ -2,30 +2,26 @@ pub mod error;
 pub mod module_environ;
 
 use crate::externs::NamedExtern;
-use crate::instance::data::{DataInstance, DataPtr};
-use crate::instance::element::{ElementInstance, ElementPtr};
-use crate::instance::global::{GlobalInstance, GlobalPtr};
-use crate::instance::r#abstract::global::AbstractGlobalInstance;
-use crate::instance::r#abstract::memory::AbstractMemoryInstanceSet;
-use crate::instance::r#abstract::table::AbstractTableInstanceSet;
-use crate::instance::table::{TableInstance, TableInstanceSet, TablePtr};
-use crate::memory::DynamicMemoryBlock;
-use crate::module::module_environ::ModuleExport::Table;
+use crate::instance::abstr::global::{AbstractGlobalInstance, AbstractGlobalPtr};
+use crate::instance::abstr::memory::{AbstractMemoryInstanceSet, AbstractMemoryPtr};
+use crate::instance::abstr::table::{AbstractTableInstanceSet, AbstractTablePtr};
+use crate::instance::data::{AbstractDataPtr, DataInstance};
+use crate::instance::element::AbstractElementPtr;
+use crate::instance::func::{AbstractUntypedFuncPtr, FuncsInstance};
 use crate::module::module_environ::{
-    Global, ImportTypeRef, ModuleEnviron, ParsedElementItems, ParsedElementKind, ParsedModule,
+    ImportTypeRef, ModuleEnviron, ParsedElementItems, ParsedElementKind, ParsedModule,
 };
 use crate::typed::{wasm_ty_bytes, FuncRef, Val};
-use crate::{Backend, Engine, Extern, Func};
+use crate::{Backend, Engine, Extern};
 use anyhow::{anyhow, Context, Error};
 use itertools::Itertools;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
-use std::intrinsics::{size_of, unreachable};
+use std::collections::HashMap;
+use std::intrinsics::size_of;
 use std::ops::Index;
 use std::slice::Iter;
 use std::sync::Arc;
-use wasmparser::types::{EntityType, TypeId};
-use wasmparser::{ElementKind, Type, ValType, Validator};
+use wasmparser::{Type, ValType, Validator};
 
 /// A wasm module that has not been instantiated
 pub struct Module<'a, B>
@@ -41,7 +37,7 @@ pub struct ValidatedImports<B, T>
 where
     B: Backend,
 {
-    functions: Vec<AbstractFuncPtr<B, T>>,
+    functions: Vec<AbstractUntypedFuncPtr<B, T>>,
     globals: Vec<AbstractGlobalPtr<B, T>>,
     tables: Vec<AbsractTablePtr<B, T>>,
     memories: Vec<AbstractMemoryPtr<B, T>>,
@@ -194,26 +190,17 @@ where
         return Ok(results);
     }
 
-    pub(crate) fn predict_functions<T>(&self, id: usize, start: usize) -> Vec<FuncPtr<B, T>> {
-        self.parsed
-            .functions
-            .iter()
-            .enumerate()
-            .map(|(i, f)| {
-                FuncPtr::new(
-                    start + i,
-                    id,
-                    match self
-                        .parsed
-                        .types
-                        .get(f.type_id as usize)
-                        .expect("function type index out of range")
-                    {
-                        Type::Func(f) => f.clone(),
-                    },
-                )
-            })
-            .collect_vec()
+    pub(crate) fn predict_functions<T>(
+        &self,
+        functions: &FuncsInstance<B, T>,
+    ) -> Vec<AbstractUntypedFuncPtr<B, T>> {
+        let types = self.parsed.functions.iter().map(|f| {
+            self.parsed
+                .types
+                .get(f.type_id as usize)
+                .expect("function type index out of range")
+        });
+        functions.predict(types)
     }
 
     /// Extends elements buffers to be shared by all stores of a set, as passive elements are immutable
@@ -343,7 +330,16 @@ where
         unimplemented!()
     }
 
-    pub(crate) async fn initialize_functions<T>(&self) -> anyhow::Result<Vec<MemoryPtr<B, T>>> {
+    pub(crate) async fn initialize_functions<T>(
+        &self,
+        functions: &mut FuncsInstance<B, T>,
+        func_imports: Iter<AbstractUntypedFuncPtr<B, T>>,
+        module_globals: &Vec<AbstractGlobalPtr<B, T>>,
+        module_elements: &Vec<AbstractElementPtr<B, T>>,
+        module_tables: &Vec<AbstractTablePtr<B, T>>,
+        module_datas: &Vec<AbstractDataPtr<B, T>>,
+        module_memories: &Vec<AbstractMemoryPtr<B, T>>,
+    ) -> anyhow::Result<Vec<AbstractUntypedFuncPtr<B, T>>> {
         unimplemented!()
     }
 }

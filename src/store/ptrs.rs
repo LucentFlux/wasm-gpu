@@ -1,60 +1,66 @@
-use crate::Backend;
-use paste::paste;
-use wasmparser::{FuncType, MemoryType, TableType};
-use wasmtime_environ::{MemoryPlan, TablePlan, WasmFuncType, WasmType};
+pub(crate) trait AbstractPtr {
+    type ConcretePtr;
+    fn concrete(&self, concrete_id: usize) -> Self::ConcretePtr;
+}
+
+pub(crate) trait ConcretePtr {
+    type AbstractPtr;
+    fn as_abstract(&self) -> Self::AbstractPtr;
+}
 
 #[macro_export]
 macro_rules! impl_ptr {
     (
-        pub struct $name:ident <B, T> {
+        pub struct $name:ident $(<$($lt:tt $( : $clt:tt $(+ $dlt:tt )* )?),* $(,)?>)? {
             ...
             // Some pointers carry type information. This information is treated as immutable
             $($e_vis:vis $e_ident:ident : $e_type:ty),* $(,)?
         }
 
         $(
-            impl<B, T> $impl_name:ident <B, T> {
+            impl$(<$($it:tt $( : $cit:tt $(+ $dit:tt )* )?),* $(,)?>)? $impl_name:ident $(<$($it2:tt),* $(,)?>)? {
                 $($impl_code:tt)*
             }
-        )?
+        )*
     ) => {
-        paste! {
+        paste::paste! {
             #[derive(Debug)]
             #[doc="Since all stores in a concrete store set are instantiated from a builder, \
             this pointer actually points to a collection of locations, \
             i.e. all locations that correspond to the same logical WASM location \
             inside any of the stores created by a StoreSet with the ID held by this ptr."]
-            pub struct [< Abstract $name >]<B, T>
-            where
-                B: Backend,
+            pub struct [< Abstract $name >] $(<$($lt $(: $clt $(+ $dlt)*)*),*>)*
             {
-                // Only make sense in the context of a specific abstract store
+                // Only make sense in the context of a specific abstr store
                 ptr: usize,
                 store_id: usize,
 
                 $($e_vis $e_ident : $e_type ,)*
 
-                _phantom_data: PhantomData<(B, T)>,
+                _phantom_data: std::marker::PhantomData<($($($lt ,)*)*)>,
             }
 
             #[derive(Debug)]
-            pub struct $name<B, T>
-            where
-                B: Backend,
+            pub struct $name $(<$($lt $(: $clt $(+ $dlt)*)*),*>)*
             {
                 // Only make sense in the context of a specific concrete store
                 ptr: usize,
-                abstract_store_id: usize,
-                concrete_store_id: usize,
+                pub(crate) abstract_store_id: usize,
+                pub(crate) concrete_store_id: usize,
 
                 $($e_vis $e_ident : $e_type ,)*
 
-                _phantom_data: PhantomData<(B, T)>,
+                _phantom_data: std::marker::PhantomData<($($($lt ,)*)*)>,
             }
 
-            impl<B, T> [< Abstract $name >]<B, T>
-            where
-                B: Backend,
+            $(
+                impl $(<$($it $(: $cit $(+ $dit)*)*),*>)* [< Abstract $impl_name >] $(<$($it2),*>)*
+                {
+                    $($impl_code)*
+                }
+            )*
+
+            impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* [< Abstract $name >] $(<$($lt),*>)*
             {
                 fn new(ptr: usize, store_id: usize $(, $e_ident : $e_type)*) -> Self {
                     Self {
@@ -64,34 +70,49 @@ macro_rules! impl_ptr {
                         _phantom_data: Default::default(),
                     }
                 }
+            }
 
-                pub fn concrete(&self, concrete_id: usize) -> $name<B, T> {
+            impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* crate::store::ptrs::AbstractPtr for [< Abstract $name >] $(<$($lt),*>)*
+            {
+                type ConcretePtr = $name $(<$($lt),*>)*;
+
+                fn concrete(&self, concrete_id: usize) -> Self::ConcretePtr
+                {
+                    let v = self.clone();
                     $name {
-                        ptr: self.ptr,
-                        abstract_store_id: self.store_id,
-                        concrete_store_id: self.concrete_id,
-                        $($e_ident ,)*
+                        ptr: v.ptr,
+                        abstract_store_id: v.store_id,
+                        concrete_store_id: concrete_id,
+                        $($e_ident : v.$e_ident,)*
                         _phantom_data: Default::default(),
                     }
                 }
-
-                $(
-                    $($impl_code)*
-                )*
             }
 
-            impl<B, T> $name<B, T>
-            where
-                B: Backend,
+            impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* crate::store::ptrs::ConcretePtr for $name $(<$($lt),*>)*
             {
-                $(
-                    $($impl_code)*
-                )*
+                type AbstractPtr = [< Abstract $name >] $(<$($lt),*>)*;
+
+                fn as_abstract(&self) -> Self::AbstractPtr
+                {
+                    let v = self.clone();
+                    $name {
+                        ptr: v.ptr,
+                        store_id: v.abstract_store_id,
+                        $($e_ident : v.$e_ident,)*
+                        _phantom_data: Default::default(),
+                    }
+                }
             }
 
-            impl<B, T> Clone for [< Abstract $name >]<B, T>
-            where
-                B: Backend,
+            $(
+                impl$(<$($it $(: $cit $(+ $dit)*)*),*>)* $impl_name $(<$($it2),*>)*
+                {
+                    $($impl_code)*
+                }
+            )*
+
+            impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Clone for [< Abstract $name >] $(<$($lt),*>)*
             {
                 fn clone(&self) -> Self {
                     Self {
@@ -103,9 +124,7 @@ macro_rules! impl_ptr {
                 }
             }
 
-            impl<B, T> Clone for $name<B, T>
-            where
-                B: Backend,
+            impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Clone for $name $(<$($lt),*>)*
             {
                 fn clone(&self) -> Self {
                     Self {
@@ -118,70 +137,56 @@ macro_rules! impl_ptr {
                 }
             }
 
-            impl<B, T> Hash for [< Abstract $name >]<B, T>
-            where
-                B: Backend,
+            impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* std::hash::Hash for [< Abstract $name >] $(<$($lt),*>)*
             {
-                fn hash<H: Hasher>(&self, state: &mut H) {
+                fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
                     state.write_usize(self.store_id);
                     state.write_usize(self.ptr);
                 }
             }
 
-            impl<B, T> Hash for $name<B, T>
-            where
-                B: Backend,
+            impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* std::hash::Hash for $name $(<$($lt),*>)*
             {
-                fn hash<H: Hasher>(&self, state: &mut H) {
+                fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
                     state.write_usize(self.concrete_store_id);
                     state.write_usize(self.abstract_store_id);
                     state.write_usize(self.ptr);
                 }
             }
 
-            impl<B, T> PartialEq<Self> for [< Abstract $name >]<B, T>
-            where
-                B: Backend,
+            impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* PartialEq<Self> for [< Abstract $name >] $(<$($lt),*>)*
             {
                 fn eq(&self, other: &Self) -> bool {
                     self.store_id == other.store_id && self.ptr == other.ptr
                 }
             }
 
-            impl<B, T> PartialEq<Self> for $name<B, T>
-            where
-                B: Backend,
+            impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* PartialEq<Self> for $name $(<$($lt),*>)*
             {
                 fn eq(&self, other: &Self) -> bool {
                     self.concrete_store_id == other.concrete_store_id && self.abstract_store_id == other.abstract_store_id && self.ptr == other.ptr
                 }
             }
 
-            impl<B, T> Eq for [< Abstract $name >]<B, T> where B: Backend {}
+            impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Eq for [< Abstract $name >]$(<$($lt),*>)* where B: Backend {}
 
-            impl<B, T> Eq for $name<B, T> where B: Backend {}
+            impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Eq for $name$(<$($lt),*>)* where B: Backend {}
 
-            impl<B, T> PartialOrd<Self> for [< Abstract $name >]<B, T>
-            where
-                B: Backend,
+            impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* PartialOrd<Self> for [< Abstract $name >]$(<$($lt),*>)*
             {
                 fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
                     Some(self.cmp(other))
                 }
             }
 
-            impl<B, T> PartialOrd<Self> for $name<B, T>
-            where
-                B: Backend,
+            impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* PartialOrd<Self> for $name$(<$($lt),*>)*
             {
                 fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
                     Some(self.cmp(other))
                 }
             }
 
-            impl<B, T> Ord for [< Abstract $name >]<B, T>
-            where
-                B: Backend,
+            impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Ord for [< Abstract $name >]$(<$($lt),*>)*
             {
                 fn cmp(&self, other: &Self) -> std::cmp::Ordering {
                     match self.store_id.cmp(&other.store_id) {
@@ -191,9 +196,7 @@ macro_rules! impl_ptr {
                 }
             }
 
-            impl<B, T> Ord for $name<B, T>
-            where
-                B: Backend,
+            impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Ord for $name$(<$($lt),*>)*
             {
                 fn cmp(&self, other: &Self) -> std::cmp::Ordering {
                     match self.abstract_store_id.cmp(&other.abstract_store_id) {

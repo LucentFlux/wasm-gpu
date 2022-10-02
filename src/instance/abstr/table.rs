@@ -1,21 +1,23 @@
-use crate::func::typed::limits_match;
+use crate::memory::limits_match;
 use crate::memory::DynamicMemoryBlock;
 use crate::{impl_ptr, Backend};
-use itertools::Itertools;
 use std::sync::Arc;
 use wasmparser::TableType;
 
-/// Context in which an abstract table pointer is valid
+/// Context in which an abstr table pointer is valid
 pub struct AbstractTableInstanceSet<B>
 where
     B: Backend,
 {
     store_id: usize,
     backend: Arc<B>,
-    tables: Vec<TableInstance<B>>,
+    tables: Vec<AbstractTableInstance<B>>,
 }
 
-impl AbstractTableInstanceSet<B> {
+impl<B> AbstractTableInstanceSet<B>
+where
+    B: Backend,
+{
     pub fn new(backend: Arc<B>, store_id: usize) -> Self {
         Self {
             store_id,
@@ -26,7 +28,7 @@ impl AbstractTableInstanceSet<B> {
 
     pub async fn add_table<T>(&mut self, plan: &TableType) -> AbstractTablePtr<B, T> {
         let ptr = self.tables.len();
-        self.tables.push(TableInstance::new(
+        self.tables.push(AbstractTableInstance::new(
             self.backend.clone(),
             self.store_id,
             plan.initial as usize,

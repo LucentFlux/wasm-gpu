@@ -1,10 +1,9 @@
 use crate::module::error::WasmError;
 use std::collections::HashMap;
-use std::intrinsics::unreachable;
 use std::ops::Range;
 use wasmparser::{
-    Data, Element, ElementItem, ElementKind, Encoding, ExternalKind, GlobalType, MemoryType,
-    Operator, Parser, Payload, TableType, Type, TypeRef, ValType, Validator,
+    Data, ElementItem, ElementKind, Encoding, ExternalKind, GlobalType, MemoryType, Operator,
+    Parser, Payload, TableType, Type, TypeRef, ValType, Validator,
 };
 
 type WasmResult<T> = Result<T, WasmError>;

@@ -1,4 +1,8 @@
-use crate::instance::global::AbstractGlobalPtr;
+use crate::instance::abstr::global::AbstractGlobalPtr;
+use crate::instance::abstr::memory::AbstractMemoryPtr;
+use crate::instance::abstr::table::AbstractTablePtr;
+use crate::instance::func::{AbstractTypedFuncPtr, AbstractUntypedFuncPtr};
+use crate::typed::WasmTyVec;
 use crate::Backend;
 
 pub struct NamedExtern<'a, B, T>
@@ -25,7 +29,7 @@ pub enum Extern<B, T>
 where
     B: Backend,
 {
-    Func(AbstractFuncPtr<B, T>),
+    Func(AbstractUntypedFuncPtr<B, T>),
     Global(AbstractGlobalPtr<B, T>),
     Table(AbstractTablePtr<B, T>),
     Memory(AbstractMemoryPtr<B, T>),
@@ -45,12 +49,23 @@ where
     }
 }
 
-impl<B, T> From<AbstractFuncPtr<B, T>> for Extern<B, T>
+impl<B, T> From<AbstractUntypedFuncPtr<B, T>> for Extern<B, T>
 where
     B: Backend,
 {
-    fn from(f: AbstractFuncPtr<B, T>) -> Self {
+    fn from(f: AbstractUntypedFuncPtr<B, T>) -> Self {
         Self::Func(f)
+    }
+}
+
+impl<B, T, Params, Results> From<AbstractTypedFuncPtr<B, T, Params, Results>> for Extern<B, T>
+where
+    B: Backend,
+    Params: WasmTyVec,
+    Results: WasmTyVec,
+{
+    fn from(f: AbstractTypedFuncPtr<B, T, Params, Results>) -> Self {
+        Self::Func(f.as_untyped())
     }
 }
 

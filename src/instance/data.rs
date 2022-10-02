@@ -1,6 +1,6 @@
 use crate::memory::DynamicMemoryBlock;
+use crate::store::ptrs::ConcretePtr;
 use crate::{impl_ptr, Backend};
-use itertools::Itertools;
 use std::sync::Arc;
 
 pub struct DataInstance<B>
@@ -33,7 +33,7 @@ where
         self.data.extend(values_size).await;
     }
 
-    pub async fn add_data<T>(&mut self, data: &[u8]) -> anyhow::Result<DataPtr<B, T>> {
+    pub async fn add_data<T>(&mut self, data: &[u8]) -> anyhow::Result<AbstractDataPtr<B, T>> {
         let start = self.len;
         let end = start + data.len();
         assert!(
@@ -47,10 +47,17 @@ where
 
         self.len = end;
 
-        return Ok(DataPtr::new(start, self.store_id, data.len()));
+        return Ok(AbstractDataPtr::new(start, self.store_id, data.len()));
     }
 
-    pub(crate) async fn get(&mut self, ptr: &DataPtr<B, T>) -> anyhow::Result<&[u8]> {
+    pub async fn get<T>(&mut self, ptr: &DataPtr<B, T>) -> anyhow::Result<&[u8]> {
+        return self.get_abstract::<T>(ptr.as_abstract()).await;
+    }
+
+    pub(crate) async fn get_abstract<T>(
+        &mut self,
+        ptr: &AbstractDataPtr<B, T>,
+    ) -> anyhow::Result<&[u8]> {
         let start = ptr.ptr;
         let end = start + ptr.len;
         return self.references.as_slice(start..end).await;

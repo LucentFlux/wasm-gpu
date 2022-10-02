@@ -1,30 +1,30 @@
 use crate::externs::Extern;
-use crate::func::TypedFuncPtr;
-use crate::instance::table::TablePtr;
-use crate::memory::Memory;
+use crate::instance::abstr::global::GlobalPtr;
+use crate::instance::abstr::memory::MemoryPtr;
+use crate::instance::abstr::table::TablePtr;
+use crate::instance::func::{AbstractTypedFuncPtr, UntypedFuncPtr};
 use crate::module::module_environ::ModuleExport;
 use crate::read_only::{AppendOnlyVec, ReadOnly};
-use crate::store::ptrs::{FuncPtr, MemoryPtr};
 use crate::typed::WasmTyVec;
-use crate::{Backend, FuncPtr};
+use crate::Backend;
 use anyhow::{anyhow, Context};
-use elsa::sync::{FrozenMap, FrozenVec};
-use global::GlobalPtr;
+use elsa::sync::FrozenMap;
 use itertools::Itertools;
-use std::borrow::Cow;
 use std::ops::Deref;
 use std::sync::Arc;
 
-pub mod r#abstract;
+pub mod abstr;
+pub mod concrete;
 pub mod data;
 pub mod element;
+pub mod func;
 
 pub struct ModuleInstance<B, T>
 where
     B: Backend,
 {
     store_id: usize,
-    funcs: AppendOnlyVec<FuncPtr<B, T>>,
+    funcs: AppendOnlyVec<UntypedFuncPtr<B, T>>,
     tables: AppendOnlyVec<TablePtr<B, T>>,
     memories: AppendOnlyVec<MemoryPtr<B, T>>,
     globals: AppendOnlyVec<GlobalPtr<B, T>>,
@@ -37,7 +37,7 @@ where
 {
     pub fn new(
         store_id: usize,
-        funcs: AppendOnlyVec<FuncPtr<B, T>>,
+        funcs: AppendOnlyVec<UntypedFuncPtr<B, T>>,
         tables: AppendOnlyVec<TablePtr<B, T>>,
         memories: AppendOnlyVec<MemoryPtr<B, T>>,
         globals: AppendOnlyVec<GlobalPtr<B, T>>,
@@ -66,7 +66,7 @@ where
     /// Create an exported function that doesn't track its types, useful for runtime imports.
     /// Prefer get_typed_func if possible, and see get_typed_func for detail
     /// about this function.
-    pub fn get_func(&self, name: &str) -> anyhow::Result<FuncPtr<B, T>> {
+    pub fn get_func(&self, name: &str) -> anyhow::Result<UntypedFuncPtr<B, T>> {
         self.get_export(name)
             .ok_or(anyhow!("no exported object with name {}", name))
             .and_then(|export| match export {
@@ -80,7 +80,7 @@ where
     pub fn get_typed_func<Params, Results>(
         &self,
         name: &str,
-    ) -> anyhow::Result<TypedFuncPtr<B, T, Params, Results>>
+    ) -> anyhow::Result<AbstractTypedFuncPtr<B, T, Params, Results>>
     where
         Params: WasmTyVec,
         Results: WasmTyVec,
@@ -88,10 +88,9 @@ where
         let untyped = self
             .get_func(name)
             .context(format!("failed to find function export `{}`", name))?;
-        let typed = TypedFuncPtr::<B, T, Params, Results>::try_from(untyped).context(format!(
-            "failed to convert function `{}` to given type",
-            name
-        ))?;
+        let typed = AbstractTypedFuncPtr::<B, T, Params, Results>::try_from(untyped).context(
+            format!("failed to convert function `{}` to given type", name),
+        )?;
 
         return Ok(typed);
     }
@@ -113,12 +112,12 @@ pub trait InstanceSet<B, T>
 where
     B: Backend,
 {
-    fn get_funcs(self, name: &str) -> Vec<anyhow::Result<FuncPtr<B, T>>>;
+    fn get_funcs(self, name: &str) -> Vec<anyhow::Result<UntypedFuncPtr<B, T>>>;
 
     fn get_typed_funcs<Params, Results>(
         self,
         name: &str,
-    ) -> Vec<anyhow::Result<TypedFuncPtr<B, T, Params, Results>>>
+    ) -> Vec<anyhow::Result<AbstractTypedFuncPtr<B, T, Params, Results>>>
     where
         Params: WasmTyVec,
         Results: WasmTyVec;
@@ -129,7 +128,7 @@ where
     V: IntoIterator<Item = &'a ModuleInstance<B, T>>,
     B: Backend,
 {
-    fn get_funcs(self, name: &str) -> Vec<anyhow::Result<FuncPtr<B, T>>> {
+    fn get_funcs(self, name: &str) -> Vec<anyhow::Result<UntypedFuncPtr<B, T>>> {
         self.into_iter()
             .map(|s: &'a ModuleInstance<B, T>| s.get_func(name))
             .collect_vec()
@@ -138,7 +137,7 @@ where
     fn get_typed_funcs<Params, Results>(
         self,
         name: &str,
-    ) -> Vec<anyhow::Result<TypedFuncPtr<B, T, Params, Results>>>
+    ) -> Vec<anyhow::Result<AbstractTypedFuncPtr<B, T, Params, Results>>>
     where
         Params: WasmTyVec,
         Results: WasmTyVec,

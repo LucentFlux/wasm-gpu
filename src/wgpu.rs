@@ -13,12 +13,8 @@ use crate::wgpu::async_queue::AsyncQueue;
 use crate::wgpu::buffer_ring::BufferRing;
 use crate::wgpu::memory::{WgpuMappedMemoryBlock, WgpuUnmappedMemoryBlock};
 use crate::Backend;
-use std::future::Future;
-use std::ops::DerefMut;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Waker};
-use wgpu::{Device, Maintain, MapMode, Queue};
+use std::sync::Arc;
+use wgpu::{Device, MapMode, Queue};
 
 #[derive(Copy, Clone)]
 pub struct WgpuBackendConfig {

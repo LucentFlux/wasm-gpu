@@ -2,15 +2,9 @@ use crate::wgpu::async_buffer::AsyncBuffer;
 use std::future::Future;
 use std::ops::DerefMut;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
-use std::thread;
-use std::thread::JoinHandle;
-use wgpu::{
-    Buffer, BufferDescriptor, CommandEncoder, CommandEncoderDescriptor, Device, Maintain,
-    MaintainBase,
-};
+use wgpu::{BufferDescriptor, CommandEncoder, CommandEncoderDescriptor, Device, Maintain};
 
 #[derive(Clone, Debug)]
 pub struct AsyncDevice {

@@ -1,4 +1,3 @@
-use std::intrinsics::offset;
 use thiserror::Error;
 use wasmparser::BinaryReaderError;
 

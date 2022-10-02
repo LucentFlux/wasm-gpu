@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::{wasp, BufferRingConfig, Config, WgpuBackendConfig};
+use crate::{wasp, BufferRingConfig, WgpuBackendConfig};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 

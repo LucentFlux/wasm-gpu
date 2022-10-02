@@ -1,5 +1,5 @@
 use elsa::sync::FrozenVec;
-use std::sync::{Arc, LockResult, RwLock, RwLockReadGuard};
+use std::sync::{LockResult, RwLock, RwLockReadGuard};
 
 /// A read-only wrapper around a RwLock<T>.
 pub struct ReadOnly<T> {

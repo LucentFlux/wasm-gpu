@@ -5,7 +5,6 @@
 #![feature(future_join)]
 
 extern crate core;
-extern crate core;
 
 mod atomic_counter;
 mod backend;
@@ -50,7 +49,6 @@ pub mod wasp {
     pub use externs::Extern;
     // Store
     pub use store::builder::StoreSetBuilder;
-    pub use store::FuncPtr;
     pub use store::Store;
     pub use store::StoreSet;
     // Instance
@@ -59,12 +57,6 @@ pub mod wasp {
     // Func
     pub use func::Caller;
     pub use func::Func;
-    pub use func::FuncSet;
-    pub mod typed {
-        use super::*;
-
-        pub use func::TypedFuncPtr;
-    }
 }
 
 pub use wasp::*;

@@ -1,9 +1,9 @@
-use crate::{Backend, FuncPtr, Store};
+use crate::instance::func::AbstractUntypedFuncPtr;
+use crate::typed::Val;
+use crate::{Backend, StoreSet};
 use futures::future::BoxFuture;
 use itertools::Itertools;
-use std::marker::PhantomData;
 use std::sync::Arc;
-use wasmtime::Val;
 
 pub struct SessionProperties {
     pub warp_size: u32,
@@ -19,7 +19,8 @@ where
     B: Backend,
 {
     backend: Arc<B>,
-    tasks: Vec<(usize, &'a mut Store<B, T>, FuncPtr<B, T>, Vec<Val>)>,
+    stores: &'a mut StoreSet<B, T>,
+    tasks: Vec<(FuncPtr<B, T>, Vec<Val>)>,
 }
 
 impl<'a, B, T> Session<'a, B, T>
@@ -28,11 +29,15 @@ where
 {
     pub fn new(
         backend: Arc<B>,
-        entry_funcs: Vec<(usize, &'a mut Store<B, T>, FuncPtr<B, T>, Vec<Val>)>,
+        stores: &'a mut StoreSet<B, T>,
+        entry_func: AbstractUntypedFuncPtr<B, T>, // We want to enter at the same point
+        args: Vec<Vec<Val>>,
     ) -> Self {
+        let tasks = stores.concrete(entry_func).zip_eq(args).collect_vec();
         Self {
             backend,
-            tasks: entry_funcs,
+            stores,
+            tasks,
         }
     }
 

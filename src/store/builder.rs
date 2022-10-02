@@ -1,34 +1,16 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::externs::NamedExtern;
-use crate::func::TypedFuncPtr;
+use crate::instance::abstr::global::AbstractGlobalInstance;
+use crate::instance::abstr::memory::AbstractMemoryInstanceSet;
+use crate::instance::abstr::table::AbstractTableInstanceSet;
 use crate::instance::data::DataInstance;
 use crate::instance::element::ElementInstance;
-use crate::instance::global::{GlobalInstance, GlobalPtr, GlobalType};
-use crate::instance::r#abstract::global::AbstractGlobalInstance;
-use crate::instance::r#abstract::memory::AbstractMemoryInstanceSet;
-use crate::instance::r#abstract::table::AbstractTableInstanceSet;
-use crate::instance::table::{TableInstance, TableInstanceSet};
+use crate::instance::func::{AbstractUntypedFuncPtr, FuncsInstance};
 use crate::instance::ModuleInstance;
-use crate::memory::{DynamicMemoryBlock, Memory};
-use crate::module::module_environ::Global;
-use crate::read_only::{AppendOnlyVec, ReadOnly};
-use crate::store::ptrs::{FuncPtr, MemoryPtr, StorePtr};
-use crate::typed::{ExternRef, FuncRef, Val, WasmTyVec};
-use crate::{Backend, Engine, Extern, Func, Module, StoreSet};
-use anyhow::{anyhow, Context};
-use elsa::{FrozenMap, FrozenVec};
+use crate::{Backend, Engine, Func, Module, StoreSet};
 use futures::StreamExt;
-use itertools::Itertools;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::hash::{Hash, Hasher};
-use std::intrinsics::unreachable;
-use std::marker::PhantomData;
-use std::sync::{Arc, RwLock};
-use wasmparser::{Operator, ValType};
-use wasmtime::{FuncType, ValType};
-use wasmtime_environ::{
-    EntityIndex, FunctionType, Global, Initializer, MemoryPlan, TablePlan, WasmFuncType, WasmType,
-};
+use std::hash::Hash;
+use std::sync::Arc;
 
 static STORE_SET_COUNTER: AtomicCounter = AtomicCounter::new(); // Use as store hash & equality
 
@@ -40,13 +22,13 @@ where
 {
     backend: Arc<B>,
 
-    functions: Vec<Func<B, T>>,
     tables: AbstractTableInstanceSet<B>,
     memories: AbstractMemoryInstanceSet<B>,
     globals: AbstractGlobalInstance<B>,
-    // Immutable so don't need to be abstract
+    // Immutable so don't need to be abstr
     elements: ElementInstance<B>,
     datas: DataInstance<B>,
+    functions: FuncsInstance<B, T>,
 
     id: usize,
 }
@@ -60,7 +42,7 @@ where
         Self {
             backend: engine.backend(),
 
-            functions: Vec::new(),
+            functions: FuncsInstance::new(engine.backend(), id),
             tables: AbstractTableInstanceSet::new(engine.backend(), id),
             memories: AbstractMemoryInstanceSet::new(engine.backend(), id),
             globals: AbstractGlobalInstance::new(engine.backend(), id),
@@ -133,7 +115,7 @@ where
             .await?;
 
         // Functions - they take everything
-        /*let func_ptrs = module
+        let func_ptrs = module
             .initialize_functions(
                 &mut self.functions,
                 validated_imports.functions(),
@@ -144,7 +126,7 @@ where
                 &memory_ptrs,
             )
             .await?;
-        debug_assert_eq!(predicted_func_ptrs, func_ptrs);*/
+        debug_assert_eq!(predicted_func_ptrs, func_ptrs);
 
         // Final setup, consisting of the Start function, must be performed in the build step if it
         // calls any host functions
@@ -165,12 +147,8 @@ where
         ));
     }
 
-    pub fn register_function(&self, func: Func<B, T>) -> FuncPtr<B, T> {
-        let ty = func.ty();
-
-        let ptr = self.functions.push_get_index(func);
-
-        return FuncPtr::new(ptr, self.id, ty);
+    pub fn register_function(&mut self, func: Func<B, T>) -> AbstractUntypedFuncPtr<B, T> {
+        return self.functions.register(func);
     }
 
     /// Takes the instructions provided to this builder and produces a collection of stores which can
@@ -181,5 +159,6 @@ where
         // Here we take all of the initialisation that we did that can be shared and spin it into several
         // instances. This shouldn't involve moving any data to the device, instead data that has already
         // been provided to the device should be cloned and specialised as needed for a collection of instances
+        unimplemented!()
     }
 }
