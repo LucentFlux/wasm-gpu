@@ -8,6 +8,7 @@ extern crate core;
 
 mod atomic_counter;
 mod backend;
+mod compute_utils;
 mod engine;
 mod externs;
 mod func;

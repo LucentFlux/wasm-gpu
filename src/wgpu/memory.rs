@@ -104,7 +104,7 @@ impl LazyChunk {
         block.download_buffers.with_slice(
             &self.device,
             &self.queue,
-            &internal.block.buffer,
+            &block.buffer,
             self.data_offset,
             |slice| {
                 // Assume pointers don't alias between chunks, and we have a mutex taken out for this chunk
@@ -134,14 +134,14 @@ impl LazyChunk {
 
         // Assume pointers don't alias between chunks, and we have a mutex taken out for this chunk
         // So this should be safe
-        let len = internal.block.upload_buffers.buffer_size();
+        let len = block.upload_buffers.buffer_size();
         let slice = unsafe { std::slice::from_raw_parts(self.ptr, len) };
         block
             .upload_buffers
             .write_slice(
                 &self.device,
                 &self.queue,
-                &internal.block.buffer,
+                &block.buffer,
                 self.data_offset,
                 slice,
             )
@@ -188,22 +188,6 @@ impl LazyBuffer {
         }
     }
 
-    fn start_bound_to_inclusive(b: Bound<&usize>) -> usize {
-        match b {
-            Bound::Included(b) => *b,
-            Bound::Excluded(b) => *b + 1,
-            Bound::Unbounded => 0,
-        }
-    }
-
-    fn end_bound_to_exclusive(b: Bound<&usize>, end: usize) -> usize {
-        match b {
-            Bound::Included(b) => *b + 1,
-            Bound::Excluded(b) => *b,
-            Bound::Unbounded => end,
-        }
-    }
-
     /// Lockless checking that we have definitely downloaded all required data from the GPU to our buffer
     async fn ensure_downloaded(
         &self,
@@ -244,7 +228,7 @@ impl LazyBuffer {
         join_all(futures).await;
     }
 
-    async fn as_slice<S: RangeBounds<usize>>(&self, bounds: S) -> anyhow::Result<&[u8]> {
+    async fn as_slice<S: RangeBounds<usize>>(&self, bounds: S) -> &[u8] {
         let requested_start_byte_inclusive: usize =
             Self::start_bound_to_inclusive(bounds.start_bound());
         let requested_end_byte_exclusive: usize =
@@ -260,13 +244,10 @@ impl LazyBuffer {
         )
         .await;
 
-        return Ok(&self.data[requested_start_byte_inclusive..requested_end_byte_exclusive]);
+        return &self.data[requested_start_byte_inclusive..requested_end_byte_exclusive];
     }
 
-    async fn as_slice_mut<S: RangeBounds<usize>>(
-        &mut self,
-        bounds: S,
-    ) -> anyhow::Result<&mut [u8]> {
+    async fn as_slice_mut<S: RangeBounds<usize>>(&mut self, bounds: S) -> &mut [u8] {
         let requested_start_byte_inclusive: usize =
             Self::start_bound_to_inclusive(bounds.start_bound());
         let requested_end_byte_exclusive: usize =
@@ -282,7 +263,7 @@ impl LazyBuffer {
         )
         .await;
 
-        return Ok(&mut self.data[requested_start_byte_inclusive..requested_end_byte_exclusive]);
+        return &mut self.data[requested_start_byte_inclusive..requested_end_byte_exclusive];
     }
 
     async fn unload(mut self) -> WgpuBufferMemoryBlock {
@@ -310,14 +291,11 @@ impl MemoryBlock<WgpuBackend> for WgpuMappedMemoryBlock {
 
 #[async_trait]
 impl MainMemoryBlock<WgpuBackend> for WgpuMappedMemoryBlock {
-    async fn as_slice<S: RangeBounds<usize> + Send>(&self, bounds: S) -> anyhow::Result<&[u8]> {
+    async fn as_slice<S: RangeBounds<usize> + Send>(&self, bounds: S) -> &[u8] {
         self.cpu_buffer.as_slice(bounds).await
     }
 
-    async fn as_slice_mut<S: RangeBounds<usize> + Send>(
-        &mut self,
-        bounds: S,
-    ) -> anyhow::Result<&mut [u8]> {
+    async fn as_slice_mut<S: RangeBounds<usize> + Send>(&mut self, bounds: S) -> &mut [u8] {
         self.cpu_buffer.as_slice_mut(bounds).await
     }
 

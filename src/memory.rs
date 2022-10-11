@@ -2,11 +2,16 @@
 //! we need to be able to map between these locations at runtime, with minimal overhead. This file deals with
 //! these types
 
-use crate::Backend;
-use std::ops::RangeBounds;
-use std::sync::{Arc, RwLock};
+pub mod interleaved;
 
+use crate::Backend;
+use std::cell::UnsafeCell;
+use std::ops::RangeBounds;
+use std::sync::{Arc, Mutex, RwLock};
+
+use crate::typed::ToRange;
 use async_trait::async_trait;
+use itertools::Itertools;
 
 #[async_trait]
 pub trait MemoryBlock<B>
@@ -21,11 +26,8 @@ pub trait MainMemoryBlock<B>: MemoryBlock<B>
 where
     B: Backend,
 {
-    async fn as_slice<S: RangeBounds<usize> + Send>(&self, bounds: S) -> anyhow::Result<&[u8]>;
-    async fn as_slice_mut<S: RangeBounds<usize> + Send>(
-        &mut self,
-        bounds: S,
-    ) -> anyhow::Result<&mut [u8]>;
+    async fn as_slice<S: RangeBounds<usize> + Send>(&self, bounds: S) -> &[u8];
+    async fn as_slice_mut<S: RangeBounds<usize> + Send>(&mut self, bounds: S) -> &mut [u8];
     async fn move_to_device_memory(self) -> B::DeviceMemoryBlock;
 }
 
@@ -106,7 +108,8 @@ where
 }
 
 /// Supports resizing via reallocation and copying
-pub struct DynamicMemoryBlock<B>
+/// Used by DynamicMemoryBlock via a RwLock to provide lockless immutable slice access
+struct DynamicMemoryBlockInternal<B>
 where
     B: Backend,
 {
@@ -114,7 +117,7 @@ where
     memory: StaticMemoryBlock<B>,
 }
 
-impl<B> DynamicMemoryBlock<B>
+impl<B> DynamicMemoryBlockInternal<B>
 where
     B: Backend,
 {
@@ -132,10 +135,7 @@ where
     }
 
     /// See [as_slice_mut](crate::Memory::as_slice_mut)
-    pub async fn as_slice<S: RangeBounds<usize> + Send>(
-        &mut self,
-        bounds: S,
-    ) -> anyhow::Result<&[u8]> {
+    pub async fn as_slice<S: RangeBounds<usize> + Send>(&mut self, bounds: S) -> &[u8] {
         let mut main_memory: &mut B::MainMemoryBlock = self.memory.as_main().await;
 
         return main_memory.as_slice(bounds).await;
@@ -143,38 +143,18 @@ where
 
     /// See [as_slice_mut](crate::Memory::as_slice_mut)
     /// Returns None if the buffer is not already accessible. Fall back on as_slice
-    pub fn try_as_slice<S: RangeBounds<usize> + Send>(
-        &self,
-        bounds: S,
-    ) -> anyhow::Result<Option<&[u8]>> {
+    pub fn try_as_slice<S: RangeBounds<usize> + Send>(&self, bounds: S) -> Option<&[u8]> {
         let mut main_memory: Option<&B::MainMemoryBlock> = self.memory.try_as_main();
 
-        match main_memory {
-            None => Ok(None),
-            Some(main_memory) => main_memory.as_slice(bounds),
-        }
+        return main_memory.map(|mem| mem.as_slice(bounds));
     }
 
-    /// Maps the memory if needed, and marks the entire slice as dirty and needing to be written back.
-    /// Prefer `as_slice` to reduce memory transfers, and if you need mutability make your accesses as
-    /// small as possible!
-    ///
-    /// Inside a host function evocation, memory is cached in ram. This means there is no performance
-    /// hit to first read with `as_slice`, then write with `as_slice_mut`, rather than reading and
-    /// writing with one `as_slice_mut` call. Prefer the former if possible, as it may reduce
-    /// memory transfers.
-    pub async fn as_slice_mut<S: RangeBounds<usize> + Send>(
-        &mut self,
-        bounds: S,
-    ) -> anyhow::Result<&mut [u8]> {
+    pub async fn as_slice_mut<S: RangeBounds<usize> + Send>(&mut self, bounds: S) -> &mut [u8] {
         let mut main_memory: &mut B::MainMemoryBlock = self.memory.as_main().await;
 
         return main_memory.as_slice_mut(bounds).await;
     }
 
-    /// For internal use. Flush is automatically called after every host function, so there should be
-    /// no reason for any uses of this library to call this function. It is exposed for future multithreaded
-    /// wasm use cases, where host memory coherency calls may need to be more fine-grained.
     pub async fn flush(&mut self) {
         self.memory.move_to_device().await;
     }
@@ -187,6 +167,84 @@ where
         }
         self.memory = StaticMemoryBlock::Device(new_buffer);
     }
+}
+
+/// Supports reading, writing and resizing, and semi-lockless (RwLock::read) access to read immutable slices
+pub struct DynamicMemoryBlock<B>
+where
+    B: Backend,
+{
+    internal: RwLock<DynamicMemoryBlockInternal<B>>,
+}
+
+impl<B> DynamicMemoryBlock<B>
+where
+    B: Backend,
+{
+    pub fn new(backend: Arc<B>, size: usize, initial_data: Option<&[u8]>) -> Self {
+        Self {
+            internal: RwLock::new(DynamicMemoryBlockInternal::new(backend, size, initial_data)),
+        }
+    }
+
+    pub async fn len(&self) -> usize {
+        self.internal.read().unwrap().len().await
+    }
+
+    /// Maps the memory if needed. Aims to use a read lock, but falls back to write lock on the first
+    /// time we need to map the buffer.
+    /// Prefer over `as_slice_mut` to reduce memory transfers.
+    ///
+    /// Inside a host function evocation, memory is cached in ram. This means there is no performance
+    /// hit to first read with `as_slice`, then write with `as_slice_mut`, rather than reading and
+    /// writing with one `as_slice_mut` call. Prefer the former if possible, as it may reduce
+    /// memory transfers.
+    pub async fn as_slice<S: RangeBounds<usize> + Send + Clone>(&self, bounds: S) -> &[u8] {
+        // Try lockless
+        {
+            let read_lock = self.internal.read().unwrap();
+            let res = read_lock.try_as_slice(bounds.clone());
+            if let Some(res) = res {
+                return res;
+            }
+        }
+
+        // Otherwise lock
+        // Note we may race, but as_slice will just fall through if we did
+        {
+            let mut write_lock = self.internal.write().unwrap();
+            let slice = write_lock.as_slice(bounds).await;
+            return slice;
+        }
+    }
+
+    /// Maps the memory if needed, and marks the entire slice as dirty and needing to be written back.
+    /// Prefer `as_slice` to reduce memory transfers, and if you need mutability make your accesses as
+    /// small as possible!
+    ///
+    /// Inside a host function evocation, memory is cached in ram. This means there is no performance
+    /// hit to first read with `as_slice`, then write with `as_slice_mut`, rather than reading and
+    /// writing with one `as_slice_mut` call. Prefer the former if possible, as it may reduce
+    /// memory transfers.
+    pub async fn as_slice_mut<S: RangeBounds<usize> + Send>(&mut self, bounds: S) -> &mut [u8] {
+        return self.internal.get_mut().unwrap().as_slice_mut(bounds);
+    }
+
+    /// Same as `as_slice_mut`, but takes &self rather than &mut self. Instead takes out a RwLock::write
+    pub async fn as_slice_mut_locking<S: RangeBounds<usize> + Send>(&self, bounds: S) -> &mut [u8] {
+        return self.internal.write().unwrap().as_slice_mut(bounds);
+    }
+
+    /// For internal use. Flush is automatically called after every host function, so there should be
+    /// no reason for any uses of this library to call this function. It is exposed for future multithreaded
+    /// wasm use cases, where host memory coherency calls may need to be more fine-grained.
+    pub async fn flush(&mut self) {
+        self.internal.get_mut().unwrap().flush();
+    }
+
+    pub async fn resize(&mut self, size: usize) {
+        self.internal.get_mut().unwrap().resize(size);
+    }
 
     /// Convenience wrapper around `resize` that adds more space
     pub async fn extend(&mut self, extra: usize) {
@@ -195,26 +253,12 @@ where
     }
 
     /// Convenience method for writing blocks of data
-    pub async fn write(&mut self, data: &[u8], offset: usize) -> anyhow::Result<()> {
+    pub async fn write(&mut self, data: &[u8], offset: usize) {
         let start = offset;
         let end = start + data.len();
-        let slice = self.as_slice_mut(start..end).await?;
+        let slice = self.as_slice_mut(start..end).await;
         slice.copy_from_slice(data);
-
-        return Ok(());
     }
-}
-
-pub struct InterleavedDynamicBuffer<B>
-where
-    B: Backend,
-{
-    memory: Arc<RwLock<DynamicMemoryBlock<B>>>,
-    locks: Vec<RwLock<()>>, // Synchronisation for unsafe implementations of accessors for each portion of the buffer
-}
-
-impl InterleavedStaticBuffer<B> {
-    pub fn new() -> Self {}
 }
 
 pub fn limits_match<V: Ord>(n1: V, m1: Option<V>, n2: V, m2: Option<V>) -> bool {

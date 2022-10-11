@@ -1,6 +1,7 @@
 use crate::for_each_function_signature;
 use anyhow::Error;
 use std::fmt::{Display, Formatter};
+use std::ops::{Add, Bound, Range, RangeBounds};
 use wasmparser::ValType;
 
 pub const fn wasm_ty_bytes(ty: ValType) -> usize {
@@ -289,3 +290,32 @@ macro_rules! impl_vec_rec {
 }
 
 for_each_function_signature!(impl_vec_rec);
+
+pub trait ToRange {
+    type Value;
+
+    const ZERO: Self::Value;
+
+    fn half_open(&self, max: Self::Value) -> Range<Self::Value>;
+}
+
+impl<V: Default + Clone + Add<u8>, R: RangeBounds<V>> ToRange for R {
+    type Value = V;
+    const ZERO: Self::Value = V::default();
+
+    fn half_open(&self, max: V) -> Range<V> {
+        let start = match self.start_bound() {
+            Bound::Included(b) => b.clone(),
+            Bound::Excluded(b) => b.clone().add(1),
+            Bound::Unbounded => ZERO,
+        };
+
+        let end = match self.end_bound() {
+            Bound::Included(b) => b.clone().add(1),
+            Bound::Excluded(b) => b.clone(),
+            Bound::Unbounded => max,
+        };
+
+        return Range { start, end };
+    }
+}

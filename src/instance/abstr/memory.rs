@@ -1,23 +1,26 @@
-use crate::memory::DynamicMemoryBlock;
-use crate::{impl_ptr, Backend};
-use itertools::Itertools;
+use crate::atomic_counter::AtomicCounter;
+use crate::instance::concrete::memory::MemoryPtr;
+use crate::memory::{limits_match, DynamicMemoryBlock};
+use crate::{impl_abstract_ptr, Backend};
 use std::sync::Arc;
 use wasmparser::MemoryType;
+
+static COUNTER: AtomicCounter = AtomicCounter::new();
 
 /// Context in which a memory pointer is valid
 pub struct AbstractMemoryInstanceSet<B>
 where
     B: Backend,
 {
-    store_id: usize,
+    id: usize,
     backend: Arc<B>,
     memories: Vec<DynamicMemoryBlock<B>>,
 }
 
-impl AbstractMemoryInstanceSet<B> {
-    pub fn new(backend: Arc<B>, store_id: usize) -> Self {
+impl<B: Backend> AbstractMemoryInstanceSet<B> {
+    pub fn new(backend: Arc<B>) -> Self {
         Self {
-            store_id,
+            id: COUNTER.next(),
             backend,
             memories: Vec::new(),
         }
@@ -30,34 +33,37 @@ impl AbstractMemoryInstanceSet<B> {
             plan.initial as usize,
             None,
         ));
-        return AbstractMemoryPtr::new(ptr, self.store_id, plan.clone());
+        return AbstractMemoryPtr::new(ptr, self.id, plan.clone());
     }
 
+    /// # Panics
+    /// Panics if the pointer is not for this abstract memory
     pub async fn initialize<T>(
         &mut self,
         ptr: &AbstractMemoryPtr<B, T>,
         data: &[u8],
         offset: usize,
-    ) -> anyhow::Result<()> {
-        assert_eq!(ptr.store_id, self.store_id);
+    ) {
+        assert_eq!(ptr.id, self.id);
 
         self.memories
             .get_mut(ptr.ptr as usize)
+            .unwrap() // This is append only, so having a pointer implies the item exists
             .write(data, offset)
             .await
     }
 }
 
-impl_ptr!(
-    pub struct MemoryPtr<B, T> {
+impl_abstract_ptr!(
+    pub struct AbstractMemoryPtr<B: Backend, T> {
         ...
         // Copied from Memory
         ty: MemoryType,
-    }
-
-    impl<B, T> MemoryPtr<B, T> {
-        pub fn is_type(&self, ty: &MemoryType) -> bool {
-            limits_match(self.ty.initial, self.ty.maximum, ty.initial, ty.maximum)
-        }
-    }
+    } with concrete MemoryPtr<B, T>;
 );
+
+impl<B, T> AbstractMemoryPtr<B, T> {
+    pub fn is_type(&self, ty: &MemoryType) -> bool {
+        limits_match(self.ty.initial, self.ty.maximum, ty.initial, ty.maximum)
+    }
+}

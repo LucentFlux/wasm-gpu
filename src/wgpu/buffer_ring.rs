@@ -52,7 +52,7 @@ impl BufferRingBuffer {
         src: &AsyncBuffer,
         offset: BufferAddress,
     ) {
-        let mut copy_command_encoder = device.create_command_encoder(&Default::default());
+        let mut copy_command_encoder = device.as_ref().create_command_encoder(&Default::default());
         copy_command_encoder.copy_buffer_to_buffer(
             src.as_ref(),
             offset,
@@ -71,7 +71,7 @@ impl BufferRingBuffer {
         dst: &AsyncBuffer,
         offset: BufferAddress,
     ) {
-        let mut copy_command_encoder = device.create_command_encoder(&Default::default());
+        let mut copy_command_encoder = device.as_ref().create_command_encoder(&Default::default());
         copy_command_encoder.copy_buffer_to_buffer(
             self.buffer.as_ref(),
             0,
@@ -86,7 +86,7 @@ impl BufferRingBuffer {
 pub struct BufferRing {
     config: BufferRingConfig,
 
-    device: Arc<AsyncDevice>,
+    device: AsyncDevice,
     unused_buffers: Arc<Mutex<VecDeque<AsyncBuffer>>>,
     free_buffers: Arc<Semaphore>, // Tracks the above dequeue
     map_mode: MapMode,
@@ -97,7 +97,7 @@ pub struct BufferRing {
 
 impl BufferRing {
     pub fn new(
-        device: Arc<AsyncDevice>,
+        device: AsyncDevice,
         label: String,
         map_mode: MapMode,
         config: BufferRingConfig,

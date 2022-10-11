@@ -4,20 +4,24 @@ use wgpu::{CommandBuffer, Queue};
 
 #[derive(Clone, Debug)]
 pub struct AsyncQueue {
-    device: Arc<AsyncDevice>,
-    queue: Queue,
+    device: AsyncDevice,
+    queue: Arc<Queue>,
 }
 
 impl AsyncQueue {
-    pub fn new(device: Arc<AsyncDevice>, queue: Queue) -> Self {
-        Self { device, queue }
+    pub fn new(device: AsyncDevice, queue: Queue) -> Self {
+        Self {
+            device,
+            queue: Arc::new(queue),
+        }
     }
 
     pub async fn submit<I: IntoIterator<Item = CommandBuffer>>(&self, command_buffers: I) {
+        let queue_ref = self.queue.clone();
         self.device
             .do_async(move |callback| {
-                self.queue.submit(command_buffers);
-                self.queue.on_submitted_work_done(callback);
+                queue_ref.submit(command_buffers);
+                queue_ref.on_submitted_work_done(callback);
             })
             .await
     }

@@ -1,12 +1,16 @@
-use crate::instance::func::AbstractUntypedFuncPtr;
+use crate::atomic_counter::AtomicCounter;
+use crate::instance::concrete::global::GlobalPtr;
+use crate::instance::func::UntypedFuncPtr;
 use crate::memory::DynamicMemoryBlock;
 use crate::module::module_environ::{Global, GlobalInit};
 use crate::typed::{ExternRef, FuncRef, Val, WasmTyVal, WasmTyVec};
-use crate::{impl_ptr, Backend};
+use crate::{impl_abstract_ptr, Backend};
 use anyhow::anyhow;
 use std::mem::size_of;
 use std::sync::Arc;
 use wasmparser::{GlobalType, Operator, ValType};
+
+static COUNTER: AtomicCounter = AtomicCounter::new();
 
 pub struct AbstractGlobalInstance<B>
 where
@@ -17,19 +21,19 @@ where
     values_head: usize,
     types: Vec<GlobalType>,
 
-    store_id: usize,
+    id: usize,
 }
 
 impl<B> AbstractGlobalInstance<B>
 where
     B: Backend,
 {
-    pub fn new(backend: Arc<B>, store_id: usize) -> Self {
+    pub fn new(backend: Arc<B>) -> Self {
         Self {
             values: DynamicMemoryBlock::new(backend, 0, None),
             values_head: 0,
             types: vec![],
-            store_id,
+            id: COUNTER.next(),
         }
     }
 
@@ -38,7 +42,7 @@ where
         &mut self,
         constr_expr: &Vec<Operator<'data>>,
         module_globals: &Vec<AbstractGlobalPtr<B, T>>,
-        module_functions: &Vec<AbstractUntypedFuncPtr<B, T>>,
+        module_functions: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Val {
         let mut stack = Vec::new();
 
@@ -132,6 +136,8 @@ where
     }
 
     pub async fn get<T>(&mut self, ptr: &AbstractGlobalPtr<B, T>) -> anyhow::Result<Val> {
+        assert_eq!(self.id, ptr.id);
+
         match &ptr.ty.content_type {
             ValType::I32 => self.get_typed::<T, i32>(ptr)?.to_val(),
             ValType::I64 => self.get_typed::<T, i64>(ptr)?.to_val(),
@@ -148,7 +154,7 @@ where
     where
         V: WasmTyVal,
     {
-        assert_eq!(ptr.store_id, self.store_id);
+        assert_eq!(self.id, ptr.id);
         assert!(ptr.ty.content_type.eq(&V::VAL_TYPE));
 
         let start = ptr.ptr;
@@ -199,26 +205,25 @@ where
                 let ptr = global_imports
                     .next()
                     .ok_or(anyhow!("global import is not within imports"))?;
-                assert_eq!(ptr.store_id, self.store_id);
+                assert_eq!(self.id, ptr.id);
                 assert_eq!(ptr.ty.content_type, global.ty.content_type); // Mutablility doesn't need to match
                 Ok(ptr.ptr)
             }
         }?;
 
-        return Ok(AbstractGlobalPtr::new(pos, self.store_id, global.ty));
+        return Ok(AbstractGlobalPtr::new(pos, self.id, global.ty));
     }
 }
 
-impl_ptr!(
-    pub struct GlobalPtr<B, T> {
+impl_abstract_ptr!(
+    pub struct AbstractGlobalPtr<B: Backend, T> {
         ...
         ty: GlobalType,
-    }
-
-    impl<B, T> GlobalPtr<B, T>
-    {
-        pub fn is_type(&self, ty: &GlobalType) -> bool {
-            return self.ty.eq(ty);
-        }
-    }
+    } with concrete GlobalPtr<B, T>;
 );
+
+impl<B: Backend, T> AbstractGlobalPtr<B, T> {
+    pub fn is_type(&self, ty: &GlobalType) -> bool {
+        return self.ty.eq(ty);
+    }
+}

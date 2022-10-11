@@ -1,8 +1,8 @@
 use crate::externs::Extern;
-use crate::instance::abstr::global::GlobalPtr;
-use crate::instance::abstr::memory::MemoryPtr;
-use crate::instance::abstr::table::TablePtr;
-use crate::instance::func::{AbstractTypedFuncPtr, UntypedFuncPtr};
+use crate::instance::abstr::global::AbstractGlobalPtr;
+use crate::instance::abstr::memory::AbstractMemoryPtr;
+use crate::instance::abstr::table::AbstractTablePtr;
+use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
 use crate::module::module_environ::ModuleExport;
 use crate::read_only::{AppendOnlyVec, ReadOnly};
 use crate::typed::WasmTyVec;
@@ -25,9 +25,9 @@ where
 {
     store_id: usize,
     funcs: AppendOnlyVec<UntypedFuncPtr<B, T>>,
-    tables: AppendOnlyVec<TablePtr<B, T>>,
-    memories: AppendOnlyVec<MemoryPtr<B, T>>,
-    globals: AppendOnlyVec<GlobalPtr<B, T>>,
+    tables: AppendOnlyVec<AbstractTablePtr<B, T>>,
+    memories: AppendOnlyVec<AbstractMemoryPtr<B, T>>,
+    globals: AppendOnlyVec<AbstractGlobalPtr<B, T>>,
     exports: FrozenMap<String, Arc<ReadOnly<ModuleExport>>>,
 }
 
@@ -38,9 +38,9 @@ where
     pub fn new(
         store_id: usize,
         funcs: AppendOnlyVec<UntypedFuncPtr<B, T>>,
-        tables: AppendOnlyVec<TablePtr<B, T>>,
-        memories: AppendOnlyVec<MemoryPtr<B, T>>,
-        globals: AppendOnlyVec<GlobalPtr<B, T>>,
+        tables: AppendOnlyVec<AbstractTablePtr<B, T>>,
+        memories: AppendOnlyVec<AbstractMemoryPtr<B, T>>,
+        globals: AppendOnlyVec<AbstractGlobalPtr<B, T>>,
         exports: FrozenMap<String, Arc<ReadOnly<ModuleExport>>>,
     ) -> Self {
         Self {
@@ -80,7 +80,7 @@ where
     pub fn get_typed_func<Params, Results>(
         &self,
         name: &str,
-    ) -> anyhow::Result<AbstractTypedFuncPtr<B, T, Params, Results>>
+    ) -> anyhow::Result<TypedFuncPtr<B, T, Params, Results>>
     where
         Params: WasmTyVec,
         Results: WasmTyVec,
@@ -88,14 +88,15 @@ where
         let untyped = self
             .get_func(name)
             .context(format!("failed to find function export `{}`", name))?;
-        let typed = AbstractTypedFuncPtr::<B, T, Params, Results>::try_from(untyped).context(
-            format!("failed to convert function `{}` to given type", name),
-        )?;
+        let typed = TypedFuncPtr::<B, T, Params, Results>::try_from(untyped).context(format!(
+            "failed to convert function `{}` to given type",
+            name
+        ))?;
 
         return Ok(typed);
     }
 
-    pub fn get_memory_export(&self, name: &str) -> anyhow::Result<MemoryPtr<B, T>> {
+    pub fn get_memory_export(&self, name: &str) -> anyhow::Result<AbstractMemoryPtr<B, T>> {
         self.get_export(name)
             .ok_or(anyhow!("no exported object with name {}", name))
             .and_then(|export| match export {
@@ -117,7 +118,7 @@ where
     fn get_typed_funcs<Params, Results>(
         self,
         name: &str,
-    ) -> Vec<anyhow::Result<AbstractTypedFuncPtr<B, T, Params, Results>>>
+    ) -> Vec<anyhow::Result<TypedFuncPtr<B, T, Params, Results>>>
     where
         Params: WasmTyVec,
         Results: WasmTyVec;
@@ -137,7 +138,7 @@ where
     fn get_typed_funcs<Params, Results>(
         self,
         name: &str,
-    ) -> Vec<anyhow::Result<AbstractTypedFuncPtr<B, T, Params, Results>>>
+    ) -> Vec<anyhow::Result<TypedFuncPtr<B, T, Params, Results>>>
     where
         Params: WasmTyVec,
         Results: WasmTyVec,

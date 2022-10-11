@@ -2,6 +2,7 @@ mod async_buffer;
 mod async_device;
 mod async_queue;
 mod buffer_ring;
+mod compute_utils;
 mod memory;
 
 pub use crate::wgpu::buffer_ring::BufferRingConfig;
@@ -11,6 +12,7 @@ use crate::atomic_counter::AtomicCounter;
 use crate::wgpu::async_device::AsyncDevice;
 use crate::wgpu::async_queue::AsyncQueue;
 use crate::wgpu::buffer_ring::BufferRing;
+use crate::wgpu::compute_utils::WgpuComputeUtils;
 use crate::wgpu::memory::{WgpuMappedMemoryBlock, WgpuUnmappedMemoryBlock};
 use crate::Backend;
 use std::sync::Arc;
@@ -30,19 +32,21 @@ impl Default for WgpuBackendConfig {
 }
 
 pub struct WgpuBackend {
-    device: Arc<AsyncDevice>,
-    queue: Arc<AsyncQueue>,
+    device: AsyncDevice,
+    queue: AsyncQueue,
 
     upload_buffers: Arc<BufferRing>,
     download_buffers: Arc<BufferRing>,
 
     block_counter: AtomicCounter,
+
+    utils: WgpuComputeUtils,
 }
 
 impl WgpuBackend {
     pub fn new(device: Device, queue: Queue, conf: WgpuBackendConfig) -> Self {
-        let device = Arc::new(AsyncDevice::new(device));
-        let queue = Arc::new(AsyncQueue::new(device.clone(), queue));
+        let device = AsyncDevice::new(device);
+        let queue = AsyncQueue::new(device.clone(), queue);
         Self {
             upload_buffers: Arc::new(BufferRing::new(
                 device.clone(),
@@ -56,6 +60,7 @@ impl WgpuBackend {
                 MapMode::Read,
                 conf.buffer_ring_config,
             )),
+            utils: WgpuComputeUtils::new(device.clone()),
             queue,
             device,
             block_counter: AtomicCounter::new(),
@@ -72,6 +77,7 @@ impl Debug for WgpuBackend {
 impl Backend for WgpuBackend {
     type DeviceMemoryBlock = WgpuUnmappedMemoryBlock;
     type MainMemoryBlock = WgpuMappedMemoryBlock;
+    type Utils = WgpuComputeUtils;
 
     fn create_device_memory_block(
         &self,
@@ -87,5 +93,9 @@ impl Backend for WgpuBackend {
             format!("Memory block {}", self.block_counter.next()),
             initial_data,
         )
+    }
+
+    fn get_utils(&self) -> &WgpuComputeUtils {
+        &self.utils
     }
 }

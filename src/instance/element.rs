@@ -1,8 +1,11 @@
+use crate::atomic_counter::AtomicCounter;
 use crate::memory::DynamicMemoryBlock;
 use crate::typed::{FuncRef, WasmTyVal, WasmTyVec};
-use crate::{impl_ptr, Backend};
+use crate::{impl_immutable_ptr, Backend};
 use itertools::Itertools;
 use std::sync::Arc;
+
+static COUNTER: AtomicCounter = AtomicCounter::new();
 
 pub struct ElementInstance<B>
 where
@@ -12,18 +15,18 @@ where
     references: DynamicMemoryBlock<B>,
     len: usize,
 
-    store_id: usize,
+    id: usize,
 }
 
 impl<B> ElementInstance<B>
 where
     B: Backend,
 {
-    pub fn new(backend: Arc<B>, store_id: usize) -> Self {
+    pub fn new(backend: Arc<B>) -> Self {
         Self {
             references: DynamicMemoryBlock::new(backend, 0, None),
             len: 0,
-            store_id,
+            id: COUNTER.next(),
         }
     }
 
@@ -47,25 +50,27 @@ where
         slice.copy_from_slice(
             element
                 .iter()
-                .flat_map(|v| <FuncRef as WasmTyVal>::to_bytes(&FuncRef(*v)))
+                .flat_map(|v| FuncRef::from_u32(*v).to_bytes())
                 .collect_vec()
                 .as_slice(),
         );
 
         self.len = end;
 
-        return Ok(ElementPtr::new(start, self.store_id, element.len()));
+        return Ok(ElementPtr::new(start, self.id, element.len()));
     }
 
-    pub(crate) async fn get(&mut self, ptr: &ElementPtr<B, T>) -> anyhow::Result<&[u8]> {
+    pub(crate) async fn get<T>(&mut self, ptr: &ElementPtr<B, T>) -> &[u8] {
+        assert_eq!(ptr.id, self.id);
+
         let start = ptr.ptr;
         let end = start + (ptr.len * std::mem::size_of::<u32>());
         return self.references.as_slice(start..end).await;
     }
 }
 
-impl_ptr!(
-    pub struct ElementPtr<B, T> {
+impl_immutable_ptr!(
+    pub struct ElementPtr<B: Backend, T> {
         ...
         len: usize,
     }

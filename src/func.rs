@@ -4,7 +4,7 @@ use futures::future::{BoxFuture, FutureExt};
 use std::marker::PhantomData;
 use wasmparser::{FuncType, ValType, WasmFuncType};
 
-use crate::instance::func::{AbstractTypedFuncPtr, AbstractUntypedFuncPtr};
+use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
 use crate::instance::ModuleInstance;
 use crate::memory::DynamicMemoryBlock;
 use crate::store::store::Store;
@@ -97,7 +97,7 @@ where
     pub fn wrap<Params, Results, F>(
         stores: &mut StoreSetBuilder<B, T>,
         func: F,
-    ) -> AbstractTypedFuncPtr<B, T, Params, Results>
+    ) -> TypedFuncPtr<B, T, Params, Results>
     where
         Params: WasmTyVec + 'static,
         Results: WasmTyVec + 'static,
@@ -114,7 +114,7 @@ where
             ty: WasmFuncType::new(Params::VAL_TYPES, Results::VAL_TYPES),
         };
 
-        let fp: AbstractUntypedFuncPtr<B, T> = stores.register_function(func);
+        let fp: UntypedFuncPtr<B, T> = stores.register_function(func);
 
         return fp.typed();
     }

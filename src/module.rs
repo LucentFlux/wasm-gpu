@@ -5,9 +5,9 @@ use crate::externs::NamedExtern;
 use crate::instance::abstr::global::{AbstractGlobalInstance, AbstractGlobalPtr};
 use crate::instance::abstr::memory::{AbstractMemoryInstanceSet, AbstractMemoryPtr};
 use crate::instance::abstr::table::{AbstractTableInstanceSet, AbstractTablePtr};
-use crate::instance::data::{AbstractDataPtr, DataInstance};
-use crate::instance::element::AbstractElementPtr;
-use crate::instance::func::{AbstractUntypedFuncPtr, FuncsInstance};
+use crate::instance::data::{DataInstance, DataPtr};
+use crate::instance::element::{ElementInstance, ElementPtr};
+use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
 use crate::module::module_environ::{
     ImportTypeRef, ModuleEnviron, ParsedElementItems, ParsedElementKind, ParsedModule,
 };
@@ -37,9 +37,9 @@ pub struct ValidatedImports<B, T>
 where
     B: Backend,
 {
-    functions: Vec<AbstractUntypedFuncPtr<B, T>>,
+    functions: Vec<UntypedFuncPtr<B, T>>,
     globals: Vec<AbstractGlobalPtr<B, T>>,
-    tables: Vec<AbsractTablePtr<B, T>>,
+    tables: Vec<AbstractTablePtr<B, T>>,
     memories: Vec<AbstractMemoryPtr<B, T>>,
 }
 
@@ -47,13 +47,13 @@ impl<B, T> ValidatedImports<B, T>
 where
     B: Backend,
 {
-    pub fn functions(&self) -> Iter<AbstractFuncPtr<B, T>> {
+    pub fn functions(&self) -> Iter<UntypedFuncPtr<B, T>> {
         self.functions.iter()
     }
     pub fn globals(&self) -> Iter<AbstractGlobalPtr<B, T>> {
         self.globals.iter()
     }
-    pub fn tables(&self) -> Iter<AbsractTablePtr<B, T>> {
+    pub fn tables(&self) -> Iter<AbstractTablePtr<B, T>> {
         self.tables.iter()
     }
     pub fn memories(&self) -> Iter<AbstractMemoryPtr<B, T>> {
@@ -181,7 +181,7 @@ where
         let mut imports_iter = globals.into_iter();
         let mut results = Vec::new();
         for (global) in globals.into_iter() {
-            let ptr: GlobalPtr<B, T> = globals_instance
+            let ptr: AbstractGlobalPtr<B, T> = globals_instance
                 .add_global(global, &mut imports_iter, results.as_slice())
                 .await?;
             results.push(ptr);
@@ -193,7 +193,7 @@ where
     pub(crate) fn predict_functions<T>(
         &self,
         functions: &FuncsInstance<B, T>,
-    ) -> Vec<AbstractUntypedFuncPtr<B, T>> {
+    ) -> Vec<UntypedFuncPtr<B, T>> {
         let types = self.parsed.functions.iter().map(|f| {
             self.parsed
                 .types
@@ -206,12 +206,12 @@ where
     /// Extends elements buffers to be shared by all stores of a set, as passive elements are immutable
     pub(crate) async fn initialize_elements<T>(
         &self,
-        elements: &mut AbstractElementInstance<B>,
+        elements: &mut ElementInstance<B>,
         // Needed for const expr evaluation
         globals: &mut AbstractGlobalInstance<B>,
         global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
-        func_ptrs: &Vec<AbstractFuncPtr<B, T>>,
-    ) -> anyhow::Result<Vec<AbstractElementPtr<B, T>>> {
+        func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
+    ) -> anyhow::Result<Vec<ElementPtr<B, T>>> {
         // Reserve space first
         let size: usize =
             size_of::<FuncRef>() * self.parsed.elements.iter().map(|e| e.items.len()).sum();
@@ -251,9 +251,9 @@ where
     pub(crate) async fn initialize_tables<T>(
         &self,
         tables: &mut AbstractTableInstanceSet<B>,
-        imported_tables: Iter<AbstractTablePtr<B, T>>,
+        imported_tables: Iter<'_, AbstractTablePtr<B, T>>,
         elements: &mut AbstractElementInstance<B>,
-        module_element_ptrs: &Vec<AbstractElementPtr<B, T>>,
+        module_element_ptrs: &Vec<ElementPtr<B, T>>,
         // Needed for const expr evaluation
         globals: &mut AbstractGlobalInstance<B>,
         global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
@@ -301,7 +301,7 @@ where
     pub(crate) async fn initialize_datas(
         &self,
         datas: &mut DataInstance<B>,
-    ) -> anyhow::Result<Vec<AbstractDataPtr<B, T>>> {
+    ) -> anyhow::Result<Vec<DataPtr<B, T>>> {
         // Reserve space first
         let size: usize = self.parsed.datas.iter().map(|e| e.data.len()).sum();
         datas.reserve(size).await;
@@ -319,9 +319,9 @@ where
     pub(crate) async fn initialize_memories<T>(
         &self,
         memory_set: &mut AbstractMemoryInstanceSet<B>,
-        imported_memories: Iter<AbstractMemoryPtr<B, T>>,
+        imported_memories: Iter<'_, AbstractMemoryPtr<B, T>>,
         datas: &mut DataInstance<B>,
-        module_data_ptrs: &Vec<AbstractDataPtr<B, T>>,
+        module_data_ptrs: &Vec<DataPtr<B, T>>,
         // Needed for const expr evaluation
         globals: &mut GlobalInstance<B>,
         global_ptrs: &Vec<GlobalPtr<B, T>>,
@@ -333,13 +333,13 @@ where
     pub(crate) async fn initialize_functions<T>(
         &self,
         functions: &mut FuncsInstance<B, T>,
-        func_imports: Iter<AbstractUntypedFuncPtr<B, T>>,
+        func_imports: Iter<'_, UntypedFuncPtr<B, T>>,
         module_globals: &Vec<AbstractGlobalPtr<B, T>>,
-        module_elements: &Vec<AbstractElementPtr<B, T>>,
+        module_elements: &Vec<ElementPtr<B, T>>,
         module_tables: &Vec<AbstractTablePtr<B, T>>,
-        module_datas: &Vec<AbstractDataPtr<B, T>>,
+        module_datas: &Vec<DataPtr<B, T>>,
         module_memories: &Vec<AbstractMemoryPtr<B, T>>,
-    ) -> anyhow::Result<Vec<AbstractUntypedFuncPtr<B, T>>> {
+    ) -> anyhow::Result<Vec<UntypedFuncPtr<B, T>>> {
         unimplemented!()
     }
 }

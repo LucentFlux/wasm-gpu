@@ -1,4 +1,4 @@
-use crate::instance::func::AbstractUntypedFuncPtr;
+use crate::instance::func::UntypedFuncPtr;
 use crate::typed::Val;
 use crate::{Backend, StoreSet};
 use futures::future::BoxFuture;
@@ -30,7 +30,7 @@ where
     pub fn new(
         backend: Arc<B>,
         stores: &'a mut StoreSet<B, T>,
-        entry_func: AbstractUntypedFuncPtr<B, T>, // We want to enter at the same point
+        entry_func: UntypedFuncPtr<B, T>, // We want to enter at the same point
         args: Vec<Vec<Val>>,
     ) -> Self {
         let tasks = stores.concrete(entry_func).zip_eq(args).collect_vec();

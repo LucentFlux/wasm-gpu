@@ -1,7 +1,7 @@
 use crate::instance::abstr::global::AbstractGlobalPtr;
 use crate::instance::abstr::memory::AbstractMemoryPtr;
 use crate::instance::abstr::table::AbstractTablePtr;
-use crate::instance::func::{AbstractTypedFuncPtr, AbstractUntypedFuncPtr};
+use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
 use crate::typed::WasmTyVec;
 use crate::Backend;
 
@@ -29,7 +29,7 @@ pub enum Extern<B, T>
 where
     B: Backend,
 {
-    Func(AbstractUntypedFuncPtr<B, T>),
+    Func(UntypedFuncPtr<B, T>),
     Global(AbstractGlobalPtr<B, T>),
     Table(AbstractTablePtr<B, T>),
     Memory(AbstractMemoryPtr<B, T>),
@@ -49,22 +49,22 @@ where
     }
 }
 
-impl<B, T> From<AbstractUntypedFuncPtr<B, T>> for Extern<B, T>
+impl<B, T> From<UntypedFuncPtr<B, T>> for Extern<B, T>
 where
     B: Backend,
 {
-    fn from(f: AbstractUntypedFuncPtr<B, T>) -> Self {
+    fn from(f: UntypedFuncPtr<B, T>) -> Self {
         Self::Func(f)
     }
 }
 
-impl<B, T, Params, Results> From<AbstractTypedFuncPtr<B, T, Params, Results>> for Extern<B, T>
+impl<B, T, Params, Results> From<TypedFuncPtr<B, T, Params, Results>> for Extern<B, T>
 where
     B: Backend,
     Params: WasmTyVec,
     Results: WasmTyVec,
 {
-    fn from(f: AbstractTypedFuncPtr<B, T, Params, Results>) -> Self {
+    fn from(f: TypedFuncPtr<B, T, Params, Results>) -> Self {
         Self::Func(f.as_untyped())
     }
 }

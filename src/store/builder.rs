@@ -5,7 +5,7 @@ use crate::instance::abstr::memory::AbstractMemoryInstanceSet;
 use crate::instance::abstr::table::AbstractTableInstanceSet;
 use crate::instance::data::DataInstance;
 use crate::instance::element::ElementInstance;
-use crate::instance::func::{AbstractUntypedFuncPtr, FuncsInstance};
+use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
 use crate::instance::ModuleInstance;
 use crate::{Backend, Engine, Func, Module, StoreSet};
 use futures::StreamExt;
@@ -61,8 +61,8 @@ where
     /// stores from the builder involves no copying of data from the CPU to the GPU, only within the GPU.
     pub async fn instantiate_module(
         &mut self,
-        module: &Module<B>,
-        imports: impl IntoIterator<Item = NamedExtern<B, T>>,
+        module: &Module<'_, B>,
+        imports: impl IntoIterator<Item = NamedExtern<'_, B, T>>,
     ) -> anyhow::Result<ModuleInstance<B, T>> {
         // Validation
         let validated_imports = module.typecheck_imports(imports)?;
@@ -73,7 +73,7 @@ where
             .await?;
 
         // Predict the function pointers that we *will* be creating
-        let predicted_func_ptrs = module.predict_functions(self.id, self.functions.len());
+        let predicted_func_ptrs = module.predict_functions(&self.functions);
 
         // Elements
         let element_ptrs = module
@@ -147,15 +147,22 @@ where
         ));
     }
 
-    pub fn register_function(&mut self, func: Func<B, T>) -> AbstractUntypedFuncPtr<B, T> {
+    pub fn register_function(&mut self, func: Func<B, T>) -> UntypedFuncPtr<B, T> {
         return self.functions.register(func);
     }
 
+    /// Takes this builder and makes it immutable, allowing instances to be created from it
+    pub fn complete(self) -> CompletedBuilder<B, T> {
+        CompletedBuilder {}
+    }
+}
+
+pub struct CompletedBuilder<B: Backend, T> {}
+
+impl<B: Backend, T> CompletedBuilder<B, T> {
     /// Takes the instructions provided to this builder and produces a collection of stores which can
     /// be used to evaluate instructions
-    ///
-    /// Must consume self so that pointers are valid
-    pub async fn build(self, values: impl IntoIterator<Item = T>) -> StoreSet<B, T> {
+    pub async fn build(&self, values: impl IntoIterator<Item = T>) -> StoreSet<B, T> {
         // Here we take all of the initialisation that we did that can be shared and spin it into several
         // instances. This shouldn't involve moving any data to the device, instead data that has already
         // been provided to the device should be cloned and specialised as needed for a collection of instances

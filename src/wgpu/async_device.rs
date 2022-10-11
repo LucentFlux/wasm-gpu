@@ -31,9 +31,11 @@ impl AsyncDevice {
         let buffer = self.device.create_buffer(desc);
         AsyncBuffer::new(self.clone(), buffer)
     }
+}
 
-    pub fn create_command_encoder(&self, desc: &CommandEncoderDescriptor) -> CommandEncoder {
-        self.device.create_command_encoder(desc)
+impl AsRef<Device> for AsyncDevice {
+    fn as_ref(&self) -> &Device {
+        return self.device.as_ref();
     }
 }
 

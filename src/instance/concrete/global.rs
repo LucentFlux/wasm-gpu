@@ -1,22 +1,34 @@
-use crate::memory::StaticMemoryBlock;
-use crate::Backend;
+use crate::atomic_counter::AtomicCounter;
+use crate::instance::abstr::global::AbstractGlobalPtr;
+use crate::memory::interleaved::InterleavedBuffer;
+use crate::memory::DynamicMemoryBlock;
+use crate::{impl_concrete_ptr, Backend};
 use std::sync::Arc;
+use wasmparser::GlobalType;
 
-pub struct GlobalInstance<B>
+static COUNTER: AtomicCounter = AtomicCounter::new();
+
+pub struct GlobalInstanceSet<B, const STRIDE: usize>
 where
     B: Backend,
 {
-    // We only need to store the mutable globals per store - the immutable ones can be in a shared buffer
-    shared_immutables: Arc<StaticMemoryBlock<B>>,
+    shared_immutables: Arc<DynamicMemoryBlock<B>>,
 
-    mutables: Arc<StaticMemoryBlock<B>>,
+    mutables: InterleavedBuffer<B, STRIDE>,
     total_instances: usize,
-    instance_id: usize,
+    id: usize,
 }
 
-impl<B> GlobalInstance<B>
+impl<B, const STRIDE: usize> GlobalInstanceSet<B, STRIDE>
 where
     B: Backend,
 {
     pub fn new() -> Self {}
 }
+
+impl_concrete_ptr!(
+    pub struct GlobalPtr<B: Backend, T> {
+        ...
+        ty: GlobalType,
+    } with abstract AbstractGlobalPtr<B, T>;
+);
