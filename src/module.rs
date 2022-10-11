@@ -17,7 +17,6 @@ use anyhow::{anyhow, Context, Error};
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::intrinsics::size_of;
 use std::ops::Index;
 use std::slice::Iter;
 use std::sync::Arc;
@@ -213,8 +212,8 @@ where
         func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> anyhow::Result<Vec<ElementPtr<B, T>>> {
         // Reserve space first
-        let size: usize =
-            size_of::<FuncRef>() * self.parsed.elements.iter().map(|e| e.items.len()).sum();
+        let size: usize = std::mem::size_of::<FuncRef>()
+            * self.parsed.elements.iter().map(|e| e.items.len()).sum();
         elements.reserve(size).await;
 
         // Then add
@@ -252,12 +251,12 @@ where
         &self,
         tables: &mut AbstractTableInstanceSet<B>,
         imported_tables: Iter<'_, AbstractTablePtr<B, T>>,
-        elements: &mut AbstractElementInstance<B>,
+        elements: &mut ElementInstance<B>,
         module_element_ptrs: &Vec<ElementPtr<B, T>>,
         // Needed for const expr evaluation
         globals: &mut AbstractGlobalInstance<B>,
         global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
-        func_ptrs: &Vec<AbstractFuncPtr<B, T>>,
+        func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> anyhow::Result<Vec<AbstractTablePtr<B, T>>> {
         // Pointers starts with imports
         let mut ptrs = Vec::from(imported_tables.map(|tp| tp.clone()));
@@ -298,7 +297,7 @@ where
         return Ok(ptrs);
     }
 
-    pub(crate) async fn initialize_datas(
+    pub(crate) async fn initialize_datas<T>(
         &self,
         datas: &mut DataInstance<B>,
     ) -> anyhow::Result<Vec<DataPtr<B, T>>> {
@@ -323,9 +322,9 @@ where
         datas: &mut DataInstance<B>,
         module_data_ptrs: &Vec<DataPtr<B, T>>,
         // Needed for const expr evaluation
-        globals: &mut GlobalInstance<B>,
-        global_ptrs: &Vec<GlobalPtr<B, T>>,
-        func_ptrs: &Vec<FuncPtr<B, T>>,
+        globals: &mut AbstractGlobalInstance<B>,
+        global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
+        func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> anyhow::Result<Vec<AbstractMemoryPtr<B, T>>> {
         unimplemented!()
     }

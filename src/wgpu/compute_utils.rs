@@ -1,5 +1,6 @@
 use crate::compute_utils::{Utils, WGSLSources};
 use crate::wgpu::async_device::AsyncDevice;
+use crate::wgpu::memory::WgpuUnmappedMemoryBlock;
 use crate::WgpuBackend;
 use async_trait::async_trait;
 use wgpu::{Label, ShaderModule};
@@ -25,9 +26,9 @@ impl WgpuComputeUtils {
 #[async_trait]
 impl Utils<WgpuBackend> for WgpuComputeUtils {
     async fn interleave<const STRIDE: usize>(
-        &mut self,
-        src: WgpuDeviceMemoryBlock,
-        dst: WgpuDeviceMemoryBlock,
+        &self,
+        src: &mut WgpuUnmappedMemoryBlock,
+        dst: &mut WgpuUnmappedMemoryBlock,
         count: usize,
     ) {
         unimplemented!()

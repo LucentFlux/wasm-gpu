@@ -7,7 +7,7 @@ use wasmparser::{FuncType, ValType, WasmFuncType};
 use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
 use crate::instance::ModuleInstance;
 use crate::memory::DynamicMemoryBlock;
-use crate::store::store::Store;
+use crate::store_set::StoreSet;
 use crate::typed::{Val, WasmTyVec};
 use crate::{Backend, StoreSetBuilder};
 
@@ -144,12 +144,12 @@ macro_rules! for_each_function_signature {
 }
 
 /// B is the backend type,
-/// T is the data associated with the store
+/// T is the data associated with the store_set
 pub struct Caller<'a, B, T>
 where
     B: Backend,
 {
-    store: &'a mut Store<B, T>,
+    store: &'a mut StoreSet<B, T>,
     instance: &'a ModuleInstance<B, T>,
 }
 
@@ -175,6 +175,7 @@ mod tests {
     use crate::tests_lib::{gen_test_data, get_backend};
     use crate::{block_test, Config, PanicOnAny};
     use crate::{wasp, MainMemoryBlock};
+    use itertools::Itertools;
     use paste::paste;
     use tokio::runtime::Runtime;
 

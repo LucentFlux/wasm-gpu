@@ -257,7 +257,5 @@ impl BufferRing {
         upload_buffer.write_to(device, queue, dst, offset).await;
 
         self.push(upload_buffer);
-
-        return res;
     }
 }

@@ -18,7 +18,7 @@ mod module;
 mod panic_on_any;
 mod read_only;
 mod session;
-mod store;
+mod store_set;
 mod typed;
 mod wgpu;
 
@@ -49,9 +49,8 @@ pub mod wasp {
     // Externs
     pub use externs::Extern;
     // Store
-    pub use store::builder::StoreSetBuilder;
-    pub use store::Store;
-    pub use store::StoreSet;
+    pub use store_set::builder::StoreSetBuilder;
+    pub use store_set::StoreSet;
     // Instance
     pub use instance::InstanceSet;
     pub use instance::ModuleInstance;

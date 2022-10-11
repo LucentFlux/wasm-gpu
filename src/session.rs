@@ -20,7 +20,7 @@ where
 {
     backend: Arc<B>,
     stores: &'a mut StoreSet<B, T>,
-    tasks: Vec<(FuncPtr<B, T>, Vec<Val>)>,
+    tasks: Vec<(UntypedFuncPtr<B, T>, Vec<Val>)>,
 }
 
 impl<'a, B, T> Session<'a, B, T>

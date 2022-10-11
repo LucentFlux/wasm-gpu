@@ -8,22 +8,33 @@ use wasmparser::GlobalType;
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
 
-pub struct GlobalInstanceSet<B, const STRIDE: usize>
+const STRIDE: usize = 1;
+
+pub struct GlobalInstanceSet<B>
 where
     B: Backend,
 {
-    shared_immutables: Arc<DynamicMemoryBlock<B>>,
-
+    immutables: Arc<DynamicMemoryBlock<B>>,
     mutables: InterleavedBuffer<B, STRIDE>,
-    total_instances: usize,
+
     id: usize,
 }
 
-impl<B, const STRIDE: usize> GlobalInstanceSet<B, STRIDE>
+impl<B> GlobalInstanceSet<B>
 where
     B: Backend,
 {
-    pub fn new() -> Self {}
+    pub fn new(
+        immutables: Arc<DynamicMemoryBlock<B>>,
+        mutables_source: &DynamicMemoryBlock<B>,
+        count: usize,
+    ) -> Self {
+        Self {
+            immutables: immutables,
+            mutables: InterleavedBuffer::new_interleaved_from(mutables_source, count),
+            id: COUNTER.next(),
+        }
+    }
 }
 
 impl_concrete_ptr!(

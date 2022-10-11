@@ -5,7 +5,6 @@ use crate::{impl_immutable_ptr, Backend, Func, StoreSet};
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use itertools::Itertools;
-use std::hash::Hasher;
 use wasmparser::{FuncType, Type};
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
@@ -94,7 +93,7 @@ impl<B: Backend, T> UntypedFuncPtr<B, T> {
 
     /// # Panics
     /// This function panics if:
-    ///  - the function pointer does not refer to the store set
+    ///  - the function pointer does not refer to the store_set set
     fn call_all<'a>(
         &self,
         stores: &'a mut StoreSet<B, T>,
@@ -126,7 +125,7 @@ impl<B: Backend, T, Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<B, T, Pa
 
     /// # Panics
     /// This function panics if:
-    ///  - the function pointer does not refer to the store set
+    ///  - the function pointer does not refer to the store_set set
     pub fn call_all<'a>(
         &self,
         stores: &'a mut StoreSet<B, T>,

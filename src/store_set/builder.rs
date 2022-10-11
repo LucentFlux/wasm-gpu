@@ -12,8 +12,6 @@ use futures::StreamExt;
 use std::hash::Hash;
 use std::sync::Arc;
 
-static STORE_SET_COUNTER: AtomicCounter = AtomicCounter::new(); // Use as store hash & equality
-
 /// Acts like a traditional OOP factory where we initialise modules into this before
 /// creating single Stores after all initialization is done, to amortize the instantiation cost
 pub struct StoreSetBuilder<B, T>
@@ -29,8 +27,6 @@ where
     elements: ElementInstance<B>,
     datas: DataInstance<B>,
     functions: FuncsInstance<B, T>,
-
-    id: usize,
 }
 
 impl<B, T> StoreSetBuilder<B, T>
@@ -38,18 +34,15 @@ where
     B: Backend,
 {
     pub fn new(engine: &Engine<B>) -> Self {
-        let id = STORE_SET_COUNTER.next();
         Self {
             backend: engine.backend(),
 
-            functions: FuncsInstance::new(engine.backend(), id),
-            tables: AbstractTableInstanceSet::new(engine.backend(), id),
-            memories: AbstractMemoryInstanceSet::new(engine.backend(), id),
-            globals: AbstractGlobalInstance::new(engine.backend(), id),
-            elements: ElementInstance::new(engine.backend(), id),
-            datas: DataInstance::new(engine.backend(), id),
-
-            id,
+            functions: FuncsInstance::new(),
+            tables: AbstractTableInstanceSet::new(engine.backend()),
+            memories: AbstractMemoryInstanceSet::new(engine.backend()),
+            globals: AbstractGlobalInstance::new(engine.backend()),
+            elements: ElementInstance::new(engine.backend()),
+            datas: DataInstance::new(engine.backend()),
         }
     }
 

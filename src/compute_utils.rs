@@ -32,9 +32,9 @@ impl_sources!(("compute_utils/interleave.wgsl", interleave),);
 #[async_trait]
 pub trait Utils<B: Backend> {
     async fn interleave<const STRIDE: usize>(
-        &mut self,
-        src: B::DeviceMemoryBlock,
-        dst: B::DeviceMemoryBlock,
+        &self,
+        src: &mut B::DeviceMemoryBlock,
+        dst: &mut B::DeviceMemoryBlock,
         count: usize,
     );
 }

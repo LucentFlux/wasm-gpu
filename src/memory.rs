@@ -259,6 +259,10 @@ where
         let slice = self.as_slice_mut(start..end).await;
         slice.copy_from_slice(data);
     }
+
+    pub(crate) async fn as_device(&mut self) -> &mut B::DeviceMemoryBlock {
+        return self.internal.get_mut().unwrap().memory.as_device();
+    }
 }
 
 pub fn limits_match<V: Ord>(n1: V, m1: Option<V>, n2: V, m2: Option<V>) -> bool {

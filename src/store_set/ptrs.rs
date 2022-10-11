@@ -18,7 +18,7 @@ macro_rules! impl_immutable_ptr {
         }
     ) => {
         #[derive(Debug)]
-        #[doc="Since all stores in a concrete store set are instantiated from a builder, \
+        #[doc="Since all stores in a concrete store_set set are instantiated from a builder, \
         this pointer actually points to a collection of locations, \
         i.e. all locations that correspond to the same logical WASM location \
         inside any of the stores created by a StoreSet with the ID held by this ptr."]
@@ -108,7 +108,7 @@ macro_rules! impl_abstract_ptr {
             }
         );
 
-        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* crate::store::ptrs::AbstractPtr for $name $(<$($lt),*>)*
+        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* crate::store_set::ptrs::AbstractPtr for $name $(<$($lt),*>)*
         {
             type ConcretePtr = $concrete $(<$($cct),*>)*;
 
@@ -138,7 +138,7 @@ macro_rules! impl_concrete_ptr {
         #[derive(Debug)]
         pub struct $name $(<$($lt $(: $clt $(+ $dlt)*)*),*>)*
         {
-            // Only make sense in the context of a specific concrete store
+            // Only make sense in the context of a specific concrete store_set
             ptr: usize,
             abstract_id: usize,
             concrete_id: usize,
@@ -211,7 +211,7 @@ macro_rules! impl_concrete_ptr {
             }
         }
 
-        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* crate::store::ptrs::ConcretePtr for $name $(<$($lt),*>)*
+        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* crate::store_set::ptrs::ConcretePtr for $name $(<$($lt),*>)*
         {
             type AbstractPtr = $abst $(<$($at),*>)*;
 

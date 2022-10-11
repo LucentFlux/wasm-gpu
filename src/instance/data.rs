@@ -1,6 +1,6 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::memory::DynamicMemoryBlock;
-use crate::store::ptrs::ConcretePtr;
+use crate::store_set::ptrs::ConcretePtr;
 use crate::{impl_immutable_ptr, Backend};
 use std::sync::Arc;
 

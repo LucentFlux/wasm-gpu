@@ -1,3 +1,4 @@
+use crate::compute_utils::Utils;
 use crate::memory::DynamicMemoryBlock;
 use crate::typed::ToRange;
 use crate::{Backend, MainMemoryBlock};
@@ -166,9 +167,8 @@ pub struct InterleavedBuffer<B, const STRIDE: usize>
 where
     B: Backend,
 {
-    // Is none when the buffer is taken by a view. Should always be Some at function entry
     buffer: DynamicMemoryBlock<B>,
-    total: usize,
+    count: usize,
 }
 
 impl<B, const STRIDE: usize> InterleavedBuffer<B, STRIDE>
@@ -176,12 +176,30 @@ where
     B: Backend,
 {
     /// Takes a source buffer and duplicates it count times
-    pub fn new_interleaved_from(source: &DynamicMemoryBlock<B>, count: usize) {}
+    pub async fn new_interleaved_from(
+        backend: Arc<B>,
+        source: &mut DynamicMemoryBlock<B>,
+        count: usize,
+    ) -> Self {
+        let len = source.len() * count;
+        let src = source.as_device().await;
+        let mut buffer = DynamicMemoryBlock::new(backend.clone(), len, None);
+
+        {
+            let dest = buffer.as_device().await;
+            backend
+                .get_utils()
+                .interleave::<STRIDE>(src, dest, count)
+                .await;
+        }
+
+        Self { buffer, count }
+    }
 
     /// Borrow this buffer mutably as a view
     pub fn view(&mut self) -> InterleavedBufferView<B, STRIDE> {
         InterleavedBufferView {
-            interpretations: InterleavedBufferInterpreter::interpret(&mut self.buffer, self.total),
+            interpretations: InterleavedBufferInterpreter::interpret(&mut self.buffer, self.count),
         }
     }
 }

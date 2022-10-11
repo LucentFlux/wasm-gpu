@@ -307,7 +307,7 @@ impl<V: Default + Clone + Add<u8>, R: RangeBounds<V>> ToRange for R {
         let start = match self.start_bound() {
             Bound::Included(b) => b.clone(),
             Bound::Excluded(b) => b.clone().add(1),
-            Bound::Unbounded => ZERO,
+            Bound::Unbounded => Self::ZERO,
         };
 
         let end = match self.end_bound() {

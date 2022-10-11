@@ -8,7 +8,6 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use itertools::Itertools;
 use std::cmp::min;
-use std::collections::Bound;
 use std::ops::RangeBounds;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -26,8 +25,8 @@ fn min_alignment_gt(size: usize, alignment: usize) -> usize {
 }
 
 struct WgpuBufferMemoryBlock {
-    pub device: Arc<AsyncDevice>,
-    pub queue: Arc<AsyncQueue>,
+    pub device: AsyncDevice,
+    pub queue: AsyncQueue,
     pub upload_buffers: Arc<BufferRing>,
     pub download_buffers: Arc<BufferRing>,
     pub buffer: AsyncBuffer, // Stored on the GPU
@@ -54,8 +53,8 @@ impl MemoryBlock<WgpuBackend> for WgpuBufferMemoryBlock {
 
 /// Lazily downloaded chunks of data
 struct LazyChunk {
-    device: Arc<AsyncDevice>,
-    queue: Arc<AsyncQueue>,
+    device: AsyncDevice,
+    queue: AsyncQueue,
 
     initialized: AtomicBool,
     mutex: Mutex<()>,
@@ -65,12 +64,7 @@ struct LazyChunk {
 }
 
 impl LazyChunk {
-    fn new(
-        device: Arc<AsyncDevice>,
-        queue: Arc<AsyncQueue>,
-        ptr: *mut u8,
-        data_offset: usize,
-    ) -> Self {
+    fn new(device: AsyncDevice, queue: AsyncQueue, ptr: *mut u8, data_offset: usize) -> Self {
         Self {
             device,
             queue,
@@ -318,8 +312,8 @@ impl MemoryBlock<WgpuBackend> for WgpuUnmappedMemoryBlock {
 
 impl WgpuUnmappedMemoryBlock {
     pub fn new(
-        device: Arc<AsyncDevice>,
-        queue: Arc<AsyncQueue>,
+        device: AsyncDevice,
+        queue: AsyncQueue,
         upload_buffers: Arc<BufferRing>,
         download_buffers: Arc<BufferRing>,
         size: usize,
