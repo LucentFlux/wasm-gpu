@@ -17,7 +17,6 @@ use anyhow::{anyhow, Context, Error};
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::ops::Index;
 use std::slice::Iter;
 use std::sync::Arc;
 use wasmparser::{Type, ValType, Validator};
@@ -179,9 +178,9 @@ where
         // Add the values
         let mut imports_iter = globals.into_iter();
         let mut results = Vec::new();
-        for (global) in globals.into_iter() {
+        for global in self.parsed.globals.iter() {
             let ptr: AbstractGlobalPtr<B, T> = globals_instance
-                .add_global(global, &mut imports_iter, results.as_slice())
+                .add_global(global.clone(), &mut imports_iter, results.as_slice())
                 .await?;
             results.push(ptr);
         }

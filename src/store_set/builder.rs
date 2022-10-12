@@ -146,11 +146,13 @@ where
 
     /// Takes this builder and makes it immutable, allowing instances to be created from it
     pub fn complete(self) -> CompletedBuilder<B, T> {
-        CompletedBuilder {}
+        CompletedBuilder { inner: self }
     }
 }
 
-pub struct CompletedBuilder<B: Backend, T> {}
+pub struct CompletedBuilder<B: Backend, T> {
+    inner: StoreSetBuilder<B, T>, // Just hide the builder :)
+}
 
 impl<B: Backend, T> CompletedBuilder<B, T> {
     /// Takes the instructions provided to this builder and produces a collection of stores which can

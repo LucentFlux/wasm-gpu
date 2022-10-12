@@ -4,9 +4,9 @@
 pub mod builder;
 pub mod ptrs;
 
-use crate::instance::abstr::memory::MemoryPtr;
 use crate::instance::concrete::global::GlobalInstanceSet;
 use crate::instance::concrete::memory::MemoryInstanceSet;
+use crate::instance::concrete::memory::MemoryPtr;
 use crate::instance::concrete::table::TableInstanceSet;
 use crate::instance::data::DataInstance;
 use crate::instance::element::ElementInstance;
@@ -14,7 +14,6 @@ use crate::instance::func::FuncsInstance;
 use crate::memory::DynamicMemoryBlock;
 use crate::Backend;
 use anyhow::anyhow;
-use std::hash::Hash;
 use std::sync::Arc;
 
 /// All of the state for a collection of active WASM state machines

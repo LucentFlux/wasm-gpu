@@ -5,13 +5,10 @@
 pub mod interleaved;
 
 use crate::Backend;
-use std::cell::UnsafeCell;
 use std::ops::RangeBounds;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
-use crate::typed::ToRange;
 use async_trait::async_trait;
-use itertools::Itertools;
 
 #[async_trait]
 pub trait MemoryBlock<B>

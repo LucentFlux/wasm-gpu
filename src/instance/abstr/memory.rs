@@ -62,7 +62,7 @@ impl_abstract_ptr!(
     } with concrete MemoryPtr<B, T>;
 );
 
-impl<B, T> AbstractMemoryPtr<B, T> {
+impl<B: Backend, T> AbstractMemoryPtr<B, T> {
     pub fn is_type(&self, ty: &MemoryType) -> bool {
         limits_match(self.ty.initial, self.ty.maximum, ty.initial, ty.maximum)
     }

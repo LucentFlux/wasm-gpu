@@ -54,7 +54,7 @@ where
 }
 
 /// Acts like a slice, but deals with strides and offsets into the underlying buffer
-pub struct InterleavedSliceMut<'a, 'b, B, const STRIDE: usize> {
+pub struct InterleavedSliceMut<'a, 'b, B: Backend, const STRIDE: usize> {
     /// While-ever a view exists, the buffer shouldn't be moved or resized
     memory: RwLockWriteGuard<'a, &'b mut DynamicMemoryBlock<B>>,
     total: usize,  // Number of interleaved buffers

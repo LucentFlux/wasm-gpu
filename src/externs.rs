@@ -14,7 +14,7 @@ where
     pub ext: Extern<B, T>,
 }
 
-impl<'a, B, T> Clone for NamedExtern<'a, B, T> {
+impl<'a, B: Backend, T> Clone for NamedExtern<'a, B, T> {
     fn clone(&self) -> Self {
         Self {
             module: self.module.clone(),

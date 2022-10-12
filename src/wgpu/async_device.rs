@@ -4,7 +4,7 @@ use std::ops::DerefMut;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
-use wgpu::{BufferDescriptor, CommandEncoder, CommandEncoderDescriptor, Device, Maintain};
+use wgpu::{BufferDescriptor, Device, Maintain};
 
 #[derive(Clone, Debug)]
 pub struct AsyncDevice {
