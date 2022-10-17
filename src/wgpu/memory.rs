@@ -1,8 +1,9 @@
 use crate::memory::{DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
+use crate::typed::{ToRange, Val};
 use crate::wgpu::async_buffer::AsyncBuffer;
 use crate::wgpu::async_device::AsyncDevice;
 use crate::wgpu::async_queue::AsyncQueue;
-use crate::wgpu::buffer_ring::BufferRing;
+use crate::wgpu::buffer_ring::{BufferRing, ConstMode};
 use crate::WgpuBackend;
 use async_trait::async_trait;
 use futures::future::join_all;
@@ -10,7 +11,7 @@ use itertools::Itertools;
 use std::cmp::min;
 use std::ops::RangeBounds;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use wgpu::{BufferAddress, BufferDescriptor, BufferUsages};
 
 /// Calculates the minimum x s.t. x is a multiple of alignment and x >= size
@@ -24,16 +25,16 @@ fn min_alignment_gt(size: usize, alignment: usize) -> usize {
     return x;
 }
 
-struct WgpuBufferMemoryBlock {
+struct WgpuBufferMemoryBlock<const BUFFER_SIZE: usize> {
     pub device: AsyncDevice,
     pub queue: AsyncQueue,
-    pub upload_buffers: Arc<BufferRing>,
-    pub download_buffers: Arc<BufferRing>,
+    pub upload_buffers: Arc<BufferRing<BUFFER_SIZE, { ConstMode::Write }>>,
+    pub download_buffers: Arc<BufferRing<BUFFER_SIZE, { ConstMode::Read }>>,
     pub buffer: AsyncBuffer, // Stored on the GPU
     pub len: usize,
 }
 
-impl WgpuBufferMemoryBlock {
+impl<const BUFFER_SIZE: usize> WgpuBufferMemoryBlock<BUFFER_SIZE> {
     fn buffer_ring_buffer_size(&self) -> usize {
         assert_eq!(
             self.upload_buffers.buffer_size(),
@@ -45,39 +46,44 @@ impl WgpuBufferMemoryBlock {
 }
 
 #[async_trait]
-impl MemoryBlock<WgpuBackend> for WgpuBufferMemoryBlock {
+impl<const BUFFER_SIZE: usize> MemoryBlock<WgpuBackend<BUFFER_SIZE>>
+    for WgpuBufferMemoryBlock<BUFFER_SIZE>
+{
     async fn len(&self) -> usize {
         self.len
     }
 }
 
 /// Lazily downloaded chunks of data
-struct LazyChunk {
+struct LazyChunk<const SIZE: usize> {
     device: AsyncDevice,
     queue: AsyncQueue,
 
     initialized: AtomicBool,
     mutex: Mutex<()>,
     data_offset: BufferAddress, // Offset within the GPU buffer
-    ptr: *mut u8, // Pointer within the CPU buffer, len equal to self.block.download_buffers.buffer_size()
-    dirty: AtomicBool, // If the data chunk has possibly been written, we must write back
+    dirty: AtomicBool,          // If the data chunk has possibly been written, we must write back
 }
 
-impl LazyChunk {
-    fn new(device: AsyncDevice, queue: AsyncQueue, ptr: *mut u8, data_offset: usize) -> Self {
+impl<const SIZE: usize> LazyChunk<SIZE> {
+    fn new(device: AsyncDevice, queue: AsyncQueue, data_offset: usize) -> Self {
         Self {
             device,
             queue,
             initialized: AtomicBool::from(false),
             dirty: AtomicBool::from(false),
             mutex: Mutex::new(()),
-            ptr,
             data_offset: data_offset as BufferAddress,
         }
     }
 
     /// Lockless checking that we have definitely downloaded this data chunk from the GPU
-    async fn ensure_downloaded(&self, block: &WgpuBufferMemoryBlock, mark_as_dirty: bool) {
+    async fn ensure_downloaded(
+        &self,
+        block: &WgpuBufferMemoryBlock<SIZE>,
+        mark_as_dirty: bool,
+        buffer: &RwLock<Vec<u8>>,
+    ) {
         if mark_as_dirty {
             self.dirty.store(true, Ordering::Release);
         }
@@ -95,24 +101,30 @@ impl LazyChunk {
             return;
         }
 
-        block.download_buffers.with_slice(
-            &self.device,
-            &self.queue,
-            &block.buffer,
-            self.data_offset,
-            |slice| {
-                // Assume pointers don't alias between chunks, and we have a mutex taken out for this chunk
-                // So this should be safe
-                let buffer = unsafe { std::slice::from_raw_parts_mut(self.ptr, slice.len()) };
-                buffer.copy_from_slice(slice);
-            },
-        );
+        // Now we lock on the data being written, only if required
+        let mut lock = buffer.write().unwrap();
+        let dest = lock
+            .as_mut_slice()
+            .slice(self.data_offset as usize, self.data_offset as usize + SIZE);
+
+        block
+            .download_buffers
+            .with_slice(
+                &self.device,
+                &self.queue,
+                &block.buffer,
+                self.data_offset,
+                move |slice| {
+                    dest.copy_from_slice(slice);
+                },
+            )
+            .await;
 
         self.initialized.store(true, Ordering::Release);
     }
 
     /// Lockless checking that we have definitely uploaded this data (if it was dirty)
-    async fn upload(&self, block: &WgpuBufferMemoryBlock) {
+    async fn upload(&self, block: &WgpuBufferMemoryBlock<SIZE>, buffer: &RwLock<Vec<u8>>) {
         // (http://schd.ws/hosted_files/cppcon2016/74/HansWeakAtomics.pdf Page 27)
         if !self.initialized.load(Ordering::Acquire) || !self.dirty.load(Ordering::Acquire) {
             return;
@@ -126,10 +138,12 @@ impl LazyChunk {
             return;
         }
 
-        // Assume pointers don't alias between chunks, and we have a mutex taken out for this chunk
-        // So this should be safe
-        let len = block.upload_buffers.buffer_size();
-        let slice = unsafe { std::slice::from_raw_parts(self.ptr, len) };
+        // Now we lock on the data being read, only if required
+        let lock = buffer.read().unwrap();
+        let src = lock
+            .as_slice()
+            .slice(self.data_offset as usize, self.data_offset as usize + SIZE);
+
         block
             .upload_buffers
             .write_slice(
@@ -137,7 +151,7 @@ impl LazyChunk {
                 &self.queue,
                 &block.buffer,
                 self.data_offset,
-                slice,
+                src.try_into().unwrap(), // We took a slice of length SIZE, so this should never fail
             )
             .await;
 
@@ -145,15 +159,15 @@ impl LazyChunk {
     }
 }
 
-struct LazyBuffer {
-    buffer: WgpuBufferMemoryBlock,
-    data: Vec<u8>,
+struct LazyBuffer<const BUFFER_SIZE: usize> {
+    buffer: WgpuBufferMemoryBlock<BUFFER_SIZE>,
+    data: RwLock<Vec<u8>>,
     len: usize,
-    chunks: Vec<LazyChunk>, // Holds pointers into above data buffer. Pointers must not alias
+    chunks: Vec<LazyChunk<BUFFER_SIZE>>,
 }
 
-impl LazyBuffer {
-    pub fn new(len: usize, buffer: WgpuBufferMemoryBlock) -> Self {
+impl<const BUFFER_SIZE: usize> LazyBuffer<BUFFER_SIZE> {
+    pub fn new(len: usize, buffer: WgpuBufferMemoryBlock<BUFFER_SIZE>) -> Self {
         let alignment = buffer.buffer_ring_buffer_size();
         let full_len = min_alignment_gt(len, alignment);
 
@@ -169,14 +183,13 @@ impl LazyBuffer {
             chunks.push(LazyChunk::new(
                 buffer.device.clone(),
                 buffer.queue.clone(),
-                chunk.as_ptr() as *mut u8,
                 i * alignment,
             ))
         }
 
         Self {
             buffer,
-            data,
+            data: RwLock::new(data),
             len,
             chunks,
         }
@@ -218,53 +231,38 @@ impl LazyBuffer {
         // Load all async
         let futures = chunks
             .into_iter()
-            .map(|chunk| chunk.ensure_downloaded(&self.buffer, mark_as_dirty));
+            .map(|chunk| chunk.ensure_downloaded(&self.buffer, mark_as_dirty, &self.data));
         join_all(futures).await;
     }
 
-    async fn as_slice<S: RangeBounds<usize>>(&self, bounds: S) -> &[u8] {
-        let requested_start_byte_inclusive: usize =
-            Self::start_bound_to_inclusive(bounds.start_bound());
-        let requested_end_byte_exclusive: usize =
-            Self::end_bound_to_exclusive(bounds.end_bound(), self.len);
+    async fn as_slice<S: ToRange<usize>>(&self, bounds: S) -> &[u8] {
+        let bounds = bounds.half_open(self.len);
 
-        assert!(requested_start_byte_inclusive < self.len);
-        assert!(requested_end_byte_exclusive <= self.len);
+        assert!(bounds.start < self.len);
+        assert!(bounds.end <= self.len);
 
-        self.ensure_downloaded(
-            requested_start_byte_inclusive,
-            requested_end_byte_exclusive,
-            false,
-        )
-        .await;
+        self.ensure_downloaded(bounds.start, bounds.end, false)
+            .await;
 
-        return &self.data[requested_start_byte_inclusive..requested_end_byte_exclusive];
+        return &self.data[bounds.start..bounds.end];
     }
 
-    async fn as_slice_mut<S: RangeBounds<usize>>(&mut self, bounds: S) -> &mut [u8] {
-        let requested_start_byte_inclusive: usize =
-            Self::start_bound_to_inclusive(bounds.start_bound());
-        let requested_end_byte_exclusive: usize =
-            Self::end_bound_to_exclusive(bounds.end_bound(), self.len);
+    async fn as_slice_mut<S: ToRange<usize>>(&mut self, bounds: S) -> &mut [u8] {
+        let bounds = bounds.half_open(self.len);
 
-        assert!(requested_start_byte_inclusive < self.len);
-        assert!(requested_end_byte_exclusive <= self.len);
+        assert!(bounds.start < self.len);
+        assert!(bounds.end <= self.len);
 
-        self.ensure_downloaded(
-            requested_start_byte_inclusive,
-            requested_end_byte_exclusive,
-            true,
-        )
-        .await;
+        self.ensure_downloaded(bounds.start, bounds.end, true).await;
 
-        return &mut self.data[requested_start_byte_inclusive..requested_end_byte_exclusive];
+        return &mut self.data[bounds.start..bounds.end];
     }
 
-    async fn unload(mut self) -> WgpuBufferMemoryBlock {
+    async fn unload(mut self) -> WgpuBufferMemoryBlock<BUFFER_SIZE> {
         let futures = self
             .chunks
             .iter_mut()
-            .map(|chunk| chunk.upload(&self.buffer));
+            .map(|chunk| chunk.upload(&self.buffer, &self.data));
 
         join_all(futures).await;
 
@@ -272,50 +270,56 @@ impl LazyBuffer {
     }
 }
 
-pub struct WgpuMappedMemoryBlock {
-    cpu_buffer: LazyBuffer,
+pub struct WgpuMappedMemoryBlock<const BUFFER_SIZE: usize> {
+    cpu_buffer: LazyBuffer<BUFFER_SIZE>,
 }
 
 #[async_trait]
-impl MemoryBlock<WgpuBackend> for WgpuMappedMemoryBlock {
+impl<const BUFFER_SIZE: usize> MemoryBlock<WgpuBackend<BUFFER_SIZE>>
+    for WgpuMappedMemoryBlock<BUFFER_SIZE>
+{
     async fn len(&self) -> usize {
-        self.data.len
+        self.cpu_buffer.len
     }
 }
 
 #[async_trait]
-impl MainMemoryBlock<WgpuBackend> for WgpuMappedMemoryBlock {
-    async fn as_slice<S: RangeBounds<usize> + Send>(&self, bounds: S) -> &[u8] {
+impl<const BUFFER_SIZE: usize> MainMemoryBlock<WgpuBackend<BUFFER_SIZE>>
+    for WgpuMappedMemoryBlock<BUFFER_SIZE>
+{
+    async fn as_slice<S: ToRange<usize> + Send>(&self, bounds: S) -> &[u8] {
         self.cpu_buffer.as_slice(bounds).await
     }
 
-    async fn as_slice_mut<S: RangeBounds<usize> + Send>(&mut self, bounds: S) -> &mut [u8] {
+    async fn as_slice_mut<S: ToRange<usize> + Send>(&mut self, bounds: S) -> &mut [u8] {
         self.cpu_buffer.as_slice_mut(bounds).await
     }
 
-    async fn move_to_device_memory(self) -> WgpuUnmappedMemoryBlock {
+    async fn move_to_device_memory(self) -> WgpuUnmappedMemoryBlock<BUFFER_SIZE> {
         let data = self.cpu_buffer.unload().await;
         WgpuUnmappedMemoryBlock { data }
     }
 }
 
-pub struct WgpuUnmappedMemoryBlock {
-    data: WgpuBufferMemoryBlock,
+pub struct WgpuUnmappedMemoryBlock<const BUFFER_SIZE: usize> {
+    data: WgpuBufferMemoryBlock<BUFFER_SIZE>,
 }
 
 #[async_trait]
-impl MemoryBlock<WgpuBackend> for WgpuUnmappedMemoryBlock {
+impl<const BUFFER_SIZE: usize> MemoryBlock<WgpuBackend<BUFFER_SIZE>>
+    for WgpuUnmappedMemoryBlock<BUFFER_SIZE>
+{
     async fn len(&self) -> usize {
         self.data.len
     }
 }
 
-impl WgpuUnmappedMemoryBlock {
+impl<const BUFFER_SIZE: usize> WgpuUnmappedMemoryBlock<BUFFER_SIZE> {
     pub fn new(
         device: AsyncDevice,
         queue: AsyncQueue,
-        upload_buffers: Arc<BufferRing>,
-        download_buffers: Arc<BufferRing>,
+        upload_buffers: Arc<BufferRing<BUFFER_SIZE, { ConstMode::Write }>>,
+        download_buffers: Arc<BufferRing<BUFFER_SIZE, { ConstMode::Read }>>,
         size: usize,
         label: String,
         initial_data: Option<&[u8]>,
@@ -333,9 +337,9 @@ impl WgpuUnmappedMemoryBlock {
         if let Some(initial_data) = initial_data {
             assert_eq!(initial_data.len(), size);
 
-            buffer.slice(..).get_mapped_range_mut()[..initial_data.len()]
+            buffer.as_ref().slice(..).get_mapped_range_mut()[..initial_data.len()]
                 .copy_from_slice(initial_data);
-            buffer.unmap();
+            buffer.as_ref().unmap();
         }
         Self {
             data: WgpuBufferMemoryBlock {
@@ -351,14 +355,16 @@ impl WgpuUnmappedMemoryBlock {
 }
 
 #[async_trait]
-impl DeviceMemoryBlock<WgpuBackend> for WgpuUnmappedMemoryBlock {
-    async fn move_to_main_memory(self) -> WgpuMappedMemoryBlock {
+impl<const BUFFER_SIZE: usize> DeviceMemoryBlock<WgpuBackend<BUFFER_SIZE>>
+    for WgpuUnmappedMemoryBlock<BUFFER_SIZE>
+{
+    async fn move_to_main_memory(self) -> WgpuMappedMemoryBlock<BUFFER_SIZE> {
         WgpuMappedMemoryBlock {
             cpu_buffer: LazyBuffer::new(self.data.len, self.data),
         }
     }
 
-    async fn copy_from(&mut self, other: &WgpuUnmappedMemoryBlock) {
+    async fn copy_from(&mut self, other: &WgpuUnmappedMemoryBlock<BUFFER_SIZE>) {
         // Tell GPU to copy from other into this
         let mut copy_command_encoder = self.data.device.create_command_encoder(&Default::default());
         copy_command_encoder.copy_buffer_to_buffer(
@@ -402,7 +408,7 @@ mod tests {
 
     #[inline(never)]
     async fn test_get_unmapped_len(size: usize) {
-        let mut backend = get_backend().await;
+        let backend = get_backend().await;
 
         let memory = backend.create_device_memory_block(size, None);
 
@@ -411,7 +417,7 @@ mod tests {
 
     #[inline(never)]
     async fn test_get_mapped_len(size: usize) {
-        let mut backend = get_backend().await;
+        let backend = get_backend().await;
 
         let memory = backend.create_device_memory_block(size, None);
         let memory = memory.move_to_main_memory().await;
@@ -421,15 +427,15 @@ mod tests {
 
     #[inline(never)]
     async fn test_create_mapped_download(size: usize) {
-        let mut backend = get_backend().await;
+        let backend = get_backend().await;
 
         let expected_data = gen_test_data(size, (size * 33) as u32);
 
         let memory = backend.create_device_memory_block(size, Some(expected_data.as_slice()));
 
         // Read
-        let mut memory = memory.move_to_main_memory().await;
-        let slice = memory.as_slice(..).await.expect("could not map memory");
+        let memory = memory.move_to_main_memory().await;
+        let slice = memory.as_slice(..).await;
         let data_result = Vec::from(slice);
 
         assert_eq!(data_result, expected_data);
@@ -437,11 +443,11 @@ mod tests {
 
     #[inline(never)]
     async fn test_upload_download(size: usize) {
-        let mut backend = get_backend().await;
+        let backend = get_backend().await;
 
         let memory = backend.create_device_memory_block(size, None);
         let mut memory = memory.move_to_main_memory().await;
-        let slice = memory.as_slice_mut(..).await.expect("could not map memory");
+        let slice = memory.as_slice_mut(..).await;
 
         // Write some data
         let expected_data = gen_test_data(size, size as u32);
@@ -449,8 +455,8 @@ mod tests {
 
         // Unmap and Remap
         let memory = memory.move_to_device_memory().await;
-        let mut memory = memory.move_to_main_memory().await;
-        let slice = memory.as_slice(..).await.expect("could not re-map memory");
+        let memory = memory.move_to_main_memory().await;
+        let slice = memory.as_slice(..).await;
         let data_result = Vec::from(slice);
 
         assert_eq!(data_result, expected_data);

@@ -1,12 +1,8 @@
-use crate::atomic_counter::AtomicCounter;
-use crate::instance::abstr::global::AbstractGlobalPtr;
+use crate::instance::global::abstr::AbstractGlobalPtr;
 use crate::memory::interleaved::InterleavedBuffer;
 use crate::memory::DynamicMemoryBlock;
 use crate::{impl_concrete_ptr, Backend};
 use std::sync::Arc;
-use wasmparser::GlobalType;
-
-static COUNTER: AtomicCounter = AtomicCounter::new();
 
 const STRIDE: usize = 1;
 
@@ -24,22 +20,24 @@ impl<B> GlobalInstanceSet<B>
 where
     B: Backend,
 {
-    pub fn new(
+    pub async fn new(
+        backend: Arc<B>,
         immutables: Arc<DynamicMemoryBlock<B>>,
-        mutables_source: &DynamicMemoryBlock<B>,
+        mutables_source: &mut DynamicMemoryBlock<B>,
         count: usize,
+        id: usize, // Same as abstract
     ) -> Self {
         Self {
-            immutables: immutables,
-            mutables: InterleavedBuffer::new_interleaved_from(mutables_source, count),
-            id: COUNTER.next(),
+            immutables,
+            mutables: InterleavedBuffer::new_interleaved_from(backend, mutables_source, count)
+                .await,
+            id,
         }
     }
 }
 
 impl_concrete_ptr!(
     pub struct GlobalPtr<B: Backend, T> {
-        ...
-        ty: GlobalType,
+        data...
     } with abstract AbstractGlobalPtr<B, T>;
 );

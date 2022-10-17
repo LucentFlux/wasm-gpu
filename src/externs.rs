@@ -1,7 +1,7 @@
-use crate::instance::abstr::global::AbstractGlobalPtr;
-use crate::instance::abstr::memory::AbstractMemoryPtr;
-use crate::instance::abstr::table::AbstractTablePtr;
 use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
+use crate::instance::global::abstr::AbstractGlobalPtr;
+use crate::instance::memory::abstr::AbstractMemoryPtr;
+use crate::instance::table::abstr::AbstractTablePtr;
 use crate::typed::WasmTyVec;
 use crate::Backend;
 
@@ -94,4 +94,29 @@ where
     fn from(t: AbstractTablePtr<B, T>) -> Self {
         Self::Table(t)
     }
+}
+
+#[macro_export]
+macro_rules! imports {
+    (
+        $(
+            $module:literal : {
+                $(
+                    $name:literal : $ext:ident
+                ),* $(,)?
+            }
+        ),* $(,)?
+    ) => {
+        vec![
+            $(
+                $(
+                    crate::externs::NamedExtern {
+                        module: $module,
+                        name: $name,
+                        ext: crate::externs::Extern::from($ext)
+                    },
+                )*
+            )*
+        ]
+    };
 }

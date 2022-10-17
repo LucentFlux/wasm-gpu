@@ -1,15 +1,15 @@
 use crate::wgpu::async_device::AsyncDevice;
+use anyhow::anyhow;
 use std::ops::RangeBounds;
-use std::sync::Arc;
-use wgpu::{Buffer, BufferAddress, BufferSlice, MapMode};
+use wgpu::{Buffer, BufferAddress, BufferAsyncError, BufferSlice, MapMode};
 
 pub struct AsyncBuffer {
-    device: Arc<AsyncDevice>,
+    device: AsyncDevice,
     buffer: Buffer,
 }
 
 impl AsyncBuffer {
-    pub fn new(device: Arc<AsyncDevice>, buffer: Buffer) -> Self {
+    pub fn new(device: AsyncDevice, buffer: Buffer) -> Self {
         Self { device, buffer }
     }
 
@@ -20,9 +20,14 @@ impl AsyncBuffer {
     ) -> anyhow::Result<BufferSlice> {
         let slice = self.buffer.slice(bounds);
 
-        self.device
+        let res = self
+            .device
             .do_async(|callback| slice.map_async(mode, callback))
-            .await?;
+            .await;
+
+        if let Err(e) = res {
+            return Err(anyhow!("{}", e));
+        }
 
         return Ok(slice);
     }

@@ -1,15 +1,13 @@
-use crate::atomic_counter::AtomicCounter;
 use crate::externs::NamedExtern;
-use crate::instance::abstr::global::AbstractGlobalInstance;
-use crate::instance::abstr::memory::AbstractMemoryInstanceSet;
-use crate::instance::abstr::table::AbstractTableInstanceSet;
 use crate::instance::data::DataInstance;
 use crate::instance::element::ElementInstance;
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
+use crate::instance::global::abstr::AbstractGlobalInstance;
+use crate::instance::memory::abstr::AbstractMemoryInstanceSet;
+use crate::instance::table::abstr::AbstractTableInstanceSet;
 use crate::instance::ModuleInstance;
 use crate::{Backend, Engine, Func, Module, StoreSet};
 use futures::StreamExt;
-use std::hash::Hash;
 use std::sync::Arc;
 
 /// Acts like a traditional OOP factory where we initialise modules into this before
@@ -55,7 +53,7 @@ where
     pub async fn instantiate_module(
         &mut self,
         module: &Module<'_, B>,
-        imports: impl IntoIterator<Item = NamedExtern<'_, B, T>>,
+        imports: Vec<NamedExtern<'_, B, T>>,
     ) -> anyhow::Result<ModuleInstance<B, T>> {
         // Validation
         let validated_imports = module.typecheck_imports(imports)?;

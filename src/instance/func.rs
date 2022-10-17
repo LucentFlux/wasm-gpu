@@ -2,6 +2,7 @@ use crate::atomic_counter::AtomicCounter;
 use crate::session::Session;
 use crate::typed::{FuncRef, Val, WasmTyVec};
 use crate::{impl_immutable_ptr, Backend, Func, StoreSet};
+use anyhow::anyhow;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use itertools::Itertools;
@@ -61,7 +62,7 @@ where
 
 impl_immutable_ptr!(
     pub struct UntypedFuncPtr<B: Backend, T> {
-        ...
+        data...
         ty: FuncType,
     }
 );
@@ -75,20 +76,30 @@ impl<B: Backend, T> UntypedFuncPtr<B, T> {
         FuncRef::from_u32(self.ptr as u32)
     }
 
+    pub fn try_typed<Params: WasmTyVec, Results: WasmTyVec>(
+        self,
+    ) -> anyhow::Result<TypedFuncPtr<B, T, Params, Results>> {
+        if !Params::VAL_TYPES.eq(self.ty.params()) {
+            return Err(anyhow!(
+                "function pointer parameters were not the correct type, expected {:?} but got {:?}",
+                Params::VAL_TYPES,
+                self.ty.params()
+            ));
+        }
+        if !Results::VAL_TYPES.eq(self.ty.results()) {
+            return Err(anyhow!(
+                "function pointer results were not the correct type, expected {:?} but got {:?}",
+                Results::VAL_TYPES,
+                self.ty.results()
+            ));
+        }
+        Ok(TypedFuncPtr::new(self.ptr, self.id, self.ty))
+    }
+
     pub fn typed<Params: WasmTyVec, Results: WasmTyVec>(
         self,
     ) -> TypedFuncPtr<B, T, Params, Results> {
-        Params::typecheck(self.ty.params()).expect(format!(
-            "function pointer parameters were not the correct type, expected {:?} but got {:?}",
-            Params::VAL_TYPES,
-            self.ty.params()
-        ));
-        Results::typecheck(self.ty.results()).expect(format!(
-            "function pointer results were not the correct type, expected {:?} but got {:?}",
-            Results::VAL_TYPES,
-            self.ty.results()
-        ));
-        TypedFuncPtr::new(self.ptr, self.id, self.ty)
+        self.try_typed().unwrap()
     }
 
     /// # Panics
@@ -99,9 +110,9 @@ impl<B: Backend, T> UntypedFuncPtr<B, T> {
         stores: &'a mut StoreSet<B, T>,
         mut args_fn: impl FnMut(&T) -> Vec<Val>,
     ) -> BoxFuture<'a, Vec<anyhow::Result<Vec<Val>>>> {
-        let args = stores.datas().map(args_fn).collect();
+        let args = stores.data.iter().map(args_fn).collect();
 
-        let session = Session::new(stores.backend(), stores, self.clone(), args);
+        let session = Session::new(stores.backend.clone(), stores, self.clone(), args);
         return session.run().boxed();
     }
 }
@@ -109,7 +120,7 @@ impl<B: Backend, T> UntypedFuncPtr<B, T> {
 // Typed function pointers should have their types checked before construction
 impl_immutable_ptr!(
     pub struct TypedFuncPtr<B: Backend, T, Params: WasmTyVec, Results: WasmTyVec> {
-        ...
+        data...
         ty: FuncType,
     }
 );
@@ -132,13 +143,14 @@ impl<B: Backend, T, Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<B, T, Pa
         mut args_fn: impl FnMut(&T) -> Params,
     ) -> BoxFuture<'a, Vec<anyhow::Result<Results>>> {
         let args = stores
-            .datas()
+            .data
+            .iter()
             .map(args_fn)
             .map(|v| v.to_val_vec())
             .collect_vec();
 
         let entry_func = self.as_untyped();
-        let session = Session::new(stores.backend(), stores, entry_func, args);
+        let session = Session::new(stores.backend.clone(), stores, entry_func, args);
         return session
             .run()
             .map(|res| {

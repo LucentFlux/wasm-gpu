@@ -1,5 +1,5 @@
 use crate::atomic_counter::AtomicCounter;
-use crate::instance::concrete::memory::MemoryPtr;
+use crate::instance::memory::concrete::MemoryPtr;
 use crate::memory::{limits_match, DynamicMemoryBlock};
 use crate::{impl_abstract_ptr, Backend};
 use std::sync::Arc;
@@ -56,7 +56,7 @@ impl<B: Backend> AbstractMemoryInstanceSet<B> {
 
 impl_abstract_ptr!(
     pub struct AbstractMemoryPtr<B: Backend, T> {
-        ...
+        pub(in crate::instance::memory) data...
         // Copied from Memory
         ty: MemoryType,
     } with concrete MemoryPtr<B, T>;

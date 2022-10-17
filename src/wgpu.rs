@@ -11,12 +11,12 @@ use std::fmt::{Debug, Formatter};
 use crate::atomic_counter::AtomicCounter;
 use crate::wgpu::async_device::AsyncDevice;
 use crate::wgpu::async_queue::AsyncQueue;
-use crate::wgpu::buffer_ring::BufferRing;
+use crate::wgpu::buffer_ring::{BufferRing, ConstMode};
 use crate::wgpu::compute_utils::WgpuComputeUtils;
 use crate::wgpu::memory::{WgpuMappedMemoryBlock, WgpuUnmappedMemoryBlock};
 use crate::Backend;
 use std::sync::Arc;
-use wgpu::{Device, MapMode, Queue};
+use wgpu::{Device, Queue};
 
 #[derive(Copy, Clone)]
 pub struct WgpuBackendConfig {
@@ -31,19 +31,19 @@ impl Default for WgpuBackendConfig {
     }
 }
 
-pub struct WgpuBackend {
+pub struct WgpuBackend<const BUFFER_SIZE: usize> {
     device: AsyncDevice,
     queue: AsyncQueue,
 
-    upload_buffers: Arc<BufferRing>,
-    download_buffers: Arc<BufferRing>,
+    upload_buffers: Arc<BufferRing<BUFFER_SIZE, { ConstMode::Write }>>,
+    download_buffers: Arc<BufferRing<BUFFER_SIZE, { ConstMode::Read }>>,
 
     block_counter: AtomicCounter,
 
     utils: WgpuComputeUtils,
 }
 
-impl WgpuBackend {
+impl<const BUFFER_SIZE: usize> WgpuBackend<BUFFER_SIZE> {
     pub fn new(device: Device, queue: Queue, conf: WgpuBackendConfig) -> Self {
         let device = AsyncDevice::new(device);
         let queue = AsyncQueue::new(device.clone(), queue);
@@ -51,13 +51,11 @@ impl WgpuBackend {
             upload_buffers: Arc::new(BufferRing::new(
                 device.clone(),
                 "Upload".to_owned(),
-                MapMode::Write,
                 conf.buffer_ring_config,
             )),
             download_buffers: Arc::new(BufferRing::new(
                 device.clone(),
                 "Download".to_owned(),
-                MapMode::Read,
                 conf.buffer_ring_config,
             )),
             utils: WgpuComputeUtils::new(device.clone()),
@@ -68,22 +66,26 @@ impl WgpuBackend {
     }
 }
 
-impl Debug for WgpuBackend {
+impl<const BUFFER_SIZE: usize> Debug for WgpuBackend<BUFFER_SIZE> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "wgpu backend ({:?})", self.device)
+        write!(
+            f,
+            "wgpu backend ({:?} with buffer size {})",
+            self.device, BUFFER_SIZE
+        )
     }
 }
 
-impl Backend for WgpuBackend {
-    type DeviceMemoryBlock = WgpuUnmappedMemoryBlock;
-    type MainMemoryBlock = WgpuMappedMemoryBlock;
+impl<const BUFFER_SIZE: usize> Backend for WgpuBackend<BUFFER_SIZE> {
+    type DeviceMemoryBlock = WgpuUnmappedMemoryBlock<BUFFER_SIZE>;
+    type MainMemoryBlock = WgpuMappedMemoryBlock<BUFFER_SIZE>;
     type Utils = WgpuComputeUtils;
 
     fn create_device_memory_block(
         &self,
         size: usize,
         initial_data: Option<&[u8]>,
-    ) -> WgpuUnmappedMemoryBlock {
+    ) -> WgpuUnmappedMemoryBlock<BUFFER_SIZE> {
         WgpuUnmappedMemoryBlock::new(
             self.device.clone(),
             self.queue.clone(),

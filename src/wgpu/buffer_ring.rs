@@ -1,70 +1,60 @@
 use crate::wgpu::async_buffer::AsyncBuffer;
 use crate::wgpu::async_device::AsyncDevice;
 use crate::wgpu::async_queue::AsyncQueue;
-use std::collections::VecDeque;
-use std::future::Future;
+use async_channel::{Receiver, Sender};
 use std::ops::RangeBounds;
-use std::sync::{Arc, Mutex};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use wgpu::{BufferAddress, BufferDescriptor, BufferSlice, BufferUsages, MapMode};
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum ConstMode {
+    Read,
+    Write,
+}
+
+impl Into<MapMode> for ConstMode {
+    fn into(self) -> MapMode {
+        match self {
+            ConstMode::Read => MapMode::Read,
+            ConstMode::Write => MapMode::Write,
+        }
+    }
+}
 
 #[derive(Copy, Clone)]
 pub struct BufferRingConfig {
     /// A ring will allocate this amount of memory for moving data
     pub total_mem: usize,
-    pub buffer_size: usize,
 }
 
 impl Default for BufferRingConfig {
     fn default() -> Self {
         Self {
             total_mem: 16 * 1024 * 1024, // 16MB
-            buffer_size: 1024 * 1024,    // 1MB
         }
     }
 }
 
 #[must_use]
-pub struct BufferRingBuffer {
-    semaphore: OwnedSemaphorePermit,
-    buffer_size: usize,
+pub struct BufferRingBuffer<const SIZE: usize, const MODE: ConstMode> {
     buffer: AsyncBuffer,
-    map_mode: MapMode,
 }
 
-impl BufferRingBuffer {
+impl<const SIZE: usize, const MODE: ConstMode> BufferRingBuffer<SIZE, MODE> {
     pub fn len(&self) -> usize {
-        self.buffer_size
+        SIZE
     }
 
     pub async fn map_slice<S: RangeBounds<BufferAddress>>(
         &self,
         bounds: S,
     ) -> anyhow::Result<BufferSlice> {
-        return self.buffer.map_slice(bounds, self.map_mode).await;
+        return self.buffer.map_slice(bounds, MODE.into()).await;
     }
+}
 
-    /// Tell the GPU to move a chunk of data into this buffer
-    async fn fill_from(
-        &self,
-        device: &AsyncDevice,
-        queue: &AsyncQueue,
-        src: &AsyncBuffer,
-        offset: BufferAddress,
-    ) {
-        let mut copy_command_encoder = device.as_ref().create_command_encoder(&Default::default());
-        copy_command_encoder.copy_buffer_to_buffer(
-            src.as_ref(),
-            offset,
-            self.buffer.as_ref(),
-            0,
-            self.buffer_size as BufferAddress,
-        );
-        queue.submit(vec![copy_command_encoder.finish()]).await;
-    }
-
-    /// Tell the GPU to move a chunk of data into this buffer
-    async fn write_to(
+impl<const SIZE: usize> BufferRingBuffer<SIZE, { ConstMode::Write }> {
+    /// Tell the GPU to move a chunk of data from this buffer into another buffer
+    async fn copy_to(
         &self,
         device: &AsyncDevice,
         queue: &AsyncQueue,
@@ -77,144 +67,134 @@ impl BufferRingBuffer {
             0,
             dst.as_ref(),
             offset,
-            self.buffer_size as BufferAddress,
+            SIZE as BufferAddress,
         );
         queue.submit(vec![copy_command_encoder.finish()]).await;
     }
 }
 
-pub struct BufferRing {
+impl<const SIZE: usize> BufferRingBuffer<SIZE, { ConstMode::Read }> {
+    /// Tell the GPU to move a chunk of data into this buffer
+    async fn copy_from(
+        &self,
+        device: &AsyncDevice,
+        queue: &AsyncQueue,
+        src: &AsyncBuffer,
+        offset: BufferAddress,
+    ) {
+        let mut copy_command_encoder = device.as_ref().create_command_encoder(&Default::default());
+        copy_command_encoder.copy_buffer_to_buffer(
+            src.as_ref(),
+            offset,
+            self.buffer.as_ref(),
+            0,
+            SIZE as BufferAddress,
+        );
+        queue.submit(vec![copy_command_encoder.finish()]).await;
+    }
+}
+
+pub struct BufferRing<const SIZE: usize, const MODE: ConstMode> {
     config: BufferRingConfig,
 
     device: AsyncDevice,
-    unused_buffers: Arc<Mutex<VecDeque<AsyncBuffer>>>,
-    free_buffers: Arc<Semaphore>, // Tracks the above dequeue
-    map_mode: MapMode,
+    unused_buffers: Receiver<AsyncBuffer>,
+    buffer_return: Sender<AsyncBuffer>,
 
     // Used for debugging
     label: String,
 }
 
-impl BufferRing {
-    pub fn new(
-        device: AsyncDevice,
-        label: String,
-        map_mode: MapMode,
-        config: BufferRingConfig,
-    ) -> Self {
-        let buffer_count = config.total_mem / config.buffer_size;
-        let mut buffers = VecDeque::new();
+impl<const SIZE: usize, const MODE: ConstMode> BufferRing<SIZE, MODE> {
+    pub fn new(device: AsyncDevice, label: String, config: BufferRingConfig) -> Self {
+        let buffer_count = config.total_mem / SIZE;
+        let (buffer_return, unused_buffers) = async_channel::bounded(buffer_count);
         for buffer_id in 0..buffer_count {
             let new_buffer = device.create_buffer(&BufferDescriptor {
                 label: Some(format!("Staging buffer [{} #{}]", label, buffer_id).as_str()),
-                size: config.buffer_size as BufferAddress,
-                usage: Self::usages(map_mode),
-                mapped_at_creation: Self::mapped_at_creation(map_mode),
+                size: SIZE as BufferAddress,
+                usage: Self::usages(MODE.into()),
+                mapped_at_creation: Self::mapped_at_creation(MODE.into()),
             });
-            buffers.push_back(new_buffer);
+
+            // Future should immediately resolve since we reserved space
+            let fut = buffer_return.send(new_buffer);
+            futures::executor::block_on(fut).unwrap()
         }
 
         Self {
-            free_buffers: Arc::new(Semaphore::new(buffer_count)),
-            unused_buffers: Arc::new(Mutex::new(buffers)),
             config,
             device,
-            map_mode,
+            unused_buffers,
+            buffer_return,
             label,
         }
     }
 
-    fn mapped_at_creation(map_mode: MapMode) -> bool {
+    const fn mapped_at_creation(map_mode: MapMode) -> bool {
         match map_mode {
             MapMode::Read => false,
             MapMode::Write => true,
         }
     }
 
-    fn usages(map_mode: MapMode) -> BufferUsages {
+    const fn usages(map_mode: MapMode) -> BufferUsages {
         match map_mode {
             MapMode::Read => BufferUsages::MAP_READ | BufferUsages::COPY_DST,
             MapMode::Write => BufferUsages::MAP_WRITE | BufferUsages::COPY_SRC,
         }
     }
 
-    pub fn buffer_size(&self) -> usize {
-        return self.config.buffer_size;
+    pub const fn buffer_size(&self) -> usize {
+        SIZE
     }
 
     /// Gets a new buffer of size STAGING_BUFFER_SIZE. If map_mode is MapMode::Write, then the whole
     /// buffer is already mapped to CPU memory
-    async fn pop(&self) -> BufferRingBuffer {
-        let semaphore = self.free_buffers.clone().acquire_owned().await.unwrap();
-        let buffer = self
-            .unused_buffers
-            .lock()
-            .unwrap()
-            .pop_front()
-            .expect("semaphore count != buffer count");
+    async fn pop(&self) -> BufferRingBuffer<SIZE, MODE> {
+        let buffer = self.unused_buffers.recv().await.unwrap();
 
-        return BufferRingBuffer {
-            semaphore,
-            buffer_size: self.config.buffer_size,
-            buffer,
-            map_mode: self.map_mode,
-        };
+        return BufferRingBuffer { buffer };
     }
 
     /// Buffer *must* have come from this ring. Executes in a tokio task
-    fn push(&self, buffer: BufferRingBuffer) {
-        let self_buffer_size = self.buffer_size();
-        let self_map_mode = self.map_mode;
-        let self_device = self.device.clone();
-        let self_unused_buffers = self.unused_buffers.clone();
-        tokio::task::spawn(async move || {
-            let BufferRingBuffer {
-                semaphore,
-                buffer_size,
-                buffer,
-                map_mode,
-            } = buffer;
+    fn push(&self, buffer: BufferRingBuffer<SIZE, MODE>) {
+        let ret = self.buffer_return.clone();
+        tokio::task::spawn(async {
+            let BufferRingBuffer { buffer } = buffer;
 
-            assert_eq!(buffer_size, self_buffer_size);
-            assert_eq!(map_mode, self_map_mode);
-
-            match self_map_mode {
-                MapMode::Read => {
-                    buffer.unmap();
+            match MODE {
+                ConstMode::Read => {
+                    buffer.as_ref().unmap();
                 }
-                MapMode::Write => {
-                    self_device
-                        .do_async(|callback| buffer.slice(..).map_async(MapMode::Write, callback))
+                ConstMode::Write => {
+                    buffer
+                        .map_slice(.., MapMode::Write)
                         .await
                         .expect("error mapping buffer");
                 }
             };
 
-            self_unused_buffers.lock().unwrap().push_back(buffer);
-
-            drop(semaphore);
+            ret.send(buffer).await.unwrap();
         });
     }
+}
 
+impl<const BUFFER_SIZE: usize> BufferRing<BUFFER_SIZE, { ConstMode::Read }> {
     /// Executes a closure with a slice of a GPU buffer.
     ///
-    /// The slice generated has length this.buffer_size()
-    ///
-    /// # Panics
-    /// Panics if this buffer ring's map mode is not Read
-    pub async fn with_slice<Res, Fut: Future<Output = Res>, F: FnOnce(&[u8]) -> Fut>(
-        &self,
+    /// The slice generated has length BUFFER_SIZE
+    pub async fn with_slice<'a, Res, F: FnOnce(&[u8]) -> Res>(
+        &'a self,
         device: &AsyncDevice,
         queue: &AsyncQueue,
         src: &AsyncBuffer,
         offset: BufferAddress,
         f: F,
     ) -> Res {
-        assert_eq!(self.map_mode, MapMode::Read);
-
         let download_buffer = self.pop().await;
 
-        download_buffer.fill_from(device, queue, src, offset).await;
+        download_buffer.copy_from(device, queue, src, offset).await;
 
         let slice = download_buffer
             .map_slice(..self.buffer_size() as BufferAddress)
@@ -223,29 +203,24 @@ impl BufferRing {
         let view = slice.get_mapped_range();
         let view = view.as_ref();
 
-        let res = f(view).await;
+        let res = f(view);
 
         self.push(download_buffer);
 
         return res;
     }
+}
 
+impl<const BUFFER_SIZE: usize> BufferRing<BUFFER_SIZE, { ConstMode::Write }> {
     /// Writes a slice to a GPU buffer.
-    ///
-    /// # Panics
-    /// Panics if this buffer ring's map mode is not Write
-    /// or if the src slice length is not exactly this.buffer_size()
     pub async fn write_slice(
         &self,
         device: &AsyncDevice,
         queue: &AsyncQueue,
         dst: &AsyncBuffer,
         offset: BufferAddress,
-        src: &[u8],
+        src: &[u8; BUFFER_SIZE],
     ) {
-        assert_eq!(self.map_mode, MapMode::Write);
-        assert_eq!(src.len(), self.buffer_size());
-
         let upload_buffer = self.pop().await;
 
         let slice = upload_buffer
@@ -254,7 +229,7 @@ impl BufferRing {
             .expect("failed to map upload buffer");
         slice.get_mapped_range_mut().copy_from_slice(src);
 
-        upload_buffer.write_to(device, queue, dst, offset).await;
+        upload_buffer.copy_to(device, queue, dst, offset).await;
 
         self.push(upload_buffer);
     }

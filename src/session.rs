@@ -2,7 +2,6 @@ use crate::instance::func::UntypedFuncPtr;
 use crate::typed::Val;
 use crate::{Backend, StoreSet};
 use futures::future::BoxFuture;
-use itertools::Itertools;
 use std::sync::Arc;
 
 pub struct SessionProperties {
@@ -33,7 +32,7 @@ where
         entry_func: UntypedFuncPtr<B, T>, // We want to enter at the same point
         args: Vec<Vec<Val>>,
     ) -> Self {
-        let tasks = stores.concrete(entry_func).zip_eq(args).collect_vec();
+        let tasks = args.into_iter().map(|s| (entry_func.clone(), s)).collect();
         Self {
             backend,
             stores,

@@ -1,8 +1,8 @@
 use crate::externs::Extern;
-use crate::instance::abstr::global::AbstractGlobalPtr;
-use crate::instance::abstr::memory::AbstractMemoryPtr;
-use crate::instance::abstr::table::AbstractTablePtr;
 use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
+use crate::instance::global::abstr::AbstractGlobalPtr;
+use crate::instance::memory::abstr::AbstractMemoryPtr;
+use crate::instance::table::abstr::AbstractTablePtr;
 use crate::module::module_environ::ModuleExport;
 use crate::read_only::{AppendOnlyVec, ReadOnly};
 use crate::typed::WasmTyVec;
@@ -13,11 +13,13 @@ use itertools::Itertools;
 use std::ops::Deref;
 use std::sync::Arc;
 
-pub mod abstr;
-pub mod concrete;
 pub mod data;
 pub mod element;
 pub mod func;
+pub mod global;
+pub mod memory;
+pub mod ptrs;
+pub mod table;
 
 pub struct ModuleInstance<B, T>
 where
@@ -88,10 +90,7 @@ where
         let untyped = self
             .get_func(name)
             .context(format!("failed to find function export `{}`", name))?;
-        let typed = TypedFuncPtr::<B, T, Params, Results>::try_from(untyped).context(format!(
-            "failed to convert function `{}` to given type",
-            name
-        ))?;
+        let typed = untyped.typed();
 
         return Ok(typed);
     }

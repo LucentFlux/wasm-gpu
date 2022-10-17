@@ -40,10 +40,11 @@ impl<T> AppendOnlyVec<T> {
 
 impl<T> FromIterator<T> for AppendOnlyVec<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        let vec: FrozenVec<_> = iter
-            .into_iter()
-            .map(|v| Box::new(ReadOnly::new(v)))
-            .collect();
+        let vec = FrozenVec::new();
+
+        for i in iter.into_iter().map(|v| Box::new(ReadOnly::new(v))) {
+            vec.push(i);
+        }
 
         Self { inner: vec }
     }

@@ -4,7 +4,7 @@ use crate::{wasp, BufferRingConfig, WgpuBackendConfig};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
-pub async fn get_backend() -> wasp::WgpuBackend {
+pub async fn get_backend() -> wasp::WgpuBackend<1024> {
     let instance = wgpu::Instance::new(wgpu::Backends::all());
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
@@ -21,8 +21,7 @@ pub async fn get_backend() -> wasp::WgpuBackend {
     let conf = WgpuBackendConfig {
         buffer_ring_config: BufferRingConfig {
             // Minimal memory footprint for tests
-            total_mem: 128 * 1024,
-            buffer_size: 1024,
+            total_mem: 8 * 1024,
         },
     };
     return wasp::WgpuBackend::new(device, queue, conf);

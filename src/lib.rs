@@ -3,6 +3,10 @@
 #![feature(macro_metavar_expr)]
 #![feature(associated_type_defaults)]
 #![feature(future_join)]
+#![feature(unboxed_closures)]
+#![feature(fn_traits)]
+#![feature(split_array)]
+#![feature(adt_const_params)]
 
 extern crate core;
 
@@ -22,6 +26,7 @@ mod store_set;
 mod typed;
 mod wgpu;
 
+mod fenwick;
 #[cfg(test)]
 pub mod tests_lib;
 
@@ -49,7 +54,7 @@ pub mod wasp {
     // Externs
     pub use externs::Extern;
     // Store
-    pub use store_set::builder::StoreSetBuilder;
+    pub use crate::store_set::builder::StoreSetBuilder;
     pub use store_set::StoreSet;
     // Instance
     pub use instance::InstanceSet;

@@ -1,5 +1,5 @@
 use crate::atomic_counter::AtomicCounter;
-use crate::instance::concrete::table::TablePtr;
+use crate::instance::table::concrete::TablePtr;
 use crate::memory::limits_match;
 use crate::memory::DynamicMemoryBlock;
 use crate::{impl_abstract_ptr, Backend};
@@ -48,9 +48,9 @@ where
         assert_eq!(ptr.id, self.id);
 
         self.tables
-            .get(ptr.ptr)
+            .get_mut(ptr.ptr)
             .unwrap() // This is append only, so having a pointer implies the item exists
-            .initialize(data, offset)
+            .initialize::<T>(data, offset)
             .await
     }
 }
@@ -82,7 +82,7 @@ where
 
 impl_abstract_ptr!(
     pub struct AbstractTablePtr<B: Backend, T> {
-        ...
+        pub(in crate::instance::table) data...
         // Copied from Table
         ty: TableType,
     } with concrete TablePtr<B, T>;

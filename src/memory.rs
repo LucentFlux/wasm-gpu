@@ -8,6 +8,7 @@ use crate::Backend;
 use std::ops::RangeBounds;
 use std::sync::{Arc, RwLock};
 
+use crate::typed::ToRange;
 use async_trait::async_trait;
 
 #[async_trait]
@@ -53,7 +54,7 @@ where
 {
     /// The current length of the block of memory, in bytes.
     pub async fn len(&self) -> usize {
-        match &self.memory {
+        match self {
             Self::Main(m) => m.len().await,
             Self::Device(m) => m.len().await,
             Self::None => panic!("memory was lost"),
@@ -132,21 +133,24 @@ where
     }
 
     /// See [as_slice_mut](crate::Memory::as_slice_mut)
-    pub async fn as_slice<S: RangeBounds<usize> + Send>(&mut self, bounds: S) -> &[u8] {
-        let mut main_memory: &mut B::MainMemoryBlock = self.memory.as_main().await;
+    pub async fn as_slice<S: ToRange<usize> + Send>(&mut self, bounds: S) -> &[u8] {
+        let main_memory: &mut B::MainMemoryBlock = self.memory.as_main().await;
 
         return main_memory.as_slice(bounds).await;
     }
 
     /// See [as_slice_mut](crate::Memory::as_slice_mut)
     /// Returns None if the buffer is not already accessible. Fall back on as_slice
-    pub fn try_as_slice<S: RangeBounds<usize> + Send>(&self, bounds: S) -> Option<&[u8]> {
-        let mut main_memory: Option<&B::MainMemoryBlock> = self.memory.try_as_main();
+    pub async fn try_as_slice<S: ToRange<usize> + Send>(&self, bounds: S) -> Option<&[u8]> {
+        let main_memory: Option<&B::MainMemoryBlock> = self.memory.try_as_main();
 
-        return main_memory.map(|mem| mem.as_slice(bounds));
+        match main_memory {
+            None => None,
+            Some(mem) => Some(mem.as_slice(bounds).await),
+        }
     }
 
-    pub async fn as_slice_mut<S: RangeBounds<usize> + Send>(&mut self, bounds: S) -> &mut [u8] {
+    pub async fn as_slice_mut<S: ToRange<usize> + Send>(&mut self, bounds: S) -> &mut [u8] {
         let mut main_memory: &mut B::MainMemoryBlock = self.memory.as_main().await;
 
         return main_memory.as_slice_mut(bounds).await;
@@ -196,12 +200,12 @@ where
     /// hit to first read with `as_slice`, then write with `as_slice_mut`, rather than reading and
     /// writing with one `as_slice_mut` call. Prefer the former if possible, as it may reduce
     /// memory transfers.
-    pub async fn as_slice<S: RangeBounds<usize> + Send + Clone>(&self, bounds: S) -> &[u8] {
+    pub async fn as_slice<S: ToRange<usize> + Send + Clone>(&self, bounds: S) -> &[u8] {
         // Try lockless
         {
             let read_lock = self.internal.read().unwrap();
             let res = read_lock.try_as_slice(bounds.clone());
-            if let Some(res) = res {
+            if let Some(res) = res.await {
                 return res;
             }
         }
@@ -223,24 +227,19 @@ where
     /// hit to first read with `as_slice`, then write with `as_slice_mut`, rather than reading and
     /// writing with one `as_slice_mut` call. Prefer the former if possible, as it may reduce
     /// memory transfers.
-    pub async fn as_slice_mut<S: RangeBounds<usize> + Send>(&mut self, bounds: S) -> &mut [u8] {
-        return self.internal.get_mut().unwrap().as_slice_mut(bounds);
-    }
-
-    /// Same as `as_slice_mut`, but takes &self rather than &mut self. Instead takes out a RwLock::write
-    pub async fn as_slice_mut_locking<S: RangeBounds<usize> + Send>(&self, bounds: S) -> &mut [u8] {
-        return self.internal.write().unwrap().as_slice_mut(bounds);
+    pub async fn as_slice_mut<S: ToRange<usize> + Send>(&mut self, bounds: S) -> &mut [u8] {
+        return self.internal.get_mut().unwrap().as_slice_mut(bounds).await;
     }
 
     /// For internal use. Flush is automatically called after every host function, so there should be
     /// no reason for any uses of this library to call this function. It is exposed for future multithreaded
     /// wasm use cases, where host memory coherency calls may need to be more fine-grained.
     pub async fn flush(&mut self) {
-        self.internal.get_mut().unwrap().flush();
+        self.internal.get_mut().unwrap().flush().await;
     }
 
     pub async fn resize(&mut self, size: usize) {
-        self.internal.get_mut().unwrap().resize(size);
+        self.internal.get_mut().unwrap().resize(size).await;
     }
 
     /// Convenience wrapper around `resize` that adds more space
@@ -258,7 +257,7 @@ where
     }
 
     pub(crate) async fn as_device(&mut self) -> &mut B::DeviceMemoryBlock {
-        return self.internal.get_mut().unwrap().memory.as_device();
+        return self.internal.get_mut().unwrap().memory.as_device().await;
     }
 }
 

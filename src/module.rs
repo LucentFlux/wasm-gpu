@@ -2,12 +2,12 @@ pub mod error;
 pub mod module_environ;
 
 use crate::externs::NamedExtern;
-use crate::instance::abstr::global::{AbstractGlobalInstance, AbstractGlobalPtr};
-use crate::instance::abstr::memory::{AbstractMemoryInstanceSet, AbstractMemoryPtr};
-use crate::instance::abstr::table::{AbstractTableInstanceSet, AbstractTablePtr};
 use crate::instance::data::{DataInstance, DataPtr};
 use crate::instance::element::{ElementInstance, ElementPtr};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
+use crate::instance::global::abstr::{AbstractGlobalInstance, AbstractGlobalPtr};
+use crate::instance::memory::abstr::{AbstractMemoryInstanceSet, AbstractMemoryPtr};
+use crate::instance::table::abstr::{AbstractTableInstanceSet, AbstractTablePtr};
 use crate::module::module_environ::{
     ImportTypeRef, ModuleEnviron, ParsedElementItems, ParsedElementKind, ParsedModule,
 };

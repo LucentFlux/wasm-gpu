@@ -10,7 +10,7 @@ pub struct WgpuComputeUtils {
 }
 
 impl WgpuComputeUtils {
-    pub async fn new(device: AsyncDevice) -> Self {
+    pub fn new(device: AsyncDevice) -> Self {
         let sources = WGSLSources::get();
 
         let interleave = device
@@ -24,11 +24,11 @@ impl WgpuComputeUtils {
 }
 
 #[async_trait]
-impl Utils<WgpuBackend> for WgpuComputeUtils {
+impl<const BUFFER_SIZE: usize> Utils<WgpuBackend<BUFFER_SIZE>> for WgpuComputeUtils {
     async fn interleave<const STRIDE: usize>(
         &self,
-        src: &mut WgpuUnmappedMemoryBlock,
-        dst: &mut WgpuUnmappedMemoryBlock,
+        src: &mut WgpuUnmappedMemoryBlock<BUFFER_SIZE>,
+        dst: &mut WgpuUnmappedMemoryBlock<BUFFER_SIZE>,
         count: usize,
     ) {
         unimplemented!()

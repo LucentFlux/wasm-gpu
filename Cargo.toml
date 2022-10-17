@@ -31,6 +31,8 @@ elsa = "1.7"
 futures = "0.3"
 paste = "1.0"
 ouroboros = "0.15"
+fenwick = "2.0.1"
+async-channel = "1.7"
 
 # Tmp dependencies
 tokio = { version = "1", features = ["full"] }

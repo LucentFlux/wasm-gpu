@@ -1,18 +1,19 @@
 pub(crate) trait AbstractPtr {
-    type ConcretePtr;
-    fn concrete(&self, concrete_id: usize) -> Self::ConcretePtr;
+    type ConcretePtr: ConcretePtr;
+    fn concrete(&self, index: usize) -> Self::ConcretePtr;
 }
 
 pub(crate) trait ConcretePtr {
-    type AbstractPtr;
-    fn as_abstract(&self) -> Self::AbstractPtr;
+    type AbstractPtr: AbstractPtr;
+    fn from(abst: Self::AbstractPtr, index: usize) -> Self;
+    fn abstr(&self) -> &Self::AbstractPtr;
 }
 
 #[macro_export]
 macro_rules! impl_immutable_ptr {
     (
         pub struct $name:ident $(<$($lt:tt $( : $clt:tt $(+ $dlt:tt )* )?),* $(,)?>)? {
-            ...
+            $v:vis $_:ident...
             // Some pointers carry type information. This information is treated as immutable
             $($e_vis:vis $e_ident:ident : $e_type:ty),* $(,)?
         }
@@ -24,9 +25,9 @@ macro_rules! impl_immutable_ptr {
         inside any of the stores created by a StoreSet with the ID held by this ptr."]
         pub struct $name $(<$($lt $(: $clt $(+ $dlt)*)*),*>)*
         {
-            // Only make sense in the context of a specific object
-            ptr: usize,
-            id: usize,
+            #[doc="Point within the data as seen by WASM"]
+            $v ptr: usize,
+            $v id: usize,
 
             $($e_vis $e_ident : $e_type ,)*
 
@@ -96,30 +97,30 @@ macro_rules! impl_immutable_ptr {
 macro_rules! impl_abstract_ptr {
     (
         pub struct $name:ident $(<$($lt:tt $( : $clt:tt $(+ $dlt:tt )* )?),* $(,)?>)? {
-            ...
+            $v:vis $_:ident...
             // Some pointers carry type information. This information is treated as immutable
             $($e_vis:vis $e_ident:ident : $e_type:ty),* $(,)?
         } with concrete $concrete:ident $(<$($cct:tt),* $(,)?>)?;
     ) => {
         crate::impl_immutable_ptr!(
             pub struct $name $(<$($lt $( : $clt $(+ $dlt )* )*),* >)* {
-                ...
+                $v data...
                 $($e_vis $e_ident : $e_type),*
             }
         );
 
-        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* crate::store_set::ptrs::AbstractPtr for $name $(<$($lt),*>)*
+        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* crate::instance::ptrs::AbstractPtr for $name $(<$($lt),*>)*
         {
             type ConcretePtr = $concrete $(<$($cct),*>)*;
 
-            fn concrete(&self, concrete_id: usize) -> Self::ConcretePtr
+            fn concrete(&self,
+                index: usize,
+            ) -> Self::ConcretePtr
             {
                 let v = self.clone();
-                $concrete::new (
-                    v.ptr,
-                    v.id,
-                    concrete_id,
-                    $(v.$e_ident,)*
+                <Self::ConcretePtr as crate::instance::ptrs::ConcretePtr>::from (
+                    v,
+                    index,
                 )
             }
         }
@@ -130,45 +131,27 @@ macro_rules! impl_abstract_ptr {
 macro_rules! impl_concrete_ptr {
     (
         pub struct $name:ident $(<$($lt:tt $( : $clt:tt $(+ $dlt:tt )* )?),* $(,)?>)? {
-            ...
-            // Some pointers carry type information. This information is treated as immutable
-            $($e_vis:vis $e_ident:ident : $e_type:ty),* $(,)?
+            $v:vis $_:ident...
         } with abstract $abst:ident $(<$($at:tt),* $(,)?>)?;
     ) => {
         #[derive(Debug)]
         pub struct $name $(<$($lt $(: $clt $(+ $dlt)*)*),*>)*
         {
-            // Only make sense in the context of a specific concrete store_set
-            ptr: usize,
-            abstract_id: usize,
-            concrete_id: usize,
+            #[doc="The abstract version of this pointer, pointing to the same place in every instance"]
+            $v src: <Self as crate::instance::ptrs::ConcretePtr>::AbstractPtr,
 
-            $($e_vis $e_ident : $e_type ,)*
+            #[doc="Index of which WASM instance this is a pointer for"]
+            $v index: usize,
 
             _phantom_data: std::marker::PhantomData<($($($lt ,)*)*)>,
-        }
-
-        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* $name $(<$($lt),*>)*
-        {
-            fn new(ptr: usize, abstract_id: usize, concrete_id: usize $(, $e_ident : $e_type)*) -> Self {
-                Self {
-                    ptr,
-                    abstract_id,
-                    concrete_id,
-                    $($e_ident ,)*
-                    _phantom_data: Default::default(),
-                }
-            }
         }
 
         impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Clone for $name $(<$($lt),*>)*
         {
             fn clone(&self) -> Self {
                 Self {
-                    ptr: self.ptr.clone(),
-                    abstract_id: self.abstract_id.clone(),
-                    concrete_id: self.concrete_id.clone(),
-                    $($e_ident : self.$e_ident.clone() ,)*
+                    src: self.src.clone(),
+                    index: self.index.clone(),
                     _phantom_data: Default::default(),
                 }
             }
@@ -177,16 +160,15 @@ macro_rules! impl_concrete_ptr {
         impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* std::hash::Hash for $name $(<$($lt),*>)*
         {
             fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-                state.write_usize(self.concrete_id);
-                state.write_usize(self.abstract_id);
-                state.write_usize(self.ptr);
+                self.src.hash(state);
+                state.write_usize(self.index);
             }
         }
 
         impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* PartialEq<Self> for $name $(<$($lt),*>)*
         {
             fn eq(&self, other: &Self) -> bool {
-                self.concrete_id == other.concrete_id && self.abstract_id == other.abstract_id && self.ptr == other.ptr
+                self.index == other.index && self.src.eq(&other.src)
             }
         }
         impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Eq for $name$(<$($lt),*>)* where B: Backend {}
@@ -201,28 +183,29 @@ macro_rules! impl_concrete_ptr {
         impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Ord for $name$(<$($lt),*>)*
         {
             fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-                match self.abstract_id.cmp(&other.abstract_id) {
-                    std::cmp::Ordering::Equal => match self.concrete_id.cmp(&other.concrete_id) {
-                        std::cmp::Ordering::Equal => self.ptr.cmp(&other.ptr),
-                        v => v,
-                    }
+                match self.index.cmp(&other.index) {
+                    std::cmp::Ordering::Equal => self.src.cmp(&other.src),
                     v => v,
                 }
             }
         }
 
-        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* crate::store_set::ptrs::ConcretePtr for $name $(<$($lt),*>)*
+        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* crate::instance::ptrs::ConcretePtr for $name $(<$($lt),*>)*
         {
             type AbstractPtr = $abst $(<$($at),*>)*;
 
-            fn as_abstract(&self) -> Self::AbstractPtr
+            fn from(src: Self::AbstractPtr, index: usize) -> Self
             {
-                let v = self.clone();
-                $abst::new(
-                    v.ptr,
-                    v.abstract_id,
-                    $(v.$e_ident,)*
-                )
+                Self {
+                    src,
+                    index,
+                    _phantom_data: Default::default(),
+                }
+            }
+
+            fn abstr(&self) -> &Self::AbstractPtr
+            {
+                &self.src
             }
         }
     }

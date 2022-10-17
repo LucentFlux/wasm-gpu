@@ -5,8 +5,9 @@ use std::marker::PhantomData;
 use wasmparser::{FuncType, ValType, WasmFuncType};
 
 use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
+use crate::instance::memory::concrete::MemoryInstanceSet;
+use crate::instance::ptrs::AbstractPtr;
 use crate::instance::ModuleInstance;
-use crate::memory::DynamicMemoryBlock;
 use crate::store_set::StoreSet;
 use crate::typed::{Val, WasmTyVec};
 use crate::{Backend, StoreSetBuilder};
@@ -36,7 +37,7 @@ where
     B: Backend,
     F: 'static + for<'b> Fn(Caller<'b, B, T>, Params) -> BoxFuture<'b, anyhow::Result<Results>>,
     Params: WasmTyVec + 'static,
-    Results: WasmTyVec + 'static,
+    Results: WasmTyVec + Send + 'static,
     TypedHostFn<F, B, T, Params, Results>: Send + Sync,
 {
     fn call<'a>(
@@ -76,11 +77,11 @@ impl<B, T> Func<B, T>
 where
     B: Backend,
 {
-    pub fn params(&self) -> impl ExactSizeIterator<Item = ValType> + '_ {
+    pub fn params(&self) -> &[ValType] {
         return self.ty.params();
     }
 
-    pub fn results(&self) -> impl ExactSizeIterator<Item = ValType> + '_ {
+    pub fn results(&self) -> &[ValType] {
         return self.ty.results();
     }
 
@@ -111,7 +112,7 @@ where
                 func,
                 _phantom: Default::default(),
             })),
-            ty: WasmFuncType::new(Params::VAL_TYPES, Results::VAL_TYPES),
+            ty: FuncType::new(Vec::from(Params::VAL_TYPES), Vec::from(Results::VAL_TYPES)),
         };
 
         let fp: UntypedFuncPtr<B, T> = stores.register_function(func);
@@ -149,23 +150,53 @@ pub struct Caller<'a, B, T>
 where
     B: Backend,
 {
-    store: &'a mut StoreSet<B, T>,
+    // Decomposed store
+    data: &'a mut Vec<T>,
+    memory: &'a mut MemoryInstanceSet<B>,
+
+    // Info into store data
+    index: usize,
     instance: &'a ModuleInstance<B, T>,
 }
 
-impl<B, T> Caller<'_, B, T>
+impl<'a, B, T> Caller<'a, B, T>
 where
     B: Backend,
 {
-    pub fn data(&self) -> &T {
-        return self.store.data();
+    pub fn new(
+        stores: &'a mut StoreSet<B, T>,
+        index: usize,
+        instance: &'a ModuleInstance<B, T>,
+    ) -> Self {
+        Self {
+            data: &mut stores.data,
+            memory: &mut stores.memories,
+
+            index,
+            instance,
+        }
     }
 
-    /// Requires Self to be callable as invoking this for the first time maps the GPU memory to RAM,
-    /// which requires state changes.
-    pub fn get_memory(&mut self, name: &str) -> anyhow::Result<&mut DynamicMemoryBlock<B>> {
-        let memptr = self.instance.get_memory_export(name)?;
-        self.store.get_memory(memptr)
+    pub fn data(&self) -> &T {
+        return self.data.get(self.index).unwrap();
+    }
+
+    pub fn data_mut(&mut self) -> &mut T {
+        return self.data.get_mut(self.index).unwrap();
+    }
+
+    pub async fn get_memory(&self, name: &str) -> Option<&[&'a [u8; 4]]> {
+        let memptr = self.instance.get_memory_export(name).ok()?;
+        let memptr = memptr.concrete(self.index);
+
+        self.memory.view::<T>().await.get(&memptr)
+    }
+
+    pub async fn get_memory_mut(&mut self, name: &str) -> Option<&[&'a mut [u8; 4]]> {
+        let memptr = self.instance.get_memory_export(name).ok()?;
+        let memptr = memptr.concrete(self.index);
+
+        self.memory.view_mut::<T>().await.get(&memptr)
     }
 }
 
@@ -173,7 +204,7 @@ where
 mod tests {
     use super::*;
     use crate::tests_lib::{gen_test_data, get_backend};
-    use crate::{block_test, Config, PanicOnAny};
+    use crate::{block_test, imports, Config, PanicOnAny};
     use crate::{wasp, MainMemoryBlock};
     use itertools::Itertools;
     use paste::paste;
@@ -215,14 +246,18 @@ mod tests {
         "#;
         let module = wasp::Module::new(&engine, wat.into_bytes()).unwrap();
 
-        let host_read = wasp::Func::wrap(
+        let host_read = Func::wrap(
             &mut stores_builder,
             move |mut caller: Caller<_, u32>, _param: i32| {
                 let expected_data = expected_data.clone();
                 let size = size.clone();
                 Box::pin(async move {
-                    let mem = caller.get_memory("mem").unwrap();
-                    let mem = mem.as_slice(0..size).await.unwrap();
+                    let mem = caller
+                        .get_memory("mem")
+                        .await
+                        .expect("memory mem not found");
+
+                    let mem = mem.into_iter().flat_map(|v| v.into_iter());
 
                     for (b1, b2) in expected_data.iter().zip_eq(mem) {
                         assert_eq!(*b1, *b2);
@@ -234,7 +269,14 @@ mod tests {
         );
 
         let instance = stores_builder
-            .instantiate_module(&module, &[host_read])
+            .instantiate_module(
+                &module,
+                imports! {
+                    "host": {
+                        "read": host_read
+                    }
+                },
+            )
             .await
             .expect("could not instantiate all modules");
         let module_read = instance

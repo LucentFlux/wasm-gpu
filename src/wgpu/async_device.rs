@@ -20,14 +20,15 @@ impl AsyncDevice {
 
     pub async fn do_async<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(Box<dyn FnOnce(R) -> () + Send + 'static>) -> (),
+        F: FnOnce(FutureCallback<R>) -> (),
+        R: Send + 'static,
     {
         let future = WgpuFuture::new(self.device.clone());
         f(future.callback());
         return future.await;
     }
 
-    pub fn create_buffer(self: Arc<Self>, desc: &BufferDescriptor) -> AsyncBuffer {
+    pub fn create_buffer(&self, desc: &BufferDescriptor) -> AsyncBuffer {
         let buffer = self.device.create_buffer(desc);
         AsyncBuffer::new(self.clone(), buffer)
     }
@@ -42,6 +43,27 @@ impl AsRef<Device> for AsyncDevice {
 struct WgpuFutureSharedState<T> {
     result: Option<T>,
     waker: Option<Waker>,
+}
+
+struct FutureCallback<T> {
+    shared_state: Arc<Mutex<WgpuFutureSharedState<T>>>,
+}
+
+impl<T> FnOnce<T> for FutureCallback<T> {
+    type Output = ();
+
+    extern "rust-call" fn call_once(self, res: T) -> Self::Output {
+        let mut lock = self
+            .shared_state
+            .lock()
+            .expect("wgpu future was poisoned on complete");
+        let shared_state = lock.deref_mut();
+        shared_state.result = Some(res);
+
+        if let Some(waker) = shared_state.waker.take() {
+            waker.wake()
+        }
+    }
 }
 
 struct WgpuFuture<T> {
@@ -61,19 +83,9 @@ impl<T: Send + 'static> WgpuFuture<T> {
     }
 
     /// Generates a callback function for this future that wakes the waker and sets the shared state
-    pub fn callback(&self) -> Box<dyn FnOnce(T) -> () + Send + 'static> {
+    pub fn callback(&self) -> FutureCallback<T> {
         let shared_state = self.state.clone();
-        return Box::new(move |res: T| {
-            let mut lock = shared_state
-                .lock()
-                .expect("wgpu future was poisoned on complete");
-            let shared_state = lock.deref_mut();
-            shared_state.result = Some(res);
-
-            if let Some(waker) = shared_state.waker.take() {
-                waker.wake()
-            }
-        });
+        return FutureCallback { shared_state };
     }
 }
 

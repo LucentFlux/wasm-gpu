@@ -1,6 +1,6 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::memory::DynamicMemoryBlock;
-use crate::typed::{FuncRef, WasmTyVal, WasmTyVec};
+use crate::typed::{FuncRef, WasmTyVal};
 use crate::{impl_immutable_ptr, Backend};
 use itertools::Itertools;
 use std::sync::Arc;
@@ -37,27 +37,27 @@ where
         self.references.extend(values_size).await;
     }
 
-    pub async fn add_element<T>(&mut self, element: &Vec<u32>) -> anyhow::Result<ElementPtr<B, T>> {
+    pub async fn add_element<T>(&mut self, element: &Vec<u32>) -> ElementPtr<B, T> {
         let start = self.len;
         let end = self.len + (element.len() * std::mem::size_of::<u32>());
         assert!(
-            end <= self.references.len(),
+            end <= self.references.len().await,
             "not enough space reserved to insert element to device buffer"
         );
 
-        let slice = self.references.as_slice_mut(start..end).await?;
+        let slice = self.references.as_slice_mut(start..end).await;
 
         slice.copy_from_slice(
             element
                 .iter()
-                .flat_map(|v| FuncRef::from_u32(*v).to_bytes())
+                .flat_map(|v| WasmTyVal::to_bytes(&FuncRef::from_u32(*v)))
                 .collect_vec()
                 .as_slice(),
         );
 
         self.len = end;
 
-        return Ok(ElementPtr::new(start, self.id, element.len()));
+        return ElementPtr::new(start, self.id, element.len());
     }
 
     pub(crate) async fn get<T>(&mut self, ptr: &ElementPtr<B, T>) -> &[u8] {
@@ -71,7 +71,7 @@ where
 
 impl_immutable_ptr!(
     pub struct ElementPtr<B: Backend, T> {
-        ...
+        data...
         len: usize,
     }
 );

@@ -1,20 +1,17 @@
 //! This file outlines the concept of a single store_set 'instance', in the OOP sense, not the WASM sense,
 //! created from the 'factory' of a StoreSet
 
-pub mod builder;
-pub mod ptrs;
-
-use crate::instance::concrete::global::GlobalInstanceSet;
-use crate::instance::concrete::memory::MemoryInstanceSet;
-use crate::instance::concrete::memory::MemoryPtr;
-use crate::instance::concrete::table::TableInstanceSet;
 use crate::instance::data::DataInstance;
 use crate::instance::element::ElementInstance;
 use crate::instance::func::FuncsInstance;
-use crate::memory::DynamicMemoryBlock;
+use crate::instance::global::concrete::GlobalInstanceSet;
+use crate::instance::memory::concrete::MemoryPtr;
+use crate::instance::memory::concrete::{MemoryInstanceSet, MemoryInstanceView};
+use crate::instance::table::concrete::TableInstanceSet;
 use crate::Backend;
-use anyhow::anyhow;
 use std::sync::Arc;
+
+pub mod builder;
 
 /// All of the state for a collection of active WASM state machines
 /// Treated like an arena - everything allocated is allocated in here, and everyone else just keeps
@@ -23,58 +20,13 @@ pub struct StoreSet<B, T>
 where
     B: Backend,
 {
-    backend: Arc<B>,
-    data: Vec<T>,
+    pub backend: Arc<B>,
+    pub data: Vec<T>,
 
-    functions: Arc<FuncsInstance<B, T>>,
-    elements: Arc<ElementInstance<B>>,
-    datas: Arc<DataInstance<B>>,
-    tables: TableInstanceSet<B>,
-    memories: MemoryInstanceSet<B>,
-    globals: GlobalInstanceSet<B>,
-}
-
-impl<B, T> StoreSet<B, T>
-where
-    B: Backend,
-{
-    pub fn data(&self, index: usize) -> Option<&T> {
-        return self.data.get(index);
-    }
-
-    pub fn get_memory(
-        &mut self,
-        index: usize,
-        ptr: MemoryPtr<B, T>,
-    ) -> anyhow::Result<&mut DynamicMemoryBlock<B>> {
-        self.memories
-            .get_mut(ptr.get_ptr())
-            .ok_or(anyhow!("memory pointer outside range"))
-    }
-
-    fn new(
-        backend: Arc<B>,
-        data: T,
-        functions: Arc<FuncsInstance<B, T>>,
-        elements: Arc<ElementInstance<B>>,
-        datas: Arc<DataInstance<B>>,
-        tables: TableInstanceSet<B>,
-        memories: MemoryInstanceSet<B>,
-        globals: GlobalInstanceSet<B>,
-    ) -> Self {
-        Self {
-            backend,
-            data,
-            functions,
-            tables,
-            memories,
-            globals,
-            elements,
-            datas,
-        }
-    }
-
-    pub(crate) fn backend(&self) -> Arc<B> {
-        self.backend.clone()
-    }
+    pub functions: Arc<FuncsInstance<B, T>>,
+    pub elements: Arc<ElementInstance<B>>,
+    pub datas: Arc<DataInstance<B>>,
+    pub tables: TableInstanceSet<B>,
+    pub memories: MemoryInstanceSet<B>,
+    pub globals: GlobalInstanceSet<B>,
 }

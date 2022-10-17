@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 use std::ops::RangeInclusive;
 use std::ops::RangeTo;
 use std::ops::RangeToInclusive;
-use std::ops::{Add, Bound, Range, RangeBounds, RangeFrom};
+use std::ops::{Add, Bound, Range, RangeBounds, RangeFrom, RangeFull};
 use wasmparser::ValType;
 
 pub const fn wasm_ty_bytes(ty: ValType) -> usize {
@@ -16,6 +16,54 @@ pub const fn wasm_ty_bytes(ty: ValType) -> usize {
         ValType::V128 => 16,
         ValType::FuncRef => 4,
         ValType::ExternRef => 4,
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct Ieee32(u32);
+
+impl Ieee32 {
+    pub fn from_le_bytes(bs: [u8; 4]) -> Self {
+        Self(u32::from_le_bytes(bs))
+    }
+    pub fn to_le_bytes(self) -> [u8; 4] {
+        self.0.to_le_bytes()
+    }
+    pub fn from_bits(v: u32) -> Self {
+        Self(v)
+    }
+    pub fn bits(&self) -> u32 {
+        self.0
+    }
+}
+
+impl From<wasmparser::Ieee32> for Ieee32 {
+    fn from(v: wasmparser::Ieee32) -> Self {
+        Ieee32::from_bits(v.bits())
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct Ieee64(u64);
+
+impl Ieee64 {
+    pub fn from_le_bytes(bs: [u8; 8]) -> Self {
+        Self(u64::from_le_bytes(bs))
+    }
+    pub fn to_le_bytes(self) -> [u8; 8] {
+        self.0.to_le_bytes()
+    }
+    pub fn from_bits(v: u64) -> Self {
+        Self(v)
+    }
+    pub fn bits(&self) -> u64 {
+        self.0
+    }
+}
+
+impl From<wasmparser::Ieee64> for Ieee64 {
+    fn from(v: wasmparser::Ieee64) -> Self {
+        Ieee64::from_bits(v.bits())
     }
 }
 
@@ -71,8 +119,8 @@ impl ExternRef {
 pub enum Val {
     I32(i32),
     I64(i64),
-    F32(f32),
-    F64(f64),
+    F32(Ieee32),
+    F64(Ieee64),
     V128(u128),
     FuncRef(FuncRef),
     ExternRef(ExternRef),
@@ -158,8 +206,8 @@ macro_rules! impl_vec_base {
 
 impl_vec_base!(i32 as I32);
 impl_vec_base!(i64 as I64);
-impl_vec_base!(f32 as F32);
-impl_vec_base!(f64 as F64);
+impl_vec_base!(Ieee32 as F32);
+impl_vec_base!(Ieee64 as F64);
 impl_vec_base!(u128 as V128);
 impl_vec_base!(FuncRef as FuncRef);
 impl_vec_base!(ExternRef as ExternRef);
@@ -265,16 +313,26 @@ macro_rules! impl_vec_rec {
             #[inline(always)]
             #[allow(non_snake_case)]
             fn try_from_bytes(bs: &[u8]) -> anyhow::Result<Self> {
-                let mut iter = bs.into_iter();
-                Ok(( $(
+                let mut index = 0;
+                let v: Self = ( $(
                     {
-                        let mut part: Vec<u8> = Vec::new();
-                        for _ in 0..std::mem::size_of::<$t>() {
-                            part.push(iter.next().clone());
+                        let start = index;
+                        let end = start + std::mem::size_of::<$t>();
+                        index = end;
+
+                        if index > bs.len() {
+                            return Err(anyhow::anyhow!("too few bytes"));
                         }
-                        $t::try_from_bytes(part.as_slice())?
+
+                        $t::try_from_bytes(&bs[start..end])?
                     },
-                )* ))
+                )* );
+
+                if index != bs.len() {
+                    return Err(anyhow::anyhow!("too many bytes"));
+                }
+
+                return Ok(v);
             }
 
             #[inline(always)]
@@ -294,25 +352,21 @@ macro_rules! impl_vec_rec {
 
 for_each_function_signature!(impl_vec_rec);
 
-pub trait ToRange {
-    type Value;
-
-    fn half_open(&self, max: Self::Value) -> Range<Self::Value>;
+pub trait ToRange<Value>: RangeBounds<Value> {
+    fn half_open(&self, max: Value) -> Range<Value>;
 }
 
 macro_rules! impl_to_range {
     ($ty:ty => $ty2:ty) => {
-        impl ToRange for $ty2 {
-            type Value = $ty;
-
-            fn half_open(&self, max: $ty) -> Range<Self::Value> {
-                let start = match self.start_bound() {
+        impl ToRange<$ty> for $ty2 {
+            fn half_open(&self, max: $ty) -> Range<$ty> {
+                let start = match <Self as RangeBounds<$ty>>::start_bound(self) {
                     Bound::Included(b) => b.clone(),
                     Bound::Excluded(b) => b.clone().add(1),
                     Bound::Unbounded => 0,
                 };
 
-                let end = match self.end_bound() {
+                let end = match <Self as RangeBounds<$ty>>::end_bound(self) {
                     Bound::Included(b) => b.clone().add(1),
                     Bound::Excluded(b) => b.clone(),
                     Bound::Unbounded => max,
@@ -325,6 +379,7 @@ macro_rules! impl_to_range {
 
     ($($ty:ty);*) => {
         $(
+            impl_to_range!($ty => RangeFull);
             impl_to_range!($ty => (Bound<$ty>, Bound<$ty>));
             impl_to_range!($ty => Range<&$ty>);
             impl_to_range!($ty => Range<$ty>);
@@ -340,4 +395,4 @@ macro_rules! impl_to_range {
     }
 }
 
-impl_to_range!(u8; u16; u32; u64; u128; i8; i16; i32; i64; i128; usize; isize; f32; f64);
+impl_to_range!(u8; u16; u32; u64; u128; i8; i16; i32; i64; i128; usize; isize);

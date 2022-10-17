@@ -2,165 +2,99 @@ use crate::compute_utils::Utils;
 use crate::memory::DynamicMemoryBlock;
 use crate::typed::ToRange;
 use crate::{Backend, MainMemoryBlock};
-use itertools::Itertools;
-use std::ops::RangeBounds;
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::marker::PhantomData;
+use std::sync::Arc;
 
-/// Acts like a slice, but deals with strides and offsets into the underlying buffer
-pub struct InterleavedSlice<'a, 'b, B, const STRIDE: usize>
-where
-    B: Backend,
-{
-    /// While-ever a view exists, the buffer shouldn't be moved or resized
-    memory: RwLockReadGuard<'a, &'b mut DynamicMemoryBlock<B>>,
-    total: usize,  // Number of interleaved buffers
-    len: usize,    // Number of values of length STRIDE that are in this 'slice'
-    offset: usize, // Index (in bytes) of index 0 of this 'slice'
-}
-
-macro_rules! getter {
-    (
-        pub async fn $n1:tt(&self, ...) -> $(&[u8; $t1:tt])? $(&mut [u8; $t2:tt])? {
-            ...
-            self.memory.$m1:tt(bounds)
-            ...
-        }
-    ) => {
-        pub async fn $n1(&self, index: usize) -> $(&[u8; $t1])* $(&mut [u8; $t2])* {
-            assert!(index < self.len);
-
-            let start = self.offset + (index * self.total * $($t1)* $($t2)*);
-            let end = start + $($t1)* $($t2)*;
-            let bounds = start..end;
-
-            let slice = self.memory.$m1(bounds).await;
-
-            return slice.try_into().unwrap();
-        }
-    };
-}
-
-impl<'a, 'b, B, const STRIDE: usize> InterleavedSlice<'a, 'b, B, STRIDE>
-where
-    B: Backend,
-{
-    getter!(
-        pub async fn get(&self, ...) -> &[u8; STRIDE] {
-            ...
-            self.memory.as_slice(bounds)
-            ...
-        }
-    );
-}
-
-/// Acts like a slice, but deals with strides and offsets into the underlying buffer
-pub struct InterleavedSliceMut<'a, 'b, B: Backend, const STRIDE: usize> {
-    /// While-ever a view exists, the buffer shouldn't be moved or resized
-    memory: RwLockWriteGuard<'a, &'b mut DynamicMemoryBlock<B>>,
-    total: usize,  // Number of interleaved buffers
-    len: usize,    // Number of values of length STRIDE that are in this 'slice'
-    offset: usize, // Index (in bytes) of index 0 of this 'slice'
-}
-
-impl<'a, 'b, B, const STRIDE: usize> InterleavedSliceMut<'a, 'b, B, STRIDE>
-where
-    B: Backend,
-{
-    getter!(
-        pub async fn get(&self, ...) -> &[u8; STRIDE] {
-            ...
-            self.memory.as_slice(bounds)
-            ...
-        }
-    );
-
-    getter!(
-        pub async fn get_mut(&self, ...) -> &mut [u8; STRIDE] {
-            ...
-            self.memory.as_slice_mut(bounds)
-            ...
-        }
-    );
-}
-
-/// STRIDE: The number of bytes to one value
-pub struct InterleavedBufferInterpreter<'a, B, const STRIDE: usize>
-where
-    B: Backend,
-{
-    backing: Arc<RwLock<&'a mut DynamicMemoryBlock<B>>>, // Shared by all interleaved buffers of a set
-    index: usize, // ASSERT: Unique over each InterleavedDynamicBufferInternal
-    total: usize, // The total number of interleaved buffers pointing to the backing pointer
-}
-
-impl<'a, B, const STRIDE: usize> InterleavedBufferInterpreter<'a, B, STRIDE>
-where
-    B: Backend,
-{
-    /// Takes a memory block and interprets it as an interleaved buffer
-    ///
-    /// # Panics
-    /// Count cannot be 0
-    pub fn interpret(
-        source: &'a mut DynamicMemoryBlock<B>,
-        count: usize,
-    ) -> Vec<InterleavedBufferInterpreter<'a, B, STRIDE>> {
-        assert!(count > 0, "interleaved count cannot be zero");
-
-        let backing = Arc::new(RwLock::new(source));
-
-        (0..count)
-            .map(|index| InterleavedBufferInterpreter {
-                backing: backing.clone(),
-                index,
-                total: count,
-            })
-            .collect_vec()
-    }
-
-    /// The number of items (blocks of bytes of length STRIDE) that are in each interleaved buffer
-    pub async fn len(&self) -> usize {
-        return self.backing.read().unwrap().expect("buffer lost").len() / self.total;
-    }
-
-    /// Get a view into the slice given, for this portion of the interleaved buffer
-    pub async fn get<S: RangeBounds<usize> + Send>(
-        &self,
-        bounds: S,
-    ) -> InterleavedSlice<B, STRIDE> {
-        let range = bounds.half_open();
-
-        return InterleavedSlice {
-            memory: self.backing.read().unwrap(),
-            total: self.total,
-            len: range.len(),
-            offset: self.index + self.total * range.start,
-        };
-    }
-
-    /// Get a mutable view into the slice given, for this portion of the interleaved buffer
-    ///
-    /// Note: We know slices can't alias - for host function performance, unsafe rust could be written for concurrent mutable access
-    pub async fn get_mut<S: RangeBounds<usize> + Send>(
-        &mut self,
-        bounds: S,
-    ) -> InterleavedSliceMut<B, STRIDE> {
-        let range = bounds.half_open();
-
-        return InterleavedSliceMut {
-            memory: self.backing.write().unwrap(),
-            total: self.total,
-            len: range.len(),
-            offset: self.index + self.total * range.start,
-        };
-    }
-}
-
+/// Takes an interleaved slice and locks its length, allowing concurrent accesses to non-aliasing slices
 pub struct InterleavedBufferView<'a, B, const STRIDE: usize>
 where
     B: Backend,
 {
-    interpretations: Vec<InterleavedBufferInterpreter<'a, B, STRIDE>>,
+    interpretations: Vec<Vec<&'a [u8; STRIDE]>>,
+    _phantom: PhantomData<B>,
+}
+
+/// Used to implement both the mutable and immutable variations
+macro_rules! interpret {
+    (
+        (source: $source:ty) {
+            use $as_slice:ident
+            and $split_array_ref:ident
+        }
+    ) => {
+        #[doc="Takes a memory block and interprets it as an interleaved buffer\
+        Bounds gives the bounds for each abstract interleaved buffer, in units of `STRIDE` bytes\
+        # Panics\
+        Count cannot be 0\
+        `source.len()` must be divisible by `count * STRIDE`\
+        The backing buffer must have length >= `bounds.end * count * STRIDE`"]
+        pub async fn interpret<S: ToRange<usize> + Send>(
+            source: $source,
+            bounds: S,
+            count: usize,
+        ) -> Self {
+            assert!(count > 0);
+            assert_eq!(source.len() % (count * STRIDE), 0);
+
+            let bounds = bounds.half_open(source.len() / count);
+            let buffer_bounds = (bounds.start * count * STRIDE)..(bounds.end * count * STRIDE);
+
+            assert!(buffer_bounds.end <= source.len());
+
+            let mut s = source.$as_slice(buffer_bounds).await;
+
+            debug_assert_eq!(s.len() % (count * STRIDE), 0);
+
+            let mut interpretations = vec![Vec::new(); count];
+            while !s.is_empty() {
+                for i in 0..count {
+                    let (lhs, rhs) = s.$split_array_ref();
+                    interpretations.get(i).unwrap().push(lhs);
+                    s = rhs;
+                }
+            }
+
+            Self {
+                interpretations,
+                _phantom: Default::default(),
+            }
+        }
+    };
+}
+
+impl<'a, B: Backend, const STRIDE: usize> InterleavedBufferView<'a, B, STRIDE> {
+    interpret!(
+        (source: &'a DynamicMemoryBlock<B>) {
+            use as_slice
+            and split_array_ref
+        }
+    );
+
+    pub fn get(&self, index: usize) -> Option<&Vec<&'a [u8; STRIDE]>> {
+        self.interpretations.get(index)
+    }
+}
+
+/// Takes an interleaved slice and locks its length, allowing concurrent writes to non-aliasing slices
+pub struct InterleavedBufferViewMut<'a, B, const STRIDE: usize>
+where
+    B: Backend,
+{
+    interpretations: Vec<Vec<&'a mut [u8; STRIDE]>>,
+    _phantom: PhantomData<B>,
+}
+
+impl<'a, B: Backend, const STRIDE: usize> InterleavedBufferViewMut<'a, B, STRIDE> {
+    interpret!(
+        (source: &'a mut DynamicMemoryBlock<B>) {
+            use as_slice_mut
+            and split_array_mut
+        }
+    );
+
+    pub fn get(&self, index: usize) -> Option<&Vec<&'a mut [u8; STRIDE]>> {
+        self.interpretations.get(index)
+    }
 }
 
 pub struct InterleavedBuffer<B, const STRIDE: usize>
@@ -196,10 +130,19 @@ where
         Self { buffer, count }
     }
 
-    /// Borrow this buffer mutably as a view
-    pub fn view(&mut self) -> InterleavedBufferView<B, STRIDE> {
-        InterleavedBufferView {
-            interpretations: InterleavedBufferInterpreter::interpret(&mut self.buffer, self.count),
-        }
+    /// Borrow this buffer as a view
+    pub async fn view<S: ToRange<usize> + Send>(
+        &self,
+        range: S,
+    ) -> InterleavedBufferView<B, STRIDE> {
+        InterleavedBufferView::interpret(&self.buffer, self.count, range).await
+    }
+
+    /// Borrow this buffer mutable as a mutable view
+    pub async fn view_mut<S: ToRange<usize> + Send>(
+        &mut self,
+        range: S,
+    ) -> InterleavedBufferViewMut<B, STRIDE> {
+        InterleavedBufferViewMut::interpret(&mut self.buffer, self.count, range).await
     }
 }
