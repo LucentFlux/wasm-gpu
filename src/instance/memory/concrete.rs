@@ -4,6 +4,7 @@ use crate::instance::memory::abstr::AbstractMemoryPtr;
 use crate::memory::interleaved::{
     InterleavedBuffer, InterleavedBufferView, InterleavedBufferViewMut,
 };
+use crate::typed::ToRange;
 use crate::Backend;
 
 const STRIDE: usize = 4;
@@ -18,18 +19,21 @@ where
 }
 
 impl<B: Backend> MemoryInstanceSet<B> {
-    pub async fn view<T>(&self) -> MemoryInstanceView<B> {
+    pub async fn view<T, S: ToRange<usize> + Send>(&self, bounds: S) -> MemoryInstanceView<B> {
         MemoryInstanceView {
             id: self.id,
-            view: self.data.view().await,
+            view: self.data.view(bounds).await,
             lengths: self.lengths.clone(),
         }
     }
 
-    pub async fn view_mut<T>(&mut self) -> MemoryInstanceViewMut<B> {
+    pub async fn view_mut<T, S: ToRange<usize> + Send>(
+        &mut self,
+        bounds: S,
+    ) -> MemoryInstanceViewMut<B> {
         MemoryInstanceViewMut {
             id: self.id,
-            view: self.data.view_mut().await,
+            view: self.data.view_mut(bounds).await,
             lengths: self.lengths.clone(),
         }
     }
@@ -47,7 +51,7 @@ impl<'a, B: Backend> MemoryInstanceView<'a, B> {
 
         let start = self.lengths.prefix_sum(ptr.src.ptr);
         let end = self.lengths.prefix_sum(ptr.src.ptr + 1);
-        self.view.get(ptr.src.index).map(|v| v.slice(start, end))
+        self.view.get(ptr.index).map(|v| &v.as_slice()[start..end])
     }
 }
 
@@ -63,7 +67,7 @@ impl<'a, B: Backend> MemoryInstanceViewMut<'a, B> {
 
         let start = self.lengths.prefix_sum(ptr.src.ptr);
         let end = self.lengths.prefix_sum(ptr.src.ptr + 1);
-        self.view.get(ptr.src.index).map(|v| v.slice(start, end))
+        self.view.get(ptr.index).map(|v| &v.as_slice()[start..end])
     }
 }
 

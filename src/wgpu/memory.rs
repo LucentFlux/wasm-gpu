@@ -1,5 +1,5 @@
 use crate::memory::{DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
-use crate::typed::{ToRange, Val};
+use crate::typed::ToRange;
 use crate::wgpu::async_buffer::AsyncBuffer;
 use crate::wgpu::async_device::AsyncDevice;
 use crate::wgpu::async_queue::AsyncQueue;
@@ -8,10 +8,12 @@ use crate::WgpuBackend;
 use async_trait::async_trait;
 use futures::future::join_all;
 use itertools::Itertools;
+use std::alloc;
+use std::alloc::Layout;
 use std::cmp::min;
 use std::ops::RangeBounds;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use wgpu::{BufferAddress, BufferDescriptor, BufferUsages};
 
 /// Calculates the minimum x s.t. x is a multiple of alignment and x >= size
@@ -82,7 +84,7 @@ impl<const SIZE: usize> LazyChunk<SIZE> {
         &self,
         block: &WgpuBufferMemoryBlock<SIZE>,
         mark_as_dirty: bool,
-        buffer: &RwLock<Vec<u8>>,
+        buffer: &HostMemoryBlob,
     ) {
         if mark_as_dirty {
             self.dirty.store(true, Ordering::Release);
@@ -101,12 +103,6 @@ impl<const SIZE: usize> LazyChunk<SIZE> {
             return;
         }
 
-        // Now we lock on the data being written, only if required
-        let mut lock = buffer.write().unwrap();
-        let dest = lock
-            .as_mut_slice()
-            .slice(self.data_offset as usize, self.data_offset as usize + SIZE);
-
         block
             .download_buffers
             .with_slice(
@@ -115,6 +111,22 @@ impl<const SIZE: usize> LazyChunk<SIZE> {
                 &block.buffer,
                 self.data_offset,
                 move |slice| {
+                    // Safety proof:
+                    // - we are uninitialized, so no references to the buffer
+                    //   should exist outside of this function
+                    // - we have a mutex out for this chunk, so we aren't racing
+                    // - no other chunk overlaps with us
+                    // Therefore we are the only code accessing this block of bytes
+                    //
+                    // If a chunk within the bounds of the blob is uninitialized,
+                    // that means that no reference to that chunk's slice exists,
+                    // as the first time a reference is created is the only time
+                    // that a chunk is initialized. Therefore, with a mutex taken out,
+                    // it is safe to get a mutable pointer to fill the initial chunk data.
+                    let dest = unsafe {
+                        let offset_ptr = buffer.ptr.add(self.data_offset as usize);
+                        std::slice::from_raw_parts_mut(offset_ptr, SIZE)
+                    };
                     dest.copy_from_slice(slice);
                 },
             )
@@ -124,7 +136,7 @@ impl<const SIZE: usize> LazyChunk<SIZE> {
     }
 
     /// Lockless checking that we have definitely uploaded this data (if it was dirty)
-    async fn upload(&self, block: &WgpuBufferMemoryBlock<SIZE>, buffer: &RwLock<Vec<u8>>) {
+    async fn upload(&mut self, block: &WgpuBufferMemoryBlock<SIZE>, buffer: &HostMemoryBlob) {
         // (http://schd.ws/hosted_files/cppcon2016/74/HansWeakAtomics.pdf Page 27)
         if !self.initialized.load(Ordering::Acquire) || !self.dirty.load(Ordering::Acquire) {
             return;
@@ -138,11 +150,8 @@ impl<const SIZE: usize> LazyChunk<SIZE> {
             return;
         }
 
-        // Now we lock on the data being read, only if required
-        let lock = buffer.read().unwrap();
-        let src = lock
-            .as_slice()
-            .slice(self.data_offset as usize, self.data_offset as usize + SIZE);
+        let start = self.data_offset as usize;
+        let src = buffer.as_slice(start..(start + SIZE));
 
         block
             .upload_buffers
@@ -159,9 +168,86 @@ impl<const SIZE: usize> LazyChunk<SIZE> {
     }
 }
 
+/// We want lockless lazy initialization of segments of a buffer - this is too much for Rust!
+/// This struct is essentially a `Box<[u8]>`, except we have access to pointer arithmetic
+/// The only time that we should need to avoid rust's borrow checker is when we get a mutable slice
+/// at chunk initialization time. See there for a safety argument
+struct HostMemoryBlob {
+    ptr: *mut u8,
+    len: usize,
+    layout: Layout,
+}
+
+impl HostMemoryBlob {
+    fn new(len: usize) -> Self {
+        let layout = Layout::array::<u8>(len).unwrap();
+        let ptr = unsafe { alloc::alloc(layout) };
+        Self { ptr, len, layout }
+    }
+
+    fn as_slice<S: ToRange<usize>>(&self, bounds: S) -> &[u8] {
+        let bounds = bounds.half_open(self.len);
+        assert!(bounds.end <= self.len);
+
+        if bounds.end <= bounds.start {
+            return &[];
+        }
+
+        let slice = unsafe {
+            // Safety proof:
+            //  `bounds.end <= self.len`
+            //  `bounds.end - bounds.start = bounds.len()`
+            // therefore
+            //  `self.ptr + bounds.start + bounds.len() == self.ptr + bounds.end`
+            // and so
+            //  `self.ptr + bounds.start + bounds.len() <= self.ptr + self.len`
+            // Since the buffer held by `self.ptr` is valid to dereference
+            // up to `self.ptr + self.len` then this is fine
+            let ptr = self.ptr.add(bounds.start);
+            // Safety proof:
+            // - this function takes an immutable reference
+            // - all other unsafe blocks should ensure they don't violate rust's safety rules
+            // - therefore the rust borrow checker should validate this immutable access
+            std::slice::from_raw_parts(ptr, bounds.len())
+        };
+
+        return slice;
+    }
+
+    fn as_slice_mut<S: ToRange<usize>>(&mut self, bounds: S) -> &mut [u8] {
+        let bounds = bounds.half_open(self.len);
+        assert!(bounds.end <= self.len);
+
+        if bounds.end <= bounds.start {
+            return &mut [];
+        }
+
+        // Safety proof:
+        // see immutable variation above
+        let slice = unsafe {
+            let ptr = self.ptr.add(bounds.start);
+            std::slice::from_raw_parts_mut(ptr, bounds.len())
+        };
+
+        return slice;
+    }
+}
+
+impl Drop for HostMemoryBlob {
+    fn drop(&mut self) {
+        unsafe {
+            alloc::dealloc(self.ptr, self.layout);
+        }
+    }
+}
+
+// Steal Box's rules
+unsafe impl Send for HostMemoryBlob where Box<[u8]>: Send {}
+unsafe impl Sync for HostMemoryBlob where Box<[u8]>: Sync {}
+
 struct LazyBuffer<const BUFFER_SIZE: usize> {
     buffer: WgpuBufferMemoryBlock<BUFFER_SIZE>,
-    data: RwLock<Vec<u8>>,
+    data: HostMemoryBlob,
     len: usize,
     chunks: Vec<LazyChunk<BUFFER_SIZE>>,
 }
@@ -171,15 +257,11 @@ impl<const BUFFER_SIZE: usize> LazyBuffer<BUFFER_SIZE> {
         let alignment = buffer.buffer_ring_buffer_size();
         let full_len = min_alignment_gt(len, alignment);
 
-        let data = vec![0u8; full_len];
-
-        let mut iter = data.chunks_exact(alignment);
-
-        assert_eq!(iter.remainder().len(), 0); // Exact chunks
+        debug_assert_eq!(full_len % alignment, 0); // Exact chunks
 
         let mut chunks = Vec::new();
         chunks.reserve_exact(full_len / alignment);
-        for (i, chunk) in iter.enumerate() {
+        for i in 0..(full_len / alignment) {
             chunks.push(LazyChunk::new(
                 buffer.device.clone(),
                 buffer.queue.clone(),
@@ -187,43 +269,41 @@ impl<const BUFFER_SIZE: usize> LazyBuffer<BUFFER_SIZE> {
             ))
         }
 
+        // Create an unmanaged buffer in memory
+        let data = HostMemoryBlob::new(full_len);
+
         Self {
             buffer,
-            data: RwLock::new(data),
+            data,
             len,
             chunks,
         }
     }
 
     /// Lockless checking that we have definitely downloaded all required data from the GPU to our buffer
-    async fn ensure_downloaded(
-        &self,
-        requested_start_byte_inclusive: usize,
-        requested_end_byte_exclusive: usize,
-        mark_as_dirty: bool,
-    ) {
+    async fn ensure_downloaded<S: ToRange<usize>>(&self, byte_bounds: S, mark_as_dirty: bool) {
+        let byte_bounds = byte_bounds.half_open(self.data.len);
+
         assert!(
-            requested_end_byte_exclusive <= self.data.len(),
+            byte_bounds.end <= self.data.len,
             "end of buffer out of bounds"
         );
 
-        if requested_end_byte_exclusive <= requested_start_byte_inclusive {
+        if byte_bounds.end <= byte_bounds.start {
             return;
         }
 
-        assert_ne!(requested_end_byte_exclusive, 0);
-        let requested_end_byte_inclusive = requested_end_byte_exclusive - 1;
+        assert_ne!(byte_bounds.end, 0);
 
-        let alignment = self.buffer.buffer_ring_buffer_size();
-
-        let start_chunk_inclusive = requested_start_byte_inclusive / alignment;
-        let end_chunk_inclusive = requested_end_byte_inclusive / alignment;
+        let start_chunk_inclusive = byte_bounds.start / BUFFER_SIZE;
+        let end_chunk_inclusive = (byte_bounds.end - 1) / BUFFER_SIZE;
 
         // Check we found the right chunks
         let start_byte_inclusive = self.chunks[start_chunk_inclusive].data_offset as usize;
-        let end_byte_exclusive = self.chunks[end_chunk_inclusive].data_offset as usize + alignment;
-        assert!(start_byte_inclusive <= requested_start_byte_inclusive);
-        assert!(requested_end_byte_inclusive < end_byte_exclusive);
+        let end_byte_exclusive =
+            self.chunks[end_chunk_inclusive].data_offset as usize + BUFFER_SIZE;
+        assert!(start_byte_inclusive <= byte_bounds.start);
+        assert!(byte_bounds.end <= end_byte_exclusive);
 
         // Get chunks
         let chunks = &self.chunks[start_chunk_inclusive..=end_chunk_inclusive];
@@ -241,10 +321,9 @@ impl<const BUFFER_SIZE: usize> LazyBuffer<BUFFER_SIZE> {
         assert!(bounds.start < self.len);
         assert!(bounds.end <= self.len);
 
-        self.ensure_downloaded(bounds.start, bounds.end, false)
-            .await;
+        self.ensure_downloaded(bounds, false).await;
 
-        return &self.data[bounds.start..bounds.end];
+        return self.data.as_slice(bounds.start..bounds.end);
     }
 
     async fn as_slice_mut<S: ToRange<usize>>(&mut self, bounds: S) -> &mut [u8] {
@@ -253,9 +332,9 @@ impl<const BUFFER_SIZE: usize> LazyBuffer<BUFFER_SIZE> {
         assert!(bounds.start < self.len);
         assert!(bounds.end <= self.len);
 
-        self.ensure_downloaded(bounds.start, bounds.end, true).await;
+        self.ensure_downloaded(bounds, true).await;
 
-        return &mut self.data[bounds.start..bounds.end];
+        return self.data.as_slice_mut(bounds.start..bounds.end);
     }
 
     async fn unload(mut self) -> WgpuBufferMemoryBlock<BUFFER_SIZE> {

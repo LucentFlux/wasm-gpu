@@ -24,8 +24,8 @@ pub trait MainMemoryBlock<B>: MemoryBlock<B>
 where
     B: Backend,
 {
-    async fn as_slice<S: RangeBounds<usize> + Send>(&self, bounds: S) -> &[u8];
-    async fn as_slice_mut<S: RangeBounds<usize> + Send>(&mut self, bounds: S) -> &mut [u8];
+    async fn as_slice<S: ToRange<usize> + Send>(&self, bounds: S) -> &[u8];
+    async fn as_slice_mut<S: ToRange<usize> + Send>(&mut self, bounds: S) -> &mut [u8];
     async fn move_to_device_memory(self) -> B::DeviceMemoryBlock;
 }
 

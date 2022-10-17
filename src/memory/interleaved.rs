@@ -34,12 +34,13 @@ macro_rules! interpret {
             count: usize,
         ) -> Self {
             assert!(count > 0);
-            assert_eq!(source.len() % (count * STRIDE), 0);
+            let s_len = source.len().await;
+            assert_eq!(s_len % (count * STRIDE), 0);
 
             let bounds = bounds.half_open(source.len() / count);
             let buffer_bounds = (bounds.start * count * STRIDE)..(bounds.end * count * STRIDE);
 
-            assert!(buffer_bounds.end <= source.len());
+            assert!(buffer_bounds.end <= s_len);
 
             let mut s = source.$as_slice(buffer_bounds).await;
 
@@ -115,7 +116,7 @@ where
         source: &mut DynamicMemoryBlock<B>,
         count: usize,
     ) -> Self {
-        let len = source.len() * count;
+        let len = source.len().await * count;
         let src = source.as_device().await;
         let mut buffer = DynamicMemoryBlock::new(backend.clone(), len, None);
 

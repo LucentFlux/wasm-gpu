@@ -2,14 +2,15 @@ pub mod func_ir;
 
 use futures::future::{BoxFuture, FutureExt};
 use std::marker::PhantomData;
-use wasmparser::{FuncType, ValType, WasmFuncType};
+use wasmparser::{FuncType, ValType};
 
 use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
-use crate::instance::memory::concrete::MemoryInstanceSet;
+use crate::instance::memory::concrete::{MemoryInstanceSet, MemoryInstanceView};
+use crate::instance::memory::concrete::{MemoryInstanceViewMut, MemoryPtr};
 use crate::instance::ptrs::AbstractPtr;
 use crate::instance::ModuleInstance;
 use crate::store_set::StoreSet;
-use crate::typed::{Val, WasmTyVec};
+use crate::typed::{ToRange, Val, WasmTyVec};
 use crate::{Backend, StoreSetBuilder};
 
 pub(crate) struct ExportFunction {
@@ -101,7 +102,7 @@ where
     ) -> TypedFuncPtr<B, T, Params, Results>
     where
         Params: WasmTyVec + 'static,
-        Results: WasmTyVec + 'static,
+        Results: WasmTyVec + Send + 'static,
         for<'b> F: Send
             + Sync
             + Fn(Caller<'b, B, T>, Params) -> BoxFuture<'b, anyhow::Result<Results>>
@@ -159,6 +160,28 @@ where
     instance: &'a ModuleInstance<B, T>,
 }
 
+pub struct ViewedSlice<'a, B: Backend, T> {
+    ptr: MemoryPtr<B, T>,
+    view: MemoryInstanceView<'a, B>,
+}
+
+impl<'a, B: Backend, T> AsRef<[&'a [u8; 4]]> for ViewedSlice<'a, B, T> {
+    fn as_ref(&self) -> &[&'a [u8; 4]] {
+        self.view.get(&self.ptr).unwrap()
+    }
+}
+
+pub struct ViewedSliceMut<'a, B: Backend, T> {
+    ptr: MemoryPtr<B, T>,
+    view: MemoryInstanceViewMut<'a, B>,
+}
+
+impl<'a, B: Backend, T> AsRef<[&'a mut [u8; 4]]> for ViewedSliceMut<'a, B, T> {
+    fn as_ref(&self) -> &[&'a mut [u8; 4]] {
+        self.view.get(&self.ptr).unwrap()
+    }
+}
+
 impl<'a, B, T> Caller<'a, B, T>
 where
     B: Backend,
@@ -185,18 +208,46 @@ where
         return self.data.get_mut(self.index).unwrap();
     }
 
-    pub async fn get_memory(&self, name: &str) -> Option<&[&'a [u8; 4]]> {
+    pub async fn get_memory<S: ToRange<usize> + Send>(
+        &self,
+        name: &str,
+        bounds: S,
+    ) -> Option<ViewedSlice<B, T>> {
         let memptr = self.instance.get_memory_export(name).ok()?;
         let memptr = memptr.concrete(self.index);
 
-        self.memory.view::<T>().await.get(&memptr)
+        let view = self.memory.view::<T, S>(bounds).await;
+
+        // Check pointer is valid
+        {
+            let slice = view.get(&memptr);
+            if slice.is_none() {
+                return None;
+            }
+        }
+
+        return Some(ViewedSlice { ptr: memptr, view });
     }
 
-    pub async fn get_memory_mut(&mut self, name: &str) -> Option<&[&'a mut [u8; 4]]> {
+    pub async fn get_memory_mut<S: ToRange<usize> + Send>(
+        &'a mut self,
+        name: &str,
+        bounds: S,
+    ) -> Option<ViewedSliceMut<B, T>> {
         let memptr = self.instance.get_memory_export(name).ok()?;
         let memptr = memptr.concrete(self.index);
 
-        self.memory.view_mut::<T>().await.get(&memptr)
+        let view = self.memory.view_mut::<T, S>(bounds).await;
+
+        // Check pointer is valid
+        {
+            let slice = view.get(&memptr);
+            if slice.is_none() {
+                return None;
+            }
+        }
+
+        return Some(ViewedSliceMut { ptr: memptr, view });
     }
 }
 
@@ -204,8 +255,8 @@ where
 mod tests {
     use super::*;
     use crate::tests_lib::{gen_test_data, get_backend};
+    use crate::wasp;
     use crate::{block_test, imports, Config, PanicOnAny};
-    use crate::{wasp, MainMemoryBlock};
     use itertools::Itertools;
     use paste::paste;
     use tokio::runtime::Runtime;
@@ -222,7 +273,7 @@ mod tests {
 
     #[inline(never)]
     async fn test_host_func_memory_read(size: usize) {
-        let mut backend = get_backend().await;
+        let backend = get_backend().await;
 
         let expected_data = gen_test_data(size, (size * 65) as u32);
 
@@ -248,16 +299,16 @@ mod tests {
 
         let host_read = Func::wrap(
             &mut stores_builder,
-            move |mut caller: Caller<_, u32>, _param: i32| {
+            move |caller: Caller<_, u32>, _param: i32| {
                 let expected_data = expected_data.clone();
                 let size = size.clone();
                 Box::pin(async move {
                     let mem = caller
-                        .get_memory("mem")
+                        .get_memory("mem", ..)
                         .await
                         .expect("memory mem not found");
 
-                    let mem = mem.into_iter().flat_map(|v| v.into_iter());
+                    let mem = mem.as_ref().into_iter().flat_map(|v| v.into_iter());
 
                     for (b1, b2) in expected_data.iter().zip_eq(mem) {
                         assert_eq!(*b1, *b2);
@@ -283,7 +334,9 @@ mod tests {
             .get_typed_func::<(), ()>("read")
             .expect("could not get hello function from all instances");
 
-        let mut stores = stores_builder.build(0..1).await;
+        let stores_builder = stores_builder.complete();
+
+        let mut stores = stores_builder.build(0..10).await;
 
         module_read
             .call_all(&mut stores, |_| ())

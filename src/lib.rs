@@ -6,6 +6,7 @@
 #![feature(unboxed_closures)]
 #![feature(fn_traits)]
 #![feature(split_array)]
+#![allow(incomplete_features)]
 #![feature(adt_const_params)]
 
 extern crate core;

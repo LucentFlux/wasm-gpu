@@ -70,7 +70,8 @@ pub enum ParsedElementItems<'data> {
 impl<'data> ParsedElementItems<'data> {
     pub fn len(&self) -> usize {
         match self {
-            ParsedElementItems::Func(v) | ParsedElementItems::Expr(v) => v.len(),
+            ParsedElementItems::Func(v) => v.len(),
+            ParsedElementItems::Expr(v) => v.len(),
         }
     }
 }
@@ -132,7 +133,18 @@ impl ModuleEnviron {
             self.translate_payload(payload?, &mut scratch, &mut result)?;
         }
 
-        Ok(self.result)
+        // Minimise space - we presumably won't be doing anything more
+        result.types.shrink_to_fit();
+        result.imports.shrink_to_fit();
+        result.tables.shrink_to_fit();
+        result.memories.shrink_to_fit();
+        result.globals.shrink_to_fit();
+        result.exports.shrink_to_fit();
+        result.elements.shrink_to_fit();
+        result.datas.shrink_to_fit();
+        result.functions.shrink_to_fit();
+
+        Ok(result)
     }
 
     fn translate_payload<'data>(
@@ -163,7 +175,7 @@ impl ModuleEnviron {
             Payload::TypeSection(types) => {
                 self.validator.type_section(&types)?;
                 let num = usize::try_from(types.get_count()).unwrap();
-                result.types.reserve_exact(num);
+                result.types.reserve(num);
 
                 for ty in types {
                     result.types.push(ty?);
@@ -174,7 +186,7 @@ impl ModuleEnviron {
                 self.validator.import_section(&imports)?;
 
                 let cnt = usize::try_from(imports.get_count()).unwrap();
-                result.imports.reserve_exact(cnt);
+                result.imports.reserve(cnt);
 
                 for entry in imports {
                     let import = entry?;
@@ -196,7 +208,7 @@ impl ModuleEnviron {
                 self.validator.function_section(&functions)?;
 
                 let cnt = usize::try_from(functions.get_count()).unwrap();
-                scratch.function_types.reserve_exact(cnt);
+                scratch.function_types.reserve(cnt);
 
                 for entry in functions {
                     scratch.function_types.push(entry?)
@@ -207,7 +219,7 @@ impl ModuleEnviron {
                 self.validator.table_section(&tables)?;
 
                 let cnt = usize::try_from(tables.get_count()).unwrap();
-                result.tables.reserve_exact(cnt);
+                result.tables.reserve(cnt);
 
                 for entry in tables {
                     result.tables.push(entry?);
@@ -218,7 +230,7 @@ impl ModuleEnviron {
                 self.validator.memory_section(&memories)?;
 
                 let cnt = usize::try_from(memories.get_count()).unwrap();
-                result.memories.reserve_exact(cnt);
+                result.memories.reserve(cnt);
 
                 for entry in memories {
                     result.memories.push(entry?);
@@ -236,7 +248,7 @@ impl ModuleEnviron {
                 self.validator.global_section(&globals)?;
 
                 let cnt = usize::try_from(globals.get_count()).unwrap();
-                result.globals.reserve_exact(cnt);
+                result.globals.reserve(cnt);
 
                 for entry in globals {
                     let wasmparser::Global { ty, init_expr } = entry?;
@@ -268,7 +280,7 @@ impl ModuleEnviron {
                 self.validator.export_section(&exports)?;
 
                 let cnt = usize::try_from(exports.get_count()).unwrap();
-                result.exports.reserve_exact(cnt);
+                result.exports.reserve(cnt);
 
                 for entry in exports {
                     let wasmparser::Export { name, kind, index } = entry?;
@@ -298,8 +310,7 @@ impl ModuleEnviron {
                 self.validator.element_section(&elements)?;
 
                 let cnt = usize::try_from(elements.get_count()).unwrap();
-                result.elements.reserve_exact(cnt);
-                result.element_items.reserve_exact(cnt);
+                result.elements.reserve(cnt);
 
                 for element in elements {
                     let element = element?;
@@ -310,7 +321,7 @@ impl ModuleEnviron {
 
                     let items = if items_reader.uses_exprs() {
                         let mut items = Vec::new();
-                        items.reserve_exact(cnt);
+                        items.reserve(cnt);
 
                         for item in items_reader {
                             match item? {
@@ -326,7 +337,7 @@ impl ModuleEnviron {
                         ParsedElementItems::Expr(items)
                     } else {
                         let mut items = Vec::new();
-                        items.reserve_exact(cnt);
+                        items.reserve(cnt);
 
                         for item in items_reader {
                             match item? {
@@ -366,7 +377,7 @@ impl ModuleEnviron {
             Payload::CodeSectionStart { count, range, .. } => {
                 self.validator.code_section_start(count, &range)?;
                 let cnt = usize::try_from(count).unwrap();
-                result.functions.reserve_exact(cnt);
+                result.functions.reserve(cnt);
             }
 
             Payload::CodeSectionEntry(mut body) => {
@@ -395,7 +406,7 @@ impl ModuleEnviron {
                 self.validator.data_count_section(count, &range)?;
 
                 let cnt = usize::try_from(count).unwrap();
-                result.datas.reserve_exact(cnt);
+                result.datas.reserve(cnt);
             }
 
             Payload::DataSection(mut data) => {

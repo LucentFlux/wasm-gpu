@@ -196,14 +196,16 @@ impl<const BUFFER_SIZE: usize> BufferRing<BUFFER_SIZE, { ConstMode::Read }> {
 
         download_buffer.copy_from(device, queue, src, offset).await;
 
-        let slice = download_buffer
-            .map_slice(..self.buffer_size() as BufferAddress)
-            .await
-            .expect("failed to map download buffer");
-        let view = slice.get_mapped_range();
-        let view = view.as_ref();
+        let res = {
+            let slice = download_buffer
+                .map_slice(..self.buffer_size() as BufferAddress)
+                .await
+                .expect("failed to map download buffer");
+            let view = slice.get_mapped_range();
+            let view = view.as_ref();
 
-        let res = f(view);
+            f(view)
+        };
 
         self.push(download_buffer);
 
