@@ -7,7 +7,6 @@ use crate::instance::memory::abstr::AbstractMemoryInstanceSet;
 use crate::instance::table::abstr::AbstractTableInstanceSet;
 use crate::instance::ModuleInstance;
 use crate::{Backend, Engine, Func, Module, StoreSet};
-use futures::StreamExt;
 use std::sync::Arc;
 
 /// Acts like a traditional OOP factory where we initialise modules into this before
@@ -53,15 +52,15 @@ where
     pub async fn instantiate_module(
         &mut self,
         module: &Module<'_, B>,
-        imports: Vec<NamedExtern<'_, B, T>>,
+        imports: Vec<NamedExtern<B, T>>,
     ) -> anyhow::Result<ModuleInstance<B, T>> {
         // Validation
-        let validated_imports = module.typecheck_imports(imports)?;
+        let validated_imports = module.typecheck_imports(&imports)?;
 
         // Globals
         let global_ptrs = module
             .initialize_globals(&mut self.globals, validated_imports.globals())
-            .await?;
+            .await;
 
         // Predict the function pointers that we *will* be creating
         let predicted_func_ptrs = module.predict_functions(&self.functions);
@@ -74,7 +73,7 @@ where
                 &global_ptrs,
                 &predicted_func_ptrs,
             )
-            .await?;
+            .await;
 
         // Tables
         let table_ptrs = module
@@ -87,7 +86,7 @@ where
                 &global_ptrs,
                 &predicted_func_ptrs,
             )
-            .await?;
+            .await;
 
         // Datas
         let data_ptrs = module.initialize_datas(&mut self.datas).await?;
@@ -103,7 +102,7 @@ where
                 &global_ptrs,
                 &predicted_func_ptrs,
             )
-            .await?;
+            .await;
 
         // Functions - they take everything
         let func_ptrs = module
@@ -116,25 +115,22 @@ where
                 &data_ptrs,
                 &memory_ptrs,
             )
-            .await?;
-        debug_assert_eq!(predicted_func_ptrs, func_ptrs);
+            .await;
+        assert_eq!(predicted_func_ptrs, func_ptrs);
 
         // Final setup, consisting of the Start function, must be performed in the build step if it
         // calls any host functions
-        if let Some(_start) = module.start_fn_index() {
-            unimplemented!()
-        }
+        let start_fn = module.start_fn(&func_ptrs);
 
         // Collect exports from pointers
-        let exports =
-            module.collect_exports(&global_ptrs, &table_ptrs, &memory_ptrs, &func_ptrs)?;
+        let exports = module.collect_exports(&global_ptrs, &table_ptrs, &memory_ptrs, &func_ptrs);
 
-        let funcs = func_ptrs.into_values().collect();
-        let tables = table_ptrs.into_values().collect();
-        let memories = memory_ptrs.into_values().collect();
-        let globals = global_ptrs.into_values().collect();
+        let funcs = func_ptrs.into_iter().collect();
+        let tables = table_ptrs.into_iter().collect();
+        let memories = memory_ptrs.into_iter().collect();
+        let globals = global_ptrs.into_iter().collect();
         return Ok(ModuleInstance::new(
-            self.id, funcs, tables, memories, globals, exports,
+            funcs, tables, memories, globals, exports, start_fn,
         ));
     }
 

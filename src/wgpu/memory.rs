@@ -7,13 +7,11 @@ use crate::wgpu::buffer_ring::{BufferRing, ConstMode};
 use crate::WgpuBackend;
 use async_trait::async_trait;
 use futures::future::join_all;
-use itertools::Itertools;
 use std::alloc;
 use std::alloc::Layout;
 use std::cmp::min;
-use std::ops::RangeBounds;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use wgpu::{BufferAddress, BufferDescriptor, BufferUsages};
 
 /// Calculates the minimum x s.t. x is a multiple of alignment and x >= size
@@ -62,7 +60,7 @@ struct LazyChunk<const SIZE: usize> {
     queue: AsyncQueue,
 
     initialized: AtomicBool,
-    mutex: Mutex<()>,
+    mutex: tokio::sync::Mutex<()>,
     data_offset: BufferAddress, // Offset within the GPU buffer
     dirty: AtomicBool,          // If the data chunk has possibly been written, we must write back
 }
@@ -74,7 +72,7 @@ impl<const SIZE: usize> LazyChunk<SIZE> {
             queue,
             initialized: AtomicBool::from(false),
             dirty: AtomicBool::from(false),
-            mutex: Mutex::new(()),
+            mutex: tokio::sync::Mutex::new(()),
             data_offset: data_offset as BufferAddress,
         }
     }
@@ -96,7 +94,7 @@ impl<const SIZE: usize> LazyChunk<SIZE> {
         }
 
         // We *may* not be initialized. We have to block to be certain.
-        let _internal = self.mutex.lock().unwrap();
+        let _internal = self.mutex.lock().await;
         if self.initialized.load(Ordering::Relaxed) {
             // We raced, and someone else initialized us. We can fall
             // through now.
@@ -143,7 +141,7 @@ impl<const SIZE: usize> LazyChunk<SIZE> {
         }
 
         // We *may* not be initialized. We have to block to be certain.
-        let _internal = self.mutex.lock().unwrap();
+        let _internal = self.mutex.lock().await;
         if !self.initialized.load(Ordering::Relaxed) || !self.dirty.load(Ordering::Relaxed) {
             // We raced, and someone else uploaded us. We can fall
             // through now.
@@ -321,9 +319,9 @@ impl<const BUFFER_SIZE: usize> LazyBuffer<BUFFER_SIZE> {
         assert!(bounds.start < self.len);
         assert!(bounds.end <= self.len);
 
-        self.ensure_downloaded(bounds, false).await;
+        self.ensure_downloaded(bounds.clone(), false).await;
 
-        return self.data.as_slice(bounds.start..bounds.end);
+        return self.data.as_slice(bounds);
     }
 
     async fn as_slice_mut<S: ToRange<usize>>(&mut self, bounds: S) -> &mut [u8] {
@@ -332,9 +330,9 @@ impl<const BUFFER_SIZE: usize> LazyBuffer<BUFFER_SIZE> {
         assert!(bounds.start < self.len);
         assert!(bounds.end <= self.len);
 
-        self.ensure_downloaded(bounds, true).await;
+        self.ensure_downloaded(bounds.clone(), true).await;
 
-        return self.data.as_slice_mut(bounds.start..bounds.end);
+        return self.data.as_slice_mut(bounds);
     }
 
     async fn unload(mut self) -> WgpuBufferMemoryBlock<BUFFER_SIZE> {
@@ -445,7 +443,11 @@ impl<const BUFFER_SIZE: usize> DeviceMemoryBlock<WgpuBackend<BUFFER_SIZE>>
 
     async fn copy_from(&mut self, other: &WgpuUnmappedMemoryBlock<BUFFER_SIZE>) {
         // Tell GPU to copy from other into this
-        let mut copy_command_encoder = self.data.device.create_command_encoder(&Default::default());
+        let mut copy_command_encoder = self
+            .data
+            .device
+            .as_ref()
+            .create_command_encoder(&Default::default());
         copy_command_encoder.copy_buffer_to_buffer(
             other.data.buffer.as_ref(),
             0,

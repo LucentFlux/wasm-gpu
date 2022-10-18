@@ -37,7 +37,7 @@ where
         self.references.extend(values_size).await;
     }
 
-    pub async fn add_element<T>(&mut self, element: &Vec<u32>) -> ElementPtr<B, T> {
+    pub async fn add_element<T>(&mut self, element: Vec<Option<u32>>) -> ElementPtr<B, T> {
         let start = self.len;
         let end = self.len + (element.len() * std::mem::size_of::<u32>());
         assert!(
@@ -50,7 +50,7 @@ where
         slice.copy_from_slice(
             element
                 .iter()
-                .flat_map(|v| WasmTyVal::to_bytes(&FuncRef::from_u32(*v)))
+                .flat_map(|v| WasmTyVal::to_bytes(&FuncRef::from(v)))
                 .collect_vec()
                 .as_slice(),
         );

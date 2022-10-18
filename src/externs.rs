@@ -5,16 +5,16 @@ use crate::instance::table::abstr::AbstractTablePtr;
 use crate::typed::WasmTyVec;
 use crate::Backend;
 
-pub struct NamedExtern<'a, B, T>
+pub struct NamedExtern<B, T>
 where
     B: Backend,
 {
-    pub module: &'a str,
-    pub name: &'a str,
+    pub module: String,
+    pub name: String,
     pub ext: Extern<B, T>,
 }
 
-impl<'a, B: Backend, T> Clone for NamedExtern<'a, B, T> {
+impl<B: Backend, T> Clone for NamedExtern<B, T> {
     fn clone(&self) -> Self {
         Self {
             module: self.module.clone(),

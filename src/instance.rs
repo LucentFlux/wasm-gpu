@@ -25,12 +25,12 @@ pub struct ModuleInstance<B, T>
 where
     B: Backend,
 {
-    store_id: usize,
     funcs: AppendOnlyVec<UntypedFuncPtr<B, T>>,
     tables: AppendOnlyVec<AbstractTablePtr<B, T>>,
     memories: AppendOnlyVec<AbstractMemoryPtr<B, T>>,
     globals: AppendOnlyVec<AbstractGlobalPtr<B, T>>,
     exports: FrozenMap<String, Arc<ReadOnly<ModuleExport>>>,
+    start_fn: Option<UntypedFuncPtr<B, T>>,
 }
 
 impl<B, T> ModuleInstance<B, T>
@@ -38,20 +38,20 @@ where
     B: Backend,
 {
     pub fn new(
-        store_id: usize,
         funcs: AppendOnlyVec<UntypedFuncPtr<B, T>>,
         tables: AppendOnlyVec<AbstractTablePtr<B, T>>,
         memories: AppendOnlyVec<AbstractMemoryPtr<B, T>>,
         globals: AppendOnlyVec<AbstractGlobalPtr<B, T>>,
         exports: FrozenMap<String, Arc<ReadOnly<ModuleExport>>>,
+        start_fn: Option<UntypedFuncPtr<B, T>>,
     ) -> Self {
         Self {
-            store_id,
             funcs,
             tables,
             memories,
             globals,
             exports,
+            start_fn,
         }
     }
 

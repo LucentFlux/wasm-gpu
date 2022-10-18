@@ -62,24 +62,10 @@ pub enum ParsedElementKind<'data> {
     Declared,
 }
 
-pub enum ParsedElementItems<'data> {
-    Func(Vec<u32>),
-    Expr(Vec<Vec<Operator<'data>>>),
-}
-
-impl<'data> ParsedElementItems<'data> {
-    pub fn len(&self) -> usize {
-        match self {
-            ParsedElementItems::Func(v) => v.len(),
-            ParsedElementItems::Expr(v) => v.len(),
-        }
-    }
-}
-
 pub struct ParsedElement<'data> {
     pub kind: ParsedElementKind<'data>,
     /// The initial elements of the element segment.
-    pub items: ParsedElementItems<'data>,
+    pub items: Vec<Vec<Operator<'data>>>,
     /// The type of the elements.
     pub ty: ValType,
     /// The range of the the element segment.
@@ -326,27 +312,30 @@ impl ModuleEnviron {
                         for item in items_reader {
                             match item? {
                                 ElementItem::Expr(expr) => {
-                                    let expr: Vec<Operator> =
-                                        expr.get_operators_reader().into_iter().collect()?;
-                                    items.push(expr)
+                                    let expr: anyhow::Result<Vec<Operator>> =
+                                        expr.get_operators_reader().into_iter().collect();
+                                    items.push(expr?)
                                 }
                                 _ => unreachable!(),
                             }
                         }
 
-                        ParsedElementItems::Expr(items)
+                        items
                     } else {
                         let mut items = Vec::new();
                         items.reserve(cnt);
 
                         for item in items_reader {
                             match item? {
-                                ElementItem::Func(f) => items.push(f),
+                                ElementItem::Func(f) => items.push(vec![
+                                    Operator::RefFunc { function_index: f },
+                                    Operator::End,
+                                ]),
                                 _ => unreachable!(),
                             }
                         }
 
-                        ParsedElementItems::Func(items)
+                        items
                     };
 
                     let kind = match element.kind {

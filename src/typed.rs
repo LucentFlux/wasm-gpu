@@ -67,53 +67,42 @@ impl From<wasmparser::Ieee64> for Ieee64 {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct FuncRef(u32);
+macro_rules! impl_ref {
+    ($ident:ident) => {
+        #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+        pub struct $ident(u32);
 
-impl FuncRef {
-    pub fn from_le_bytes(bs: [u8; 4]) -> Self {
-        Self(u32::from_le_bytes(bs))
-    }
-    pub fn to_le_bytes(self) -> [u8; 4] {
-        self.0.to_le_bytes()
-    }
-    pub fn none() -> Self {
-        Self(0)
-    }
-    pub fn from_u32(v: u32) -> Self {
-        Self(v + 1)
-    }
-    pub fn as_u32(&self) -> Option<u32> {
-        if self.0 == 0 {
-            return None;
+        impl $ident {
+            pub fn from_le_bytes(bs: [u8; 4]) -> Self {
+                Self(u32::from_le_bytes(bs))
+            }
+            pub fn to_le_bytes(self) -> [u8; 4] {
+                self.0.to_le_bytes()
+            }
+            pub fn none() -> Self {
+                Self(0)
+            }
+            pub fn from_u32(v: u32) -> Self {
+                Self(v + 1)
+            }
+            pub fn as_u32(&self) -> Option<u32> {
+                if self.0 == 0 {
+                    return None;
+                }
+                return Some(self.0 - 1);
+            }
+            pub fn from(v: &Option<u32>) -> Self {
+                match v {
+                    None => Self::none(),
+                    Some(v) => Self::from_u32(*v),
+                }
+            }
         }
-        return Some(self.0 - 1);
-    }
+    };
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct ExternRef(u32);
-
-impl ExternRef {
-    pub fn from_le_bytes(bs: [u8; 4]) -> Self {
-        Self(u32::from_le_bytes(bs))
-    }
-    pub fn to_le_bytes(self) -> [u8; 4] {
-        self.0.to_le_bytes()
-    }
-    pub fn none() -> Self {
-        Self(0)
-    }
-    pub fn from_u32(v: u32) -> Self {
-        Self(v + 1)
-    }
-    pub fn as_u32(&self) -> Option<u32> {
-        if self.0 == 0 {
-            return None;
-        }
-        return Some(self.0 - 1);
-    }
-}
+impl_ref!(FuncRef);
+impl_ref!(ExternRef);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Val {

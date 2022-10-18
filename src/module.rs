@@ -9,7 +9,7 @@ use crate::instance::global::abstr::{AbstractGlobalInstance, AbstractGlobalPtr};
 use crate::instance::memory::abstr::{AbstractMemoryInstanceSet, AbstractMemoryPtr};
 use crate::instance::table::abstr::{AbstractTableInstanceSet, AbstractTablePtr};
 use crate::module::module_environ::{
-    ImportTypeRef, ModuleEnviron, ParsedElementItems, ParsedElementKind, ParsedModule,
+    ImportTypeRef, ModuleEnviron, ModuleExport, ParsedElementKind, ParsedModule,
 };
 use crate::typed::{wasm_ty_bytes, FuncRef, Val};
 use crate::{Backend, Engine, Extern};
@@ -26,6 +26,7 @@ pub struct Module<'a, B>
 where
     B: Backend,
 {
+    name: String,
     backend: Arc<B>,
     source: Vec<u8>,
     parsed: ParsedModule<'a>,
@@ -63,7 +64,7 @@ impl<'a, B> Module<'a, B>
 where
     B: Backend,
 {
-    pub fn new(engine: &Engine<B>, bytes: Vec<u8>) -> Result<Self, Error> {
+    pub fn new(engine: &Engine<B>, bytes: Vec<u8>, name: &str) -> Result<Self, Error> {
         let wasm: Cow<'a, [u8]> = wat::parse_bytes(bytes.as_slice())?;
 
         let mut validator = Validator::new_with_features(engine.config().features.clone());
@@ -73,6 +74,7 @@ where
             .context("failed to parse WebAssembly module")?;
 
         return Ok(Self {
+            name: name.to_owned(),
             backend: engine.backend(),
             source: bytes,
             parsed,
@@ -161,13 +163,12 @@ where
         &self,
         globals_instance: &mut AbstractGlobalInstance<B>,
         globals: impl Iterator<Item = AbstractGlobalPtr<B, T>>,
-    ) -> anyhow::Result<Vec<AbstractGlobalPtr<B, T>>> {
+    ) -> Vec<AbstractGlobalPtr<B, T>> {
         let globals = globals.collect_vec();
 
         // Make space for the values
         let values_len: usize = self
-            .translation
-            .module
+            .parsed
             .globals
             .iter()
             .map(|(_, g)| wasm_ty_bytes(g.wasm_ty))
@@ -181,11 +182,11 @@ where
         for global in self.parsed.globals.iter() {
             let ptr: AbstractGlobalPtr<B, T> = globals_instance
                 .add_global(global.clone(), &mut imports_iter, results.as_slice())
-                .await?;
+                .await;
             results.push(ptr);
         }
 
-        return Ok(results);
+        return results;
     }
 
     pub(crate) fn predict_functions<T>(
@@ -206,10 +207,10 @@ where
         &self,
         elements: &mut ElementInstance<B>,
         // Needed for const expr evaluation
-        globals: &mut AbstractGlobalInstance<B>,
-        global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
-        func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
-    ) -> anyhow::Result<Vec<ElementPtr<B, T>>> {
+        module_globals: &mut AbstractGlobalInstance<B>,
+        module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
+        module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
+    ) -> Vec<ElementPtr<B, T>> {
         // Reserve space first
         let size: usize = std::mem::size_of::<FuncRef>()
             * self.parsed.elements.iter().map(|e| e.items.len()).sum();
@@ -219,31 +220,24 @@ where
         let mut ptrs = Vec::new();
         for element in self.parsed.elements.iter() {
             // Evaluate values
-            let vals = match &element.items {
-                ParsedElementItems::Func(vs) => vs,
-                ParsedElementItems::Expr(exprs) => {
-                    let mut vs = Vec::new();
-                    for expr in exprs.iter() {
-                        let v = globals
-                            .interpret_constexpr(expr, global_ptrs, func_ptrs)
-                            .await;
-                        let v = match (v, &element.ty) {
-                            (Val::FuncRef(fr), ValType::FuncRef) => fr.as_u32(),
-                            (Val::ExternRef(er), ValType::ExternRef) => er.as_u32(),
-                            _ => unreachable!(),
-                        };
-                        vs.push(v);
-                    }
+            let mut vals = Vec::new();
+            for expr in element.items.iter() {
+                let v = module_globals
+                    .interpret_constexpr(expr, module_global_ptrs, module_func_ptrs)
+                    .await;
+                let v = match (v, &element.ty) {
+                    (Val::FuncRef(fr), ValType::FuncRef) => fr.as_u32(),
+                    (Val::ExternRef(er), ValType::ExternRef) => er.as_u32(),
+                    _ => unreachable!(),
+                };
+                vals.push(v);
+            }
 
-                    &vs
-                }
-            };
-
-            let ptr = elements.add_element(vals).await?;
+            let ptr = elements.add_element(vals).await;
             ptrs.push(ptr);
         }
 
-        return Ok(ptrs);
+        return ptrs;
     }
 
     pub(crate) async fn initialize_tables<T>(
@@ -253,12 +247,12 @@ where
         elements: &mut ElementInstance<B>,
         module_element_ptrs: &Vec<ElementPtr<B, T>>,
         // Needed for const expr evaluation
-        globals: &mut AbstractGlobalInstance<B>,
-        global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
-        func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
-    ) -> anyhow::Result<Vec<AbstractTablePtr<B, T>>> {
+        module_globals: &mut AbstractGlobalInstance<B>,
+        module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
+        module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
+    ) -> Vec<AbstractTablePtr<B, T>> {
         // Pointers starts with imports
-        let mut ptrs = Vec::from(imported_tables.map(|tp| tp.clone()));
+        let mut ptrs = imported_tables.map(|tp| tp.clone()).collect_vec();
 
         // Create tables first
         for table_plan in self.parsed.tables.iter() {
@@ -276,8 +270,8 @@ where
                     let table_ptr = ptrs
                         .get((*table_index) as usize)
                         .expect("table index out of range");
-                    let v = globals
-                        .interpret_constexpr(offset_expr, global_ptrs, func_ptrs)
+                    let v = module_globals
+                        .interpret_constexpr(offset_expr, module_global_ptrs, module_func_ptrs)
                         .await;
                     let offset = match v {
                         Val::I32(v) => v as usize,
@@ -285,7 +279,7 @@ where
                         _ => unreachable!(),
                     };
 
-                    let data = elements.get(element_ptr).await?;
+                    let data = elements.get(element_ptr).await;
 
                     tables.initialize(table_ptr, data, offset)
                 }
@@ -293,13 +287,13 @@ where
             }
         }
 
-        return Ok(ptrs);
+        return ptrs;
     }
 
     pub(crate) async fn initialize_datas<T>(
         &self,
         datas: &mut DataInstance<B>,
-    ) -> anyhow::Result<Vec<DataPtr<B, T>>> {
+    ) -> Vec<DataPtr<B, T>> {
         // Reserve space first
         let size: usize = self.parsed.datas.iter().map(|e| e.data.len()).sum();
         datas.reserve(size).await;
@@ -307,11 +301,11 @@ where
         // Then add
         let mut ptrs = Vec::new();
         for data in self.parsed.datas.iter() {
-            let ptr = datas.add_data(data.data).await?;
+            let ptr = datas.add_data(data.data).await;
             ptrs.push(ptr);
         }
 
-        return Ok(ptrs);
+        return ptrs;
     }
 
     pub(crate) async fn initialize_memories<T>(
@@ -321,10 +315,10 @@ where
         datas: &mut DataInstance<B>,
         module_data_ptrs: &Vec<DataPtr<B, T>>,
         // Needed for const expr evaluation
-        globals: &mut AbstractGlobalInstance<B>,
-        global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
-        func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
-    ) -> anyhow::Result<Vec<AbstractMemoryPtr<B, T>>> {
+        module_globals: &mut AbstractGlobalInstance<B>,
+        module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
+        module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
+    ) -> Vec<AbstractMemoryPtr<B, T>> {
         unimplemented!()
     }
 
@@ -337,7 +331,82 @@ where
         module_tables: &Vec<AbstractTablePtr<B, T>>,
         module_datas: &Vec<DataPtr<B, T>>,
         module_memories: &Vec<AbstractMemoryPtr<B, T>>,
-    ) -> anyhow::Result<Vec<UntypedFuncPtr<B, T>>> {
+    ) -> Vec<UntypedFuncPtr<B, T>> {
         unimplemented!()
+    }
+
+    pub fn start_fn<T>(
+        &self,
+        module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
+    ) -> Option<UntypedFuncPtr<B, T>> {
+        match self.parsed.start_func {
+            None => None,
+            Some(i) => {
+                let i = usize::try_from(i).unwrap();
+                let ptr = module_func_ptrs.get(i).expect("function referenced was outside of module - this should have been caught at module validation time");
+                return Some(ptr.clone());
+            }
+        }
+    }
+
+    pub fn collect_exports<T>(
+        &self,
+        module_globals: &Vec<AbstractGlobalPtr<B, T>>,
+        module_tables: &Vec<AbstractTablePtr<B, T>>,
+        module_memories: &Vec<AbstractMemoryPtr<B, T>>,
+        module_funcs: &Vec<UntypedFuncPtr<B, T>>,
+    ) -> Vec<NamedExtern<B, T>> {
+        let mut externs = Vec::new();
+
+        for (e_name, export) in self.parsed.exports.iter() {
+            let module = self.name.to_owned();
+            let name = e_name.clone();
+            let ext = match export {
+                ModuleExport::Func(index) => {
+                    let ptr = module_funcs
+                        .get(*index)
+                        .expect("exported func was outside range of module functions");
+                    NamedExtern {
+                        module,
+                        name,
+                        ext: Extern::Func(ptr.clone()),
+                    }
+                }
+                ModuleExport::Table(index) => {
+                    let ptr = module_tables
+                        .get(*index)
+                        .expect("exported table was outside range of module tables");
+                    NamedExtern {
+                        module,
+                        name,
+                        ext: Extern::Table(ptr.clone()),
+                    }
+                }
+                ModuleExport::Memory(index) => {
+                    let ptr = module_memories
+                        .get(*index)
+                        .expect("exported memory was outside range of module memories");
+                    NamedExtern {
+                        module,
+                        name,
+                        ext: Extern::Memory(ptr.clone()),
+                    }
+                }
+                ModuleExport::Global(index) => {
+                    let ptr = module_globals
+                        .get(*index)
+                        .expect("exported global was outside range of module globals");
+                    NamedExtern {
+                        module,
+                        name,
+                        ext: Extern::Global(ptr.clone()),
+                    }
+                }
+            };
+
+            externs.push(ext);
+        }
+
+        return externs;
     }
 }

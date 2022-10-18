@@ -17,7 +17,7 @@ where
 /// Used to implement both the mutable and immutable variations
 macro_rules! interpret {
     (
-        (source: $source:ty) {
+        (source: $source:ty) -> $ret:ty {
             use $as_slice:ident
             and $split_array_ref:ident
         }
@@ -32,12 +32,12 @@ macro_rules! interpret {
             source: $source,
             bounds: S,
             count: usize,
-        ) -> Self {
+        ) -> $ret {
             assert!(count > 0);
             let s_len = source.len().await;
             assert_eq!(s_len % (count * STRIDE), 0);
 
-            let bounds = bounds.half_open(source.len() / count);
+            let bounds = bounds.half_open(source.len().await / count);
             let buffer_bounds = (bounds.start * count * STRIDE)..(bounds.end * count * STRIDE);
 
             assert!(buffer_bounds.end <= s_len);
@@ -50,7 +50,7 @@ macro_rules! interpret {
             while !s.is_empty() {
                 for i in 0..count {
                     let (lhs, rhs) = s.$split_array_ref();
-                    interpretations.get(i).unwrap().push(lhs);
+                    interpretations.get_mut(i).unwrap().push(lhs);
                     s = rhs;
                 }
             }
@@ -65,7 +65,7 @@ macro_rules! interpret {
 
 impl<'a, B: Backend, const STRIDE: usize> InterleavedBufferView<'a, B, STRIDE> {
     interpret!(
-        (source: &'a DynamicMemoryBlock<B>) {
+        (source: &'a DynamicMemoryBlock<B>) -> InterleavedBufferView<'a, B, STRIDE>{
             use as_slice
             and split_array_ref
         }
@@ -87,7 +87,7 @@ where
 
 impl<'a, B: Backend, const STRIDE: usize> InterleavedBufferViewMut<'a, B, STRIDE> {
     interpret!(
-        (source: &'a mut DynamicMemoryBlock<B>) {
+        (source: &'a mut DynamicMemoryBlock<B>) -> InterleavedBufferViewMut<'a, B, STRIDE> {
             use as_slice_mut
             and split_array_mut
         }
@@ -136,7 +136,7 @@ where
         &self,
         range: S,
     ) -> InterleavedBufferView<B, STRIDE> {
-        InterleavedBufferView::interpret(&self.buffer, self.count, range).await
+        InterleavedBufferView::interpret(&self.buffer, range, self.count).await
     }
 
     /// Borrow this buffer mutable as a mutable view
@@ -144,6 +144,6 @@ where
         &mut self,
         range: S,
     ) -> InterleavedBufferViewMut<B, STRIDE> {
-        InterleavedBufferViewMut::interpret(&mut self.buffer, self.count, range).await
+        InterleavedBufferViewMut::interpret(&mut self.buffer, range, self.count).await
     }
 }
