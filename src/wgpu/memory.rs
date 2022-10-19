@@ -26,6 +26,7 @@ fn min_alignment_gt(size: usize, alignment: usize) -> usize {
 }
 
 struct WgpuBufferMemoryBlock<const BUFFER_SIZE: usize> {
+    backend: Arc<WgpuBackend<BUFFER_SIZE>>,
     pub device: AsyncDevice,
     pub queue: AsyncQueue,
     pub upload_buffers: Arc<BufferRing<BUFFER_SIZE, { ConstMode::Write }>>,
@@ -49,6 +50,10 @@ impl<const BUFFER_SIZE: usize> WgpuBufferMemoryBlock<BUFFER_SIZE> {
 impl<const BUFFER_SIZE: usize> MemoryBlock<WgpuBackend<BUFFER_SIZE>>
     for WgpuBufferMemoryBlock<BUFFER_SIZE>
 {
+    fn backend(&self) -> &WgpuBackend<BUFFER_SIZE> {
+        self.backend.as_ref()
+    }
+
     async fn len(&self) -> usize {
         self.len
     }
@@ -355,6 +360,10 @@ pub struct WgpuMappedMemoryBlock<const BUFFER_SIZE: usize> {
 impl<const BUFFER_SIZE: usize> MemoryBlock<WgpuBackend<BUFFER_SIZE>>
     for WgpuMappedMemoryBlock<BUFFER_SIZE>
 {
+    fn backend(&self) -> &WgpuBackend<BUFFER_SIZE> {
+        self.cpu_buffer.buffer.backend()
+    }
+
     async fn len(&self) -> usize {
         self.cpu_buffer.len
     }
@@ -386,6 +395,10 @@ pub struct WgpuUnmappedMemoryBlock<const BUFFER_SIZE: usize> {
 impl<const BUFFER_SIZE: usize> MemoryBlock<WgpuBackend<BUFFER_SIZE>>
     for WgpuUnmappedMemoryBlock<BUFFER_SIZE>
 {
+    fn backend(&self) -> &WgpuBackend<BUFFER_SIZE> {
+        self.data.backend()
+    }
+
     async fn len(&self) -> usize {
         self.data.len
     }
@@ -393,6 +406,7 @@ impl<const BUFFER_SIZE: usize> MemoryBlock<WgpuBackend<BUFFER_SIZE>>
 
 impl<const BUFFER_SIZE: usize> WgpuUnmappedMemoryBlock<BUFFER_SIZE> {
     pub fn new(
+        backend: Arc<WgpuBackend<BUFFER_SIZE>>,
         device: AsyncDevice,
         queue: AsyncQueue,
         upload_buffers: Arc<BufferRing<BUFFER_SIZE, { ConstMode::Write }>>,
@@ -408,7 +422,7 @@ impl<const BUFFER_SIZE: usize> WgpuUnmappedMemoryBlock<BUFFER_SIZE> {
         let buffer = device.create_buffer(&BufferDescriptor {
             label: Some(format!("GPU only accessible buffer [{}]", label).as_str()),
             size: real_size as BufferAddress,
-            usage: BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+            usage: BufferUsages::COPY_SRC | BufferUsages::COPY_DST | BufferUsages::STORAGE,
             mapped_at_creation: initial_data.is_some(),
         });
         if let Some(initial_data) = initial_data {
@@ -420,6 +434,7 @@ impl<const BUFFER_SIZE: usize> WgpuUnmappedMemoryBlock<BUFFER_SIZE> {
         }
         Self {
             data: WgpuBufferMemoryBlock {
+                backend,
                 device,
                 queue,
                 upload_buffers,

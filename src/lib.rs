@@ -18,6 +18,7 @@ mod engine;
 mod externs;
 mod func;
 mod instance;
+mod mapped_lock;
 mod memory;
 mod module;
 mod panic_on_any;

@@ -89,7 +89,7 @@ where
             .await;
 
         // Datas
-        let data_ptrs = module.initialize_datas(&mut self.datas).await?;
+        let data_ptrs = module.initialize_datas(&mut self.datas).await;
 
         // Memories
         let memory_ptrs = module
@@ -125,12 +125,19 @@ where
         // Collect exports from pointers
         let exports = module.collect_exports(&global_ptrs, &table_ptrs, &memory_ptrs, &func_ptrs);
 
-        let funcs = func_ptrs.into_iter().collect();
-        let tables = table_ptrs.into_iter().collect();
-        let memories = memory_ptrs.into_iter().collect();
-        let globals = global_ptrs.into_iter().collect();
+        // Lock vectors to be immutable
+        let func_ptrs = func_ptrs.into_iter().collect();
+        let table_ptrs = table_ptrs.into_iter().collect();
+        let memory_ptrs = memory_ptrs.into_iter().collect();
+        let global_ptrs = global_ptrs.into_iter().collect();
+        let exports = exports.into_iter().collect();
         return Ok(ModuleInstance::new(
-            funcs, tables, memories, globals, exports, start_fn,
+            func_ptrs,
+            table_ptrs,
+            memory_ptrs,
+            global_ptrs,
+            exports,
+            start_fn,
         ));
     }
 

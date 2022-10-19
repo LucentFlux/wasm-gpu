@@ -1,4 +1,5 @@
 use crate::module::error::WasmError;
+use anyhow::anyhow;
 use std::collections::HashMap;
 use std::ops::Range;
 use wasmparser::{
@@ -314,7 +315,7 @@ impl ModuleEnviron {
                                 ElementItem::Expr(expr) => {
                                     let expr: anyhow::Result<Vec<Operator>> =
                                         expr.get_operators_reader().into_iter().collect();
-                                    items.push(expr?)
+                                    items.push(expr.map_err(|e| anyhow!("{}", e))?)
                                 }
                                 _ => unreachable!(),
                             }

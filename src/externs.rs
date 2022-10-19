@@ -111,8 +111,8 @@ macro_rules! imports {
             $(
                 $(
                     crate::externs::NamedExtern {
-                        module: $module,
-                        name: $name,
+                        module: $module.to_string(),
+                        name: $name.to_string(),
                         ext: crate::externs::Extern::from($ext)
                     },
                 )*

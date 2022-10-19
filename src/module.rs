@@ -98,7 +98,7 @@ where
             .into_iter()
             .map(|ext| {
                 let NamedExtern { module, name, ext } = ext;
-                ((module.to_owned(), name.to_owned()), ext)
+                ((module.to_owned(), name.to_owned()), ext.clone())
             })
             .collect();
 
@@ -110,13 +110,12 @@ where
         };
         for (module, name, required_import) in self.parsed.imports.iter() {
             // Get provided
-            let provided_import = import_by_name
-                .get(&(module.to_owned(), name.to_owned()))
-                .ok_or(anyhow!(
-                    "missing import with module {} and name {}",
-                    module,
-                    name
-                ))?;
+            let key = (module.to_string(), name.to_string());
+            let provided_import = import_by_name.get(&key).ok_or(anyhow!(
+                "missing import with module {} and name {}",
+                module,
+                name
+            ))?;
 
             // Check type
             let matches = match required_import {
@@ -171,7 +170,7 @@ where
             .parsed
             .globals
             .iter()
-            .map(|(_, g)| wasm_ty_bytes(g.wasm_ty))
+            .map(|g| wasm_ty_bytes(g.ty.content_type))
             .sum();
         let values_len = values_len - globals.len(); // The imports don't take any space
         globals_instance.reserve(values_len).await;
@@ -281,7 +280,7 @@ where
 
                     let data = elements.get(element_ptr).await;
 
-                    tables.initialize(table_ptr, data, offset)
+                    tables.initialize(table_ptr, data, offset).await
                 }
                 _ => {}
             }

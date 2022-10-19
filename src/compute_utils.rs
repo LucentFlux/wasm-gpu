@@ -31,6 +31,18 @@ impl_sources!(("compute_utils/interleave.wgsl", interleave),);
 
 #[async_trait]
 pub trait Utils<B: Backend> {
+    /// Takes a source buffer and duplicates the data contained into the dest buffer in the following way:
+    /// - Split the src buffer data into chunks of `STRIDE * 4` bytes
+    /// - For each of these chunks, duplicate it `count` times contiguously in `dst`
+    ///
+    /// I.e. if `src: [u32; 4] = [1, 2, 3, 4]`, `STRIDE = 2` and `count = 3`,
+    ///
+    /// after running this function `dst: [u32; 12] = [1, 2, 1, 2, 1, 2, 3, 4, 3, 4, 3, 4]`
+    ///
+    /// # Panics
+    /// This function can (and probably should) panic if any of the following are false:
+    /// - `src.len() * count <= dst.count()`
+    /// - `src.len() % STRIDE == 0`
     async fn interleave<const STRIDE: usize>(
         &self,
         src: &mut B::DeviceMemoryBlock,
