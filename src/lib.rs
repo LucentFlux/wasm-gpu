@@ -16,9 +16,9 @@ mod backend;
 mod compute_utils;
 mod engine;
 mod externs;
+mod fenwick;
 mod func;
 mod instance;
-mod mapped_lock;
 mod memory;
 mod module;
 mod panic_on_any;
@@ -26,9 +26,8 @@ mod read_only;
 mod session;
 mod store_set;
 mod typed;
-mod wgpu;
+mod vulkano;
 
-mod fenwick;
 #[cfg(test)]
 pub mod tests_lib;
 

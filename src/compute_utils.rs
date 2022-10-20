@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use std::borrow::Cow;
 
 macro_rules! impl_sources {
-    ($( ($path:expr, $name:ident) ),* $(,)?) => {
+    ($( ($path:expr, $name:ident), )*) => {
         $(
             #[allow(non_upper_case_globals)]
             const $name: &'static str = include_str!($path);
@@ -27,7 +27,14 @@ macro_rules! impl_sources {
     };
 }
 
-impl_sources!(("compute_utils/interleave.wgsl", interleave),);
+#[macro_export]
+macro_rules! enum_sources {
+    ($callback:ident) => {
+        $callback!(("compute_utils/interleave.wgsl", interleave),);
+    };
+}
+
+enum_sources!(impl_sources);
 
 #[async_trait]
 pub trait Utils<B: Backend> {

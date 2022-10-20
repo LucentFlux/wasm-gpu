@@ -6,7 +6,7 @@ pub mod interleaved;
 
 use crate::Backend;
 use std::ops::RangeBounds;
-use std::sync::{Arc, RwLock};
+use std::ptr;
 
 use crate::typed::ToRange;
 use async_trait::async_trait;
@@ -18,7 +18,7 @@ where
 {
     fn backend(&self) -> &B;
 
-    async fn len(&self) -> usize;
+    fn len(&self) -> usize;
 }
 
 #[async_trait]
@@ -37,6 +37,28 @@ where
         let slice = self.as_slice_mut(start..end).await;
         slice.copy_from_slice(data);
     }
+
+    /// Resizes by moving off of main memory, reallocating and copying
+    async fn flush_resize(&mut self, new_len: usize) {
+        // We want to perform mem::replace, but with a value that doesn't exist yet, and do do this
+        // async. This functionality doesn't yet exist in rust
+        unsafe {
+            let tmp_mapped = ptr::read(self);
+
+            // Must not panic before we get to `ptr::write`
+            let mut tmp_unmapped = tmp_mapped.move_to_device_memory().await;
+            tmp_unmapped.resize(new_len).await;
+            let tmp_mapped = tmp_unmapped.move_to_main_memory().await;
+
+            ptr::write(self, tmp_mapped);
+        }
+    }
+
+    /// Convenience wrapper around `flush_resize` that adds more space
+    async fn flush_extend(&mut self, extra: usize) {
+        let len = self.len();
+        self.flush_resize(len + extra).await
+    }
 }
 
 #[async_trait]
@@ -48,17 +70,17 @@ where
     async fn copy_from(&mut self, other: &B::DeviceMemoryBlock);
 
     /// Resizes by reallocation and copying
-    async fn resize(self, new_len: usize) -> Self {
+    async fn resize(&mut self, new_len: usize) {
         let backend = self.get_backend();
         let mut new_buffer = backend.create_device_memory_block(new_len, None);
         new_buffer.copy_from(&self);
-        return new_buffer;
+        std::mem::swap(&mut self, &mut new_buffer);
     }
 
     /// Convenience wrapper around `resize` that adds more space
-    async fn extend(self, extra: usize) -> Self {
-        let len = self.len().await;
-        self.resize(len + extra).await
+    async fn extend(&mut self, extra: usize) {
+        let len = self.len();
+        self.resize(len + extra).await;
     }
 }
 

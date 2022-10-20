@@ -1,7 +1,7 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::instance::memory::concrete::MemoryPtr;
-use crate::memory::{limits_match, DynamicMemoryBlock};
-use crate::{impl_abstract_ptr, Backend};
+use crate::memory::limits_match;
+use crate::{impl_abstract_ptr, Backend, MainMemoryBlock};
 use std::sync::Arc;
 use wasmparser::MemoryType;
 
@@ -14,7 +14,7 @@ where
 {
     id: usize,
     backend: Arc<B>,
-    memories: Vec<DynamicMemoryBlock<B>>,
+    memories: Vec<B::MainMemoryBlock>,
 }
 
 impl<B: Backend> AbstractMemoryInstanceSet<B> {
@@ -28,11 +28,10 @@ impl<B: Backend> AbstractMemoryInstanceSet<B> {
 
     pub async fn add_memory<T>(&mut self, plan: &MemoryType) -> AbstractMemoryPtr<B, T> {
         let ptr = self.memories.len();
-        self.memories.push(DynamicMemoryBlock::new(
-            self.backend.clone(),
-            plan.initial as usize,
-            None,
-        ));
+        self.memories.push(
+            self.backend
+                .create_device_memory_block(plan.initial as usize, None),
+        );
         return AbstractMemoryPtr::new(ptr, self.id, plan.clone());
     }
 

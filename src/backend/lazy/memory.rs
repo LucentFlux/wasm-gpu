@@ -1,10 +1,9 @@
+use crate::backend::lazy::buffer_ring::read::ReadBufferRing;
+use crate::backend::lazy::buffer_ring::write::WriteBufferRing;
+use crate::backend::lazy::{DeviceOnlyBuffer, LazyBackend};
 use crate::memory::{DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
 use crate::typed::ToRange;
-use crate::wgpu::async_buffer::AsyncBuffer;
-use crate::wgpu::async_device::AsyncDevice;
-use crate::wgpu::async_queue::AsyncQueue;
-use crate::wgpu::buffer_ring::{BufferRing, ConstMode};
-use crate::WgpuBackend;
+use crate::Backend;
 use async_trait::async_trait;
 use futures::future::join_all;
 use std::alloc;
@@ -12,7 +11,6 @@ use std::alloc::Layout;
 use std::cmp::min;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use wgpu::{BufferAddress, BufferDescriptor, BufferUsages};
 
 /// Calculates the minimum x s.t. x is a multiple of alignment and x >= size
 fn min_alignment_gt(size: usize, alignment: usize) -> usize {
@@ -25,67 +23,47 @@ fn min_alignment_gt(size: usize, alignment: usize) -> usize {
     return x;
 }
 
-struct WgpuBufferMemoryBlock<const BUFFER_SIZE: usize> {
-    backend: Arc<WgpuBackend<BUFFER_SIZE>>,
-    pub device: AsyncDevice,
-    pub queue: AsyncQueue,
-    pub upload_buffers: Arc<BufferRing<BUFFER_SIZE, { ConstMode::Write }>>,
-    pub download_buffers: Arc<BufferRing<BUFFER_SIZE, { ConstMode::Read }>>,
-    pub buffer: AsyncBuffer, // Stored on the GPU
-    pub len: usize,
-}
-
-impl<const BUFFER_SIZE: usize> WgpuBufferMemoryBlock<BUFFER_SIZE> {
-    fn buffer_ring_buffer_size(&self) -> usize {
-        assert_eq!(
-            self.upload_buffers.buffer_size(),
-            self.download_buffers.buffer_size()
-        );
-
-        return self.upload_buffers.buffer_size();
-    }
+struct LazyBufferMemoryBlock<B: LazyBackend> {
+    backend: Arc<B>,
+    pub upload_buffers: Arc<WriteBufferRing<B>>,
+    pub download_buffers: Arc<ReadBufferRing<B>>,
+    pub buffer: B::DeviceOnlyBuffer, // Stored on the GPU
+    pub visible_len: usize,
 }
 
 #[async_trait]
-impl<const BUFFER_SIZE: usize> MemoryBlock<WgpuBackend<BUFFER_SIZE>>
-    for WgpuBufferMemoryBlock<BUFFER_SIZE>
-{
-    fn backend(&self) -> &WgpuBackend<BUFFER_SIZE> {
+impl<B: LazyBackend> MemoryBlock<B> for LazyBufferMemoryBlock<B> {
+    fn backend(&self) -> &B {
         self.backend.as_ref()
     }
 
     async fn len(&self) -> usize {
-        self.len
+        self.visible_len
     }
 }
 
 /// Lazily downloaded chunks of data
 struct LazyChunk<const SIZE: usize> {
-    device: AsyncDevice,
-    queue: AsyncQueue,
-
     initialized: AtomicBool,
     mutex: tokio::sync::Mutex<()>,
-    data_offset: BufferAddress, // Offset within the GPU buffer
-    dirty: AtomicBool,          // If the data chunk has possibly been written, we must write back
+    data_offset: usize, // Offset within the GPU buffer
+    dirty: AtomicBool,  // If the data chunk has possibly been written, we must write back
 }
 
 impl<const SIZE: usize> LazyChunk<SIZE> {
-    fn new(device: AsyncDevice, queue: AsyncQueue, data_offset: usize) -> Self {
+    fn new(data_offset: usize) -> Self {
         Self {
-            device,
-            queue,
             initialized: AtomicBool::from(false),
             dirty: AtomicBool::from(false),
             mutex: tokio::sync::Mutex::new(()),
-            data_offset: data_offset as BufferAddress,
+            data_offset,
         }
     }
 
     /// Lockless checking that we have definitely downloaded this data chunk from the GPU
-    async fn ensure_downloaded(
+    async fn ensure_downloaded<B: LazyBackend>(
         &self,
-        block: &WgpuBufferMemoryBlock<SIZE>,
+        block: &LazyBufferMemoryBlock<B>,
         mark_as_dirty: bool,
         buffer: &HostMemoryBlob,
     ) {
@@ -108,38 +86,36 @@ impl<const SIZE: usize> LazyChunk<SIZE> {
 
         block
             .download_buffers
-            .with_slice(
-                &self.device,
-                &self.queue,
-                &block.buffer,
-                self.data_offset,
-                move |slice| {
-                    // Safety proof:
-                    // - we are uninitialized, so no references to the buffer
-                    //   should exist outside of this function
-                    // - we have a mutex out for this chunk, so we aren't racing
-                    // - no other chunk overlaps with us
-                    // Therefore we are the only code accessing this block of bytes
-                    //
-                    // If a chunk within the bounds of the blob is uninitialized,
-                    // that means that no reference to that chunk's slice exists,
-                    // as the first time a reference is created is the only time
-                    // that a chunk is initialized. Therefore, with a mutex taken out,
-                    // it is safe to get a mutable pointer to fill the initial chunk data.
-                    let dest = unsafe {
-                        let offset_ptr = buffer.ptr.add(self.data_offset as usize);
-                        std::slice::from_raw_parts_mut(offset_ptr, SIZE)
-                    };
-                    dest.copy_from_slice(slice);
-                },
-            )
+            .with_slice(&block.buffer, self.data_offset, move |slice| {
+                // Safety proof:
+                // - we are uninitialized, so no references to the buffer
+                //   should exist outside of this function
+                // - we have a mutex out for this chunk, so we aren't racing
+                // - no other chunk overlaps with us
+                // Therefore we are the only code accessing this block of bytes
+                //
+                // If a chunk within the bounds of the blob is uninitialized,
+                // that means that no reference to that chunk's slice exists,
+                // as the first time a reference is created is the only time
+                // that a chunk is initialized. Therefore, with a mutex taken out,
+                // it is safe to get a mutable pointer to fill the initial chunk data.
+                let dest = unsafe {
+                    let offset_ptr = buffer.ptr.add(self.data_offset as usize);
+                    std::slice::from_raw_parts_mut(offset_ptr, SIZE)
+                };
+                dest.copy_from_slice(slice);
+            })
             .await;
 
         self.initialized.store(true, Ordering::Release);
     }
 
     /// Lockless checking that we have definitely uploaded this data (if it was dirty)
-    async fn upload(&mut self, block: &WgpuBufferMemoryBlock<SIZE>, buffer: &HostMemoryBlob) {
+    async fn upload<B: LazyBackend>(
+        &mut self,
+        block: &LazyBufferMemoryBlock<B>,
+        buffer: &HostMemoryBlob,
+    ) {
         // (http://schd.ws/hosted_files/cppcon2016/74/HansWeakAtomics.pdf Page 27)
         if !self.initialized.load(Ordering::Acquire) || !self.dirty.load(Ordering::Acquire) {
             return;
@@ -159,8 +135,6 @@ impl<const SIZE: usize> LazyChunk<SIZE> {
         block
             .upload_buffers
             .write_slice(
-                &self.device,
-                &self.queue,
                 &block.buffer,
                 self.data_offset,
                 src.try_into().unwrap(), // We took a slice of length SIZE, so this should never fail
@@ -248,28 +222,23 @@ impl Drop for HostMemoryBlob {
 unsafe impl Send for HostMemoryBlob where Box<[u8]>: Send {}
 unsafe impl Sync for HostMemoryBlob where Box<[u8]>: Sync {}
 
-struct LazyBuffer<const BUFFER_SIZE: usize> {
-    buffer: WgpuBufferMemoryBlock<BUFFER_SIZE>,
+struct LazyBuffer<B: LazyBackend> {
+    buffer: LazyBufferMemoryBlock<B>,
     data: HostMemoryBlob,
-    len: usize,
-    chunks: Vec<LazyChunk<BUFFER_SIZE>>,
+    chunks: Vec<LazyChunk<B::CHUNK_SIZE>>,
 }
 
-impl<const BUFFER_SIZE: usize> LazyBuffer<BUFFER_SIZE> {
-    pub fn new(len: usize, buffer: WgpuBufferMemoryBlock<BUFFER_SIZE>) -> Self {
-        let alignment = buffer.buffer_ring_buffer_size();
-        let full_len = min_alignment_gt(len, alignment);
+impl<B: LazyBackend> LazyBuffer<B> {
+    pub fn new(buffer: LazyBufferMemoryBlock<B>) -> Self {
+        let alignment = B::CHUNK_SIZE;
+        let full_len = buffer.buffer.len();
 
         debug_assert_eq!(full_len % alignment, 0); // Exact chunks
 
         let mut chunks = Vec::new();
         chunks.reserve_exact(full_len / alignment);
         for i in 0..(full_len / alignment) {
-            chunks.push(LazyChunk::new(
-                buffer.device.clone(),
-                buffer.queue.clone(),
-                i * alignment,
-            ))
+            chunks.push(LazyChunk::new(i * alignment))
         }
 
         // Create an unmanaged buffer in memory
@@ -278,7 +247,6 @@ impl<const BUFFER_SIZE: usize> LazyBuffer<BUFFER_SIZE> {
         Self {
             buffer,
             data,
-            len,
             chunks,
         }
     }
@@ -340,7 +308,7 @@ impl<const BUFFER_SIZE: usize> LazyBuffer<BUFFER_SIZE> {
         return self.data.as_slice_mut(bounds);
     }
 
-    async fn unload(mut self) -> WgpuBufferMemoryBlock<BUFFER_SIZE> {
+    async fn unload(mut self) -> LazyBufferMemoryBlock<BUFFER_SIZE> {
         let futures = self
             .chunks
             .iter_mut()
@@ -352,128 +320,86 @@ impl<const BUFFER_SIZE: usize> LazyBuffer<BUFFER_SIZE> {
     }
 }
 
-pub struct WgpuMappedMemoryBlock<const BUFFER_SIZE: usize> {
-    cpu_buffer: LazyBuffer<BUFFER_SIZE>,
+pub struct MappedLazyBuffer<B: LazyBackend> {
+    data: LazyBuffer<B>,
 }
 
 #[async_trait]
-impl<const BUFFER_SIZE: usize> MemoryBlock<WgpuBackend<BUFFER_SIZE>>
-    for WgpuMappedMemoryBlock<BUFFER_SIZE>
-{
-    fn backend(&self) -> &WgpuBackend<BUFFER_SIZE> {
-        self.cpu_buffer.buffer.backend()
+impl<B: LazyBackend> MemoryBlock<B> for MappedLazyBuffer<B> {
+    fn backend(&self) -> &B {
+        self.data.buffer.backend()
     }
 
-    async fn len(&self) -> usize {
-        self.cpu_buffer.len
+    fn len(&self) -> usize {
+        self.data.buffer.visible_len
     }
 }
 
 #[async_trait]
-impl<const BUFFER_SIZE: usize> MainMemoryBlock<WgpuBackend<BUFFER_SIZE>>
-    for WgpuMappedMemoryBlock<BUFFER_SIZE>
-{
+impl<B: LazyBackend> MainMemoryBlock<B> for MappedLazyBuffer<B> {
     async fn as_slice<S: ToRange<usize> + Send>(&self, bounds: S) -> &[u8] {
-        self.cpu_buffer.as_slice(bounds).await
+        self.data.as_slice(bounds).await
     }
 
     async fn as_slice_mut<S: ToRange<usize> + Send>(&mut self, bounds: S) -> &mut [u8] {
-        self.cpu_buffer.as_slice_mut(bounds).await
+        self.data.as_slice_mut(bounds).await
     }
 
-    async fn move_to_device_memory(self) -> WgpuUnmappedMemoryBlock<BUFFER_SIZE> {
-        let data = self.cpu_buffer.unload().await;
-        WgpuUnmappedMemoryBlock { data }
-    }
-}
-
-pub struct WgpuUnmappedMemoryBlock<const BUFFER_SIZE: usize> {
-    data: WgpuBufferMemoryBlock<BUFFER_SIZE>,
-}
-
-#[async_trait]
-impl<const BUFFER_SIZE: usize> MemoryBlock<WgpuBackend<BUFFER_SIZE>>
-    for WgpuUnmappedMemoryBlock<BUFFER_SIZE>
-{
-    fn backend(&self) -> &WgpuBackend<BUFFER_SIZE> {
-        self.data.backend()
-    }
-
-    async fn len(&self) -> usize {
-        self.data.len
+    async fn move_to_device_memory(self) -> UnmappedLazyBuffer<B> {
+        UnmappedLazyBuffer {
+            data: self.data.buffer,
+        }
     }
 }
 
-impl<const BUFFER_SIZE: usize> WgpuUnmappedMemoryBlock<BUFFER_SIZE> {
+pub struct UnmappedLazyBuffer<B: LazyBackend> {
+    data: LazyBufferMemoryBlock<B>,
+}
+
+impl<B: LazyBackend> UnmappedLazyBuffer<B> {
     pub fn new(
-        backend: Arc<WgpuBackend<BUFFER_SIZE>>,
-        device: AsyncDevice,
-        queue: AsyncQueue,
-        upload_buffers: Arc<BufferRing<BUFFER_SIZE, { ConstMode::Write }>>,
-        download_buffers: Arc<BufferRing<BUFFER_SIZE, { ConstMode::Read }>>,
+        backend: Arc<B>,
+        upload_buffers: Arc<WriteBufferRing<B>>,
+        download_buffers: Arc<ReadBufferRing<B>>,
         size: usize,
-        label: String,
         initial_data: Option<&[u8]>,
     ) -> Self {
-        assert_eq!(upload_buffers.buffer_size(), download_buffers.buffer_size());
-
-        let real_size = min_alignment_gt(size, upload_buffers.buffer_size());
-
-        let buffer = device.create_buffer(&BufferDescriptor {
-            label: Some(format!("GPU only accessible buffer [{}]", label).as_str()),
-            size: real_size as BufferAddress,
-            usage: BufferUsages::COPY_SRC | BufferUsages::COPY_DST | BufferUsages::STORAGE,
-            mapped_at_creation: initial_data.is_some(),
-        });
-        if let Some(initial_data) = initial_data {
-            assert_eq!(initial_data.len(), size);
-
-            buffer.as_ref().slice(..).get_mapped_range_mut()[..initial_data.len()]
-                .copy_from_slice(initial_data);
-            buffer.as_ref().unmap();
-        }
+        let real_size = min_alignment_gt(size, B::CHUNK_SIZE);
+        let buffer =
+            <B as LazyBackend>::create_device_only_memory_block(&backend, real_size, initial_data);
         Self {
-            data: WgpuBufferMemoryBlock {
+            data: LazyBufferMemoryBlock {
                 backend,
-                device,
-                queue,
                 upload_buffers,
                 download_buffers,
                 buffer,
-                len: size,
+                visible_len: size,
             },
         }
     }
 }
 
 #[async_trait]
-impl<const BUFFER_SIZE: usize> DeviceMemoryBlock<WgpuBackend<BUFFER_SIZE>>
-    for WgpuUnmappedMemoryBlock<BUFFER_SIZE>
-{
-    async fn move_to_main_memory(self) -> WgpuMappedMemoryBlock<BUFFER_SIZE> {
-        WgpuMappedMemoryBlock {
-            cpu_buffer: LazyBuffer::new(self.data.len, self.data),
+impl<B: LazyBackend> MemoryBlock<B> for UnmappedLazyBuffer<B> {
+    fn backend(&self) -> &B {
+        self.data.backend()
+    }
+
+    fn len(&self) -> usize {
+        self.data.visible_len
+    }
+}
+
+#[async_trait]
+impl<B: LazyBackend> DeviceMemoryBlock<B> for UnmappedLazyBuffer<B> {
+    async fn move_to_main_memory(self) -> MappedLazyBuffer<B> {
+        MappedLazyBuffer {
+            data: LazyBuffer::new(self.data),
         }
     }
 
-    async fn copy_from(&mut self, other: &WgpuUnmappedMemoryBlock<BUFFER_SIZE>) {
-        // Tell GPU to copy from other into this
-        let mut copy_command_encoder = self
-            .data
-            .device
-            .as_ref()
-            .create_command_encoder(&Default::default());
-        copy_command_encoder.copy_buffer_to_buffer(
-            other.data.buffer.as_ref(),
-            0,
-            self.data.buffer.as_ref(),
-            0 as BufferAddress,
-            min(self.data.len, other.data.len) as BufferAddress,
-        );
-        self.data
-            .queue
-            .submit(vec![copy_command_encoder.finish()])
-            .await;
+    async fn copy_from(&mut self, other: &UnmappedLazyBuffer<B>) {
+        self.data.buffer.copy_from(&other.data.buffer).await
     }
 }
 

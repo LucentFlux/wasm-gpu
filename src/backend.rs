@@ -1,3 +1,5 @@
+pub mod lazy;
+
 use std::fmt::Debug;
 
 pub trait Backend: Sized + Debug {

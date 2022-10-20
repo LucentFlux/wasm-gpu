@@ -1,8 +1,7 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::instance::table::concrete::TablePtr;
 use crate::memory::limits_match;
-use crate::memory::DynamicMemoryBlock;
-use crate::{impl_abstract_ptr, Backend};
+use crate::{impl_abstract_ptr, Backend, MainMemoryBlock};
 use std::sync::Arc;
 use wasmparser::TableType;
 
@@ -33,7 +32,7 @@ where
     pub async fn add_table<T>(&mut self, plan: &TableType) -> AbstractTablePtr<B, T> {
         let ptr = self.tables.len();
         self.tables.push(AbstractTableInstance::new(
-            self.backend.clone(),
+            &self.backend,
             plan.initial as usize,
         ));
         return AbstractTablePtr::new(ptr, self.id, plan.clone());
@@ -60,7 +59,7 @@ where
     B: Backend,
 {
     /// Holds pointers
-    references: DynamicMemoryBlock<B>,
+    references: B::MainMemoryBlock,
     len: usize,
 }
 
@@ -68,9 +67,9 @@ impl<B> AbstractTableInstance<B>
 where
     B: Backend,
 {
-    pub fn new(backend: Arc<B>, initial_size: usize) -> Self {
+    pub fn new(backend: &B, initial_size: usize) -> Self {
         Self {
-            references: DynamicMemoryBlock::new(backend, initial_size, None),
+            references: backend.create_device_memory_block(initial_size, None),
             len: 0,
         }
     }

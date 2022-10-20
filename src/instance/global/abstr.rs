@@ -1,10 +1,9 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::instance::func::UntypedFuncPtr;
 use crate::instance::global::concrete::GlobalPtr;
-use crate::memory::DynamicMemoryBlock;
 use crate::module::module_environ::{Global, GlobalInit};
 use crate::typed::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal, WasmTyVec};
-use crate::{impl_abstract_ptr, Backend};
+use crate::{impl_abstract_ptr, Backend, MainMemoryBlock, MemoryBlock};
 use std::mem::size_of;
 use std::sync::Arc;
 use wasmparser::{GlobalType, Operator, ValType};
@@ -16,7 +15,7 @@ where
     B: Backend,
 {
     /// Holds values, some mutable and some immutable by the below typing information
-    values: DynamicMemoryBlock<B>,
+    values: B::MainMemoryBlock,
     values_head: usize,
     types: Vec<GlobalType>,
 
@@ -92,7 +91,7 @@ where
     ///
     /// values_count is given in units of bytes, so an f64 is 8 bytes
     pub async fn reserve(&mut self, values_size: usize) {
-        self.values.extend(values_size).await;
+        self.values.flush_extend(values_size).await;
     }
 
     pub async fn push(&mut self, val: Val) -> usize {
@@ -117,7 +116,7 @@ where
         let end = start + bytes.len();
 
         assert!(
-            end <= self.values.len().await,
+            end <= self.values.len(),
             "values buffer was resized too small"
         );
 
