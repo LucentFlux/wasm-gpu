@@ -2,9 +2,8 @@ use crate::fenwick::FenwickTree;
 use crate::impl_concrete_ptr;
 use crate::instance::memory::abstr::AbstractMemoryPtr;
 use crate::memory::interleaved::{
-    DeviceInterleavedBuffer, HostInterleavedBuffer, InterleavedBufferView, InterleavedBufferViewMut,
+    DeviceInterleavedBuffer, HostInterleavedBuffer, InterleavedBufferView,
 };
-use crate::typed::ToRange;
 use crate::Backend;
 
 const STRIDE: usize = 4; // 4 * u32

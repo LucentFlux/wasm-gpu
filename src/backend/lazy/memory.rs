@@ -1,6 +1,6 @@
 use crate::backend::lazy::buffer_ring::read::ReadBufferRing;
 use crate::backend::lazy::buffer_ring::write::WriteBufferRing;
-use crate::backend::lazy::{DeviceOnlyBuffer, LazyBackend};
+use crate::backend::lazy::{DeviceOnlyBuffer, Lazy, LazyBackend};
 use crate::memory::{MainMemoryBlock, MemoryBlock};
 use crate::typed::ToRange;
 use crate::DeviceMemoryBlock;
@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use std::alloc;
 use std::alloc::Layout;
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -22,17 +23,17 @@ fn min_alignment_gt(size: usize, alignment: usize) -> usize {
     return x;
 }
 
-struct LazyBufferMemoryBlock<B: LazyBackend> {
-    backend: Arc<B>,
-    pub upload_buffers: Arc<WriteBufferRing<B>>,
-    pub download_buffers: Arc<ReadBufferRing<B>>,
-    pub buffer: B::DeviceOnlyBuffer, // Stored on the GPU
+struct LazyBufferMemoryBlock<L: LazyBackend> {
+    backend: Arc<Lazy<L>>,
+    pub upload_buffers: Arc<WriteBufferRing<L>>,
+    pub download_buffers: Arc<ReadBufferRing<L>>,
+    pub buffer: L::DeviceOnlyBuffer, // Stored on the GPU
     pub visible_len: usize,
 }
 
 #[async_trait]
-impl<B: LazyBackend> MemoryBlock<B> for LazyBufferMemoryBlock<B> {
-    fn backend(&self) -> &B {
+impl<L: LazyBackend> MemoryBlock<Lazy<L>> for LazyBufferMemoryBlock<L> {
+    fn backend(&self) -> &Lazy<L> {
         self.backend.as_ref()
     }
 
@@ -42,27 +43,29 @@ impl<B: LazyBackend> MemoryBlock<B> for LazyBufferMemoryBlock<B> {
 }
 
 /// Lazily downloaded chunks of data
-struct LazyChunk<const SIZE: usize> {
+struct LazyChunk<L: LazyBackend> {
     initialized: AtomicBool,
     mutex: tokio::sync::Mutex<()>,
     data_offset: usize, // Offset within the GPU buffer
     dirty: AtomicBool,  // If the data chunk has possibly been written, we must write back
+    _phantom: PhantomData<L>,
 }
 
-impl<const SIZE: usize> LazyChunk<SIZE> {
+impl<L: LazyBackend> LazyChunk<L> {
     fn new(data_offset: usize) -> Self {
         Self {
             initialized: AtomicBool::from(false),
             dirty: AtomicBool::from(false),
             mutex: tokio::sync::Mutex::new(()),
             data_offset,
+            _phantom: Default::default(),
         }
     }
 
     /// Lockless checking that we have definitely downloaded this data chunk from the GPU
-    async fn ensure_downloaded<B: LazyBackend>(
+    async fn ensure_downloaded(
         &self,
-        block: &LazyBufferMemoryBlock<B>,
+        block: &LazyBufferMemoryBlock<L>,
         mark_as_dirty: bool,
         buffer: &HostMemoryBlob,
     ) {
@@ -100,7 +103,7 @@ impl<const SIZE: usize> LazyChunk<SIZE> {
                 // it is safe to get a mutable pointer to fill the initial chunk data.
                 let dest = unsafe {
                     let offset_ptr = buffer.ptr.add(self.data_offset as usize);
-                    std::slice::from_raw_parts_mut(offset_ptr, SIZE)
+                    std::slice::from_raw_parts_mut(offset_ptr, L::CHUNK_SIZE)
                 };
                 dest.copy_from_slice(slice);
             })
@@ -110,11 +113,7 @@ impl<const SIZE: usize> LazyChunk<SIZE> {
     }
 
     /// Lockless checking that we have definitely uploaded this data (if it was dirty)
-    async fn upload<B: LazyBackend>(
-        &mut self,
-        block: &LazyBufferMemoryBlock<B>,
-        buffer: &HostMemoryBlob,
-    ) {
+    async fn upload(&mut self, block: &LazyBufferMemoryBlock<L>, buffer: &HostMemoryBlob) {
         // (http://schd.ws/hosted_files/cppcon2016/74/HansWeakAtomics.pdf Page 27)
         if !self.initialized.load(Ordering::Acquire) || !self.dirty.load(Ordering::Acquire) {
             return;
@@ -129,7 +128,7 @@ impl<const SIZE: usize> LazyChunk<SIZE> {
         }
 
         let start = self.data_offset as usize;
-        let src = buffer.as_slice(start..(start + SIZE));
+        let src = buffer.as_slice(start..(start + L::CHUNK_SIZE));
 
         block
             .upload_buffers
@@ -238,19 +237,19 @@ impl Drop for HostMemoryBlob {
 unsafe impl Send for HostMemoryBlob where Box<[u8]>: Send {}
 unsafe impl Sync for HostMemoryBlob where Box<[u8]>: Sync {}
 
-struct LazyBuffer<B: LazyBackend> {
-    backing: LazyBufferMemoryBlock<B>,
+struct LazyBuffer<L: LazyBackend> {
+    backing: LazyBufferMemoryBlock<L>,
     data: HostMemoryBlob,
-    chunks: Vec<LazyChunk<{ B::CHUNK_SIZE }>>,
+    chunks: Vec<LazyChunk<L>>,
 }
 
-impl<B: LazyBackend> LazyBuffer<B> {
-    fn new_chunk(i: usize) -> LazyChunk<{ B::CHUNK_SIZE }> {
-        LazyChunk::new(i * B::CHUNK_SIZE)
+impl<L: LazyBackend> LazyBuffer<L> {
+    fn new_chunk(i: usize) -> LazyChunk<L> {
+        LazyChunk::new(i * L::CHUNK_SIZE)
     }
 
-    pub fn new(backing: LazyBufferMemoryBlock<B>) -> Self {
-        let alignment = B::CHUNK_SIZE;
+    pub fn new(backing: LazyBufferMemoryBlock<L>) -> Self {
+        let alignment = L::CHUNK_SIZE;
         let full_len = backing.buffer.len();
 
         debug_assert_eq!(full_len % alignment, 0); // Exact chunks
@@ -286,13 +285,13 @@ impl<B: LazyBackend> LazyBuffer<B> {
 
         assert_ne!(byte_bounds.end, 0);
 
-        let start_chunk_inclusive = byte_bounds.start / B::CHUNK_SIZE;
-        let end_chunk_inclusive = (byte_bounds.end - 1) / B::CHUNK_SIZE;
+        let start_chunk_inclusive = byte_bounds.start / L::CHUNK_SIZE;
+        let end_chunk_inclusive = (byte_bounds.end - 1) / L::CHUNK_SIZE;
 
         // Check we found the right chunks
         let start_byte_inclusive = self.chunks[start_chunk_inclusive].data_offset as usize;
         let end_byte_exclusive =
-            self.chunks[end_chunk_inclusive].data_offset as usize + B::CHUNK_SIZE;
+            self.chunks[end_chunk_inclusive].data_offset as usize + L::CHUNK_SIZE;
         assert!(start_byte_inclusive <= byte_bounds.start);
         assert!(byte_bounds.end <= end_byte_exclusive);
 
@@ -328,7 +327,7 @@ impl<B: LazyBackend> LazyBuffer<B> {
         return self.data.as_slice_mut(bounds);
     }
 
-    async fn unload(mut self) -> LazyBufferMemoryBlock<B> {
+    async fn unload(mut self) -> LazyBufferMemoryBlock<L> {
         let futures = self
             .chunks
             .iter_mut()
@@ -345,8 +344,8 @@ impl<B: LazyBackend> LazyBuffer<B> {
         }
 
         // Calculate chunks
-        let new_real_size = min_alignment_gt(new_len, B::CHUNK_SIZE);
-        let new_chunks_count = new_real_size / B::CHUNK_SIZE;
+        let new_real_size = min_alignment_gt(new_len, L::CHUNK_SIZE);
+        let new_chunks_count = new_real_size / L::CHUNK_SIZE;
 
         // We may not need to change if we're within a chunk size still
         if new_real_size != self.backing.buffer.len() {
@@ -378,13 +377,13 @@ impl<B: LazyBackend> LazyBuffer<B> {
     }
 }
 
-pub struct MappedLazyBuffer<B: LazyBackend> {
-    data: LazyBuffer<B>,
+pub struct MappedLazyBuffer<L: LazyBackend> {
+    data: LazyBuffer<L>,
 }
 
 #[async_trait]
-impl<B: LazyBackend> MemoryBlock<B> for MappedLazyBuffer<B> {
-    fn backend(&self) -> &B {
+impl<L: LazyBackend> MemoryBlock<Lazy<L>> for MappedLazyBuffer<L> {
+    fn backend(&self) -> &Lazy<L> {
         self.data.backing.backend()
     }
 
@@ -394,7 +393,7 @@ impl<B: LazyBackend> MemoryBlock<B> for MappedLazyBuffer<B> {
 }
 
 #[async_trait]
-impl<B: LazyBackend> MainMemoryBlock<B> for MappedLazyBuffer<B> {
+impl<L: LazyBackend> MainMemoryBlock<Lazy<L>> for MappedLazyBuffer<L> {
     async fn as_slice<S: ToRange<usize> + Send>(&self, bounds: S) -> &[u8] {
         self.data.as_slice(bounds).await
     }
@@ -403,7 +402,7 @@ impl<B: LazyBackend> MainMemoryBlock<B> for MappedLazyBuffer<B> {
         self.data.as_slice_mut(bounds).await
     }
 
-    async fn unmap(self) -> UnmappedLazyBuffer<B> {
+    async fn unmap(self) -> UnmappedLazyBuffer<L> {
         UnmappedLazyBuffer {
             data: self.data.backing,
         }
@@ -416,21 +415,24 @@ impl<B: LazyBackend> MainMemoryBlock<B> for MappedLazyBuffer<B> {
     }
 }
 
-pub struct UnmappedLazyBuffer<B: LazyBackend> {
-    data: LazyBufferMemoryBlock<B>,
+pub struct UnmappedLazyBuffer<L: LazyBackend> {
+    data: LazyBufferMemoryBlock<L>,
 }
 
-impl<B: LazyBackend> UnmappedLazyBuffer<B> {
+impl<L: LazyBackend> UnmappedLazyBuffer<L> {
     pub fn new(
-        backend: Arc<B>,
-        upload_buffers: Arc<WriteBufferRing<B>>,
-        download_buffers: Arc<ReadBufferRing<B>>,
+        backend: Arc<Lazy<L>>,
+        upload_buffers: Arc<WriteBufferRing<L>>,
+        download_buffers: Arc<ReadBufferRing<L>>,
         size: usize,
         initial_data: Option<&[u8]>,
     ) -> Self {
-        let real_size = min_alignment_gt(size, B::CHUNK_SIZE);
-        let buffer =
-            <B as LazyBackend>::create_device_only_memory_block(&backend, real_size, initial_data);
+        let real_size = min_alignment_gt(size, L::CHUNK_SIZE);
+        let buffer = <L as LazyBackend>::create_device_only_memory_block(
+            &backend.backend,
+            real_size,
+            initial_data,
+        );
         Self {
             data: LazyBufferMemoryBlock {
                 backend,
@@ -444,8 +446,8 @@ impl<B: LazyBackend> UnmappedLazyBuffer<B> {
 }
 
 #[async_trait]
-impl<B: LazyBackend> MemoryBlock<B> for UnmappedLazyBuffer<B> {
-    fn backend(&self) -> &B {
+impl<L: LazyBackend> MemoryBlock<Lazy<L>> for UnmappedLazyBuffer<L> {
+    fn backend(&self) -> &Lazy<L> {
         self.data.backend()
     }
 
@@ -455,14 +457,14 @@ impl<B: LazyBackend> MemoryBlock<B> for UnmappedLazyBuffer<B> {
 }
 
 #[async_trait]
-impl<B: LazyBackend> DeviceMemoryBlock<B> for UnmappedLazyBuffer<B> {
-    async fn map(self) -> MappedLazyBuffer<B> {
+impl<L: LazyBackend> DeviceMemoryBlock<Lazy<L>> for UnmappedLazyBuffer<L> {
+    async fn map(self) -> MappedLazyBuffer<L> {
         MappedLazyBuffer {
             data: LazyBuffer::new(self.data),
         }
     }
 
-    async fn copy_from(&mut self, other: &UnmappedLazyBuffer<B>) {
+    async fn copy_from(&mut self, other: &UnmappedLazyBuffer<L>) {
         self.data.buffer.copy_from(&other.data.buffer).await
     }
 }
@@ -471,7 +473,7 @@ impl<B: LazyBackend> DeviceMemoryBlock<B> for UnmappedLazyBuffer<B> {
 mod tests {
     use crate::block_test;
     use crate::tests_lib::{gen_test_data, get_backend};
-    use crate::{Backend, DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
+    use crate::{Backend, MainMemoryBlock, MemoryBlock};
     use paste::paste;
     use tokio::runtime::Runtime;
 

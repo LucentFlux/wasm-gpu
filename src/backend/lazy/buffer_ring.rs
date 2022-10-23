@@ -1,6 +1,7 @@
 pub mod read;
 pub mod write;
 
+use crate::backend::lazy::LazyBackend;
 use async_channel::{Receiver, Sender};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -19,7 +20,7 @@ impl Default for BufferRingConfig {
     }
 }
 
-pub struct BufferRing<const SIZE: usize, Impl: BufferRingImpl<SIZE>> {
+pub struct BufferRing<L: LazyBackend, Impl: BufferRingImpl<L>> {
     config: BufferRingConfig,
 
     unused_buffers: Receiver<Impl::InitialBuffer>,
@@ -30,7 +31,7 @@ pub struct BufferRing<const SIZE: usize, Impl: BufferRingImpl<SIZE>> {
 
 /// Pulls out the shared logic between send and receive
 #[async_trait]
-trait BufferRingImpl<const SIZE: usize> {
+trait BufferRingImpl<L: LazyBackend> {
     type InitialBuffer;
     type FinalBuffer;
 
@@ -41,9 +42,9 @@ trait BufferRingImpl<const SIZE: usize> {
     async fn clean(&self, buff: Self::FinalBuffer) -> Self::InitialBuffer;
 }
 
-impl<const SIZE: usize, Impl: BufferRingImpl<SIZE>> BufferRing<SIZE, Impl> {
+impl<L: LazyBackend, Impl: BufferRingImpl<L>> BufferRing<L, Impl> {
     pub fn new_from(implementation: Impl, config: BufferRingConfig) -> Self {
-        let buffer_count = config.total_mem / SIZE;
+        let buffer_count = config.total_mem / L::CHUNK_SIZE;
         let (buffer_return, unused_buffers) = async_channel::bounded(buffer_count);
         for _ in 0..buffer_count {
             let new_buffer = implementation.create_buffer();

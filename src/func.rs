@@ -5,13 +5,11 @@ use std::marker::PhantomData;
 use wasmparser::{FuncType, ValType};
 
 use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
-use crate::instance::memory::concrete::{
-    HostMemoryInstanceSet, MemoryPtr, MemoryView, MemoryViewMut,
-};
+use crate::instance::memory::concrete::{HostMemoryInstanceSet, MemoryView, MemoryViewMut};
 use crate::instance::ptrs::AbstractPtr;
 use crate::instance::ModuleInstance;
 use crate::store_set::StoreSet;
-use crate::typed::{ToRange, Val, WasmTyVec};
+use crate::typed::{Val, WasmTyVec};
 use crate::{Backend, StoreSetBuilder};
 
 pub(crate) struct ExportFunction {
@@ -212,7 +210,6 @@ mod tests {
     use crate::tests_lib::{gen_test_data, get_backend};
     use crate::wasp;
     use crate::{block_test, imports, Config, PanicOnAny};
-    use itertools::Itertools;
     use paste::paste;
     use tokio::runtime::Runtime;
 

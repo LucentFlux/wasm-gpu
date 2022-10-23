@@ -97,7 +97,7 @@ macro_rules! impl_immutable_ptr {
             }
         }
 
-        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Ord for $name$(<$($lt),*>)*
+        /*impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Ord for $name$(<$($lt),*>)*
         where $( $e_type : Ord,)*
         {
             fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -120,7 +120,7 @@ macro_rules! impl_immutable_ptr {
 
                 return c;
             }
-        }
+        }*/
     };
 }
 
