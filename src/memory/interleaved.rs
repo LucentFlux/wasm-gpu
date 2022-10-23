@@ -1,6 +1,8 @@
 use crate::compute_utils::Utils;
 use crate::typed::ToRange;
 use crate::{Backend, DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
+use std::iter::Flatten;
+use std::slice::Iter;
 use std::sync::Arc;
 
 pub struct HostInterleavedBuffer<B, const STRIDE: usize>
@@ -11,11 +13,28 @@ where
     count: usize,
 }
 
-pub type InterleavedBufferView<'a, const STRIDE: usize> = Vec<Vec<&'a [u8; STRIDE * 4]>>;
-pub type InterleavedBufferViewMut<'a, const STRIDE: usize> = Vec<Vec<&'a mut [u8; STRIDE * 4]>>;
+pub struct InterleavedBufferView<'a>(Vec<Vec<&'a [u8]>>);
+pub struct InterleavedBufferViewMut<'a>(Vec<Vec<&'a mut [u8]>>);
+
+impl<'a> InterleavedBufferView<'a> {
+    pub fn get(&self, index: usize) -> Option<impl Iterator<Item = &'a [u8]>> {
+        self.0
+            .get(index)
+            .map(|v| v.into_iter().map(|v2| v2.into_iter()).flatten())
+    }
+}
+
+impl<'a> InterleavedBufferViewMut<'a> {
+    pub fn get(&mut self, index: usize) -> Option<impl Iterator<Item = &'a mut [u8]>> {
+        self.0
+            .get(index)
+            .map(|v| v.into_iter().map(|v2| v2.into_iter()).flatten())
+    }
+}
 
 macro_rules! impl_get {
     (
+        $ret:path,
         with $self:ident on $bounds:ident
         using $as_slice:ident
         and $split_array_ref:ident
@@ -44,7 +63,7 @@ macro_rules! impl_get {
             }
         }
 
-        return interpretations;
+        return $ret(interpretations);
     };
 }
 
@@ -64,8 +83,8 @@ where
     /// Takes a memory block and interprets it as an interleaved buffer.
     ///
     /// Bounds gives the bounds for each abstract interleaved buffer, in units of `STRIDE * 4` bytes
-    pub async fn get<S: ToRange<usize> + Send>(&self, bounds: S) -> InterleavedBufferView<STRIDE> {
-        impl_get!(
+    pub async fn get<S: ToRange<usize> + Send>(&self, bounds: S) -> InterleavedBufferView {
+        impl_get!(InterleavedBufferView,
             with self on bounds
             using as_slice
             and split_array_ref
@@ -78,8 +97,8 @@ where
     pub async fn get_mut<S: ToRange<usize> + Send>(
         &mut self,
         bounds: S,
-    ) -> InterleavedBufferViewMut<STRIDE> {
-        impl_get!(
+    ) -> InterleavedBufferViewMut {
+        impl_get!(InterleavedBufferViewMut,
             with self on bounds
             using as_slice_mut
             and split_array_mut
@@ -110,7 +129,7 @@ where
     ) -> Self {
         assert!(count > 0, "Count must be non-zero");
 
-        let len = source.len().await * count;
+        let len = source.len() * count;
         let mut buffer = backend.create_device_memory_block(len, None);
 
         backend

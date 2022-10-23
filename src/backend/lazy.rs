@@ -26,7 +26,7 @@ pub trait DeviceToMainBufferUnmapped<L: LazyBackend> {
 }
 #[async_trait]
 pub trait DeviceToMainBufferMapped<L: LazyBackend> {
-    fn view(&self) -> &[u8; L::CHUNK_SIZE];
+    fn view(&self) -> &[u8];
 
     async fn unmap(self) -> L::DeviceToMainBufferUnmapped;
 }
@@ -39,7 +39,7 @@ pub trait MainToDeviceBufferUnmapped<L: LazyBackend> {
 }
 #[async_trait]
 pub trait MainToDeviceBufferMapped<L: LazyBackend> {
-    fn view_mut(&mut self) -> &mut [u8; L::CHUNK_SIZE];
+    fn view_mut(&mut self) -> &mut [u8];
 
     async fn unmap(self) -> L::MainToDeviceBufferUnmapped;
 }
@@ -55,15 +55,15 @@ pub trait DeviceOnlyBuffer<L: LazyBackend> {
     async fn copy_from(&mut self, other: &Self);
 }
 
-pub trait LazyBackend: Debug + Sized {
+pub trait LazyBackend: Debug + Sized + Send + Sync {
     const CHUNK_SIZE: usize;
 
     type Utils: crate::compute_utils::Utils<Lazy<Self>>;
-    type DeviceToMainBufferMapped: DeviceToMainBufferMapped<Self> + Sized;
-    type MainToDeviceBufferMapped: MainToDeviceBufferMapped<Self> + Sized;
-    type DeviceToMainBufferUnmapped: DeviceToMainBufferUnmapped<Self> + Sized;
-    type MainToDeviceBufferUnmapped: MainToDeviceBufferUnmapped<Self> + Sized;
-    type DeviceOnlyBuffer: DeviceOnlyBuffer<Self> + Sized;
+    type DeviceToMainBufferMapped: DeviceToMainBufferMapped<Self> + Sized + Send + Sync;
+    type MainToDeviceBufferMapped: MainToDeviceBufferMapped<Self> + Sized + Send + Sync;
+    type DeviceToMainBufferUnmapped: DeviceToMainBufferUnmapped<Self> + Sized + Send;
+    type MainToDeviceBufferUnmapped: MainToDeviceBufferUnmapped<Self> + Sized + Send;
+    type DeviceOnlyBuffer: DeviceOnlyBuffer<Self> + Sized + Send + Sync;
 
     fn get_utils(&self) -> &Self::Utils;
     fn create_device_only_memory_block(
@@ -73,25 +73,25 @@ pub trait LazyBackend: Debug + Sized {
     ) -> Self::DeviceOnlyBuffer;
 
     fn create_device_to_main_memory(&self) -> Self::DeviceToMainBufferUnmapped;
-    fn create_main_to_device_memory(&self) -> Self::DeviceToMainBufferUnmapped;
+    fn create_main_to_device_memory(&self) -> Self::MainToDeviceBufferUnmapped;
 }
 
 // Wrap a lazy backend to keep some more state
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Lazy<L: LazyBackend> {
-    backend: Arc<L>,
+    lazy: Arc<L>,
 
     upload_buffers: Arc<WriteBufferRing<L>>,
     download_buffers: Arc<ReadBufferRing<L>>,
 }
 
 impl<L: LazyBackend> Lazy<L> {
-    pub fn new_from(backend: L, cfg: BufferRingConfig) -> Self {
-        let backend = Arc::new(backend);
+    pub fn new_from(lazy: L, cfg: BufferRingConfig) -> Self {
+        let backend = Arc::new(lazy);
         Self {
             upload_buffers: Arc::new(WriteBufferRing::new(backend.clone(), cfg)),
             download_buffers: Arc::new(ReadBufferRing::new(backend.clone(), cfg)),
-            backend,
+            lazy: backend,
         }
     }
 }
@@ -108,7 +108,7 @@ impl<L: LazyBackend> Backend for Lazy<L> {
         initial_data: Option<&[u8]>,
     ) -> Self::DeviceMemoryBlock {
         UnmappedLazyBuffer::new(
-            self.backend.clone(),
+            self.lazy.clone(),
             self.upload_buffers.clone(),
             self.download_buffers.clone(),
             size,
@@ -117,6 +117,6 @@ impl<L: LazyBackend> Backend for Lazy<L> {
     }
 
     fn get_utils(&self) -> &Self::Utils {
-        self.backend.get_utils()
+        self.lazy.get_utils()
     }
 }

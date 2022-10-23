@@ -31,7 +31,7 @@ impl<L: LazyBackend> ReadBufferRing<L> {
     /// Executes a closure with a slice of a GPU buffer.
     ///
     /// The slice generated has length BUFFER_SIZE
-    pub async fn with_slice<Res, F: FnOnce(&[u8; L::CHUNK_SIZE]) -> Res>(
+    pub async fn with_slice<Res, F: FnOnce(&[u8]) -> Res>(
         &self,
         src: &L::DeviceOnlyBuffer,
         offset: usize,
@@ -45,6 +45,8 @@ impl<L: LazyBackend> ReadBufferRing<L> {
 
         let res = {
             let view = download_buffer.view();
+
+            assert_eq!(view.len(), L::CHUNK_SIZE);
 
             cont(view)
         };

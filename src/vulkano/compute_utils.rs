@@ -38,7 +38,7 @@ impl VulkanoComputeUtils {}
 impl<const BUFFER_SIZE: usize> Utils<VulkanoBackend<BUFFER_SIZE>> for VulkanoComputeUtils {
     async fn interleave<const STRIDE: usize>(
         &self,
-        src: &mut <VulkanoBackend<BUFFER_SIZE> as Backend>::DeviceMemoryBlock,
+        src: &<VulkanoBackend<BUFFER_SIZE> as Backend>::DeviceMemoryBlock,
         dst: &mut <VulkanoBackend<BUFFER_SIZE> as Backend>::DeviceMemoryBlock,
         count: usize,
     ) {

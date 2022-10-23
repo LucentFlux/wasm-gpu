@@ -37,7 +37,7 @@ impl<L: LazyBackend> MemoryBlock<Lazy<L>> for LazyBufferMemoryBlock<L> {
         self.backend.as_ref()
     }
 
-    async fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.visible_len
     }
 }
@@ -306,10 +306,10 @@ impl<L: LazyBackend> LazyBuffer<L> {
     }
 
     async fn as_slice<S: ToRange<usize>>(&self, bounds: S) -> &[u8] {
-        let bounds = bounds.half_open(self.len);
+        let bounds = bounds.half_open(self.backing.visible_len);
 
-        assert!(bounds.start < self.len);
-        assert!(bounds.end <= self.len);
+        assert!(bounds.start < self.backing.visible_len);
+        assert!(bounds.end <= self.backing.visible_len);
 
         self.ensure_downloaded(bounds.clone(), false).await;
 
@@ -317,10 +317,10 @@ impl<L: LazyBackend> LazyBuffer<L> {
     }
 
     async fn as_slice_mut<S: ToRange<usize>>(&mut self, bounds: S) -> &mut [u8] {
-        let bounds = bounds.half_open(self.len);
+        let bounds = bounds.half_open(self.backing.visible_len);
 
-        assert!(bounds.start < self.len);
-        assert!(bounds.end <= self.len);
+        assert!(bounds.start < self.backing.visible_len);
+        assert!(bounds.end <= self.backing.visible_len);
 
         self.ensure_downloaded(bounds.clone(), true).await;
 
@@ -353,6 +353,7 @@ impl<L: LazyBackend> LazyBuffer<L> {
             let mut new_buffer = self
                 .backing
                 .backend
+                .lazy
                 .create_device_only_memory_block(new_len, None);
             new_buffer.copy_from(&self.backing.buffer).await;
         }
@@ -361,9 +362,11 @@ impl<L: LazyBackend> LazyBuffer<L> {
         if new_chunks_count != chunks_count {
             // Shrink chunks
             for _ in new_chunks_count..chunks_count {
-                self.chunks
+                let old = self
+                    .chunks
                     .pop()
-                    .expect("chunks was empty when it shouldn't be")
+                    .expect("chunks was empty when it shouldn't be");
+                drop(old)
             }
             // Grow chunks
             let chunks_count = self.chunks.len();
@@ -429,7 +432,7 @@ impl<L: LazyBackend> UnmappedLazyBuffer<L> {
     ) -> Self {
         let real_size = min_alignment_gt(size, L::CHUNK_SIZE);
         let buffer = <L as LazyBackend>::create_device_only_memory_block(
-            &backend.backend,
+            &backend.lazy,
             real_size,
             initial_data,
         );
@@ -472,6 +475,7 @@ impl<L: LazyBackend> DeviceMemoryBlock<Lazy<L>> for UnmappedLazyBuffer<L> {
 #[cfg(test)]
 mod tests {
     use crate::block_test;
+    use crate::memory::DeviceMemoryBlock;
     use crate::tests_lib::{gen_test_data, get_backend};
     use crate::{Backend, MainMemoryBlock, MemoryBlock};
     use paste::paste;
@@ -500,7 +504,7 @@ mod tests {
 
         let memory = backend.create_device_memory_block(size, None);
 
-        assert_eq!(memory.len().await, size);
+        assert_eq!(memory.len(), size);
     }
 
     #[inline(never)]
@@ -508,9 +512,9 @@ mod tests {
         let backend = get_backend().await;
 
         let memory = backend.create_device_memory_block(size, None);
-        let memory = memory.move_to_main_memory().await;
+        let memory = memory.map().await;
 
-        assert_eq!(memory.len().await, size);
+        assert_eq!(memory.len(), size);
     }
 
     #[inline(never)]
@@ -522,7 +526,7 @@ mod tests {
         let memory = backend.create_device_memory_block(size, Some(expected_data.as_slice()));
 
         // Read
-        let memory = memory.move_to_main_memory().await;
+        let memory = memory.map().await;
         let slice = memory.as_slice(..).await;
         let data_result = Vec::from(slice);
 
@@ -534,7 +538,7 @@ mod tests {
         let backend = get_backend().await;
 
         let memory = backend.create_device_memory_block(size, None);
-        let mut memory = memory.move_to_main_memory().await;
+        let mut memory = memory.map().await;
         let slice = memory.as_slice_mut(..).await;
 
         // Write some data
@@ -542,8 +546,8 @@ mod tests {
         slice.copy_from_slice(expected_data.as_slice());
 
         // Unmap and Remap
-        let memory = memory.move_to_device_memory().await;
-        let memory = memory.move_to_main_memory().await;
+        let memory = memory.unmap().await;
+        let memory = memory.map().await;
         let slice = memory.as_slice(..).await;
         let data_result = Vec::from(slice);
 

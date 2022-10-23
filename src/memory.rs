@@ -21,9 +21,10 @@ where
 }
 
 #[async_trait]
-pub trait MainMemoryBlock<B>: MemoryBlock<B>
+pub trait MainMemoryBlock<B>: MemoryBlock<B> + Sized
 where
     B: Backend,
+    <B as Backend>::MainMemoryBlock: MainMemoryBlock<B>,
 {
     async fn as_slice<S: ToRange<usize> + Send>(&self, bounds: S) -> &[u8];
     async fn as_slice_mut<S: ToRange<usize> + Send>(&mut self, bounds: S) -> &mut [u8];
@@ -72,7 +73,7 @@ where
 
     /// Resizes by reallocation and copying
     async fn resize(&mut self, new_len: usize) {
-        let backend = self.get_backend();
+        let backend = self.backend();
         let mut new_buffer = backend.create_device_memory_block(new_len, None);
         new_buffer.copy_from(&self);
         std::mem::swap(&mut self, &mut new_buffer);

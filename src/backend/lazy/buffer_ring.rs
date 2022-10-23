@@ -31,9 +31,9 @@ pub struct BufferRing<L: LazyBackend, Impl: BufferRingImpl<L>> {
 
 /// Pulls out the shared logic between send and receive
 #[async_trait]
-trait BufferRingImpl<L: LazyBackend> {
-    type InitialBuffer;
-    type FinalBuffer;
+trait BufferRingImpl<L: LazyBackend>: Send + Sync {
+    type InitialBuffer: Send;
+    type FinalBuffer: Send;
 
     /// Create a new buffer to be put in the pool
     async fn create_buffer(&self) -> Self::InitialBuffer;
@@ -43,28 +43,29 @@ trait BufferRingImpl<L: LazyBackend> {
 }
 
 impl<L: LazyBackend, Impl: BufferRingImpl<L>> BufferRing<L, Impl> {
-    pub fn new_from(implementation: Impl, config: BufferRingConfig) -> Self {
+    pub async fn new_from(implementation: Impl, config: BufferRingConfig) -> Self {
         let buffer_count = config.total_mem / L::CHUNK_SIZE;
         let (buffer_return, unused_buffers) = async_channel::bounded(buffer_count);
         for _ in 0..buffer_count {
-            let new_buffer = implementation.create_buffer();
+            let new_buffer = implementation.create_buffer().await;
 
             // Future should immediately resolve since we reserved space
             let fut = buffer_return.send(new_buffer);
-            futures::executor::block_on(fut).unwrap()
+            fut.await
+                .expect("failed to initialize buffers for data transfer")
         }
 
         Self {
             config,
             unused_buffers,
             buffer_return,
-            implementation,
+            implementation: Arc::new(implementation),
         }
     }
 
     /// Gets a new buffer of size STAGING_BUFFER_SIZE. If map_mode is MapMode::Write, then the whole
     /// buffer is already mapped to CPU memory
-    async fn pop(&self) -> Impl::Buffer {
+    async fn pop(&self) -> Impl::InitialBuffer {
         return self
             .unused_buffers
             .recv()

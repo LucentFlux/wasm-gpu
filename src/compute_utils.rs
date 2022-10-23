@@ -30,7 +30,7 @@ macro_rules! impl_sources {
 #[macro_export]
 macro_rules! enum_sources {
     ($callback:ident) => {
-        $callback!(("compute_utils/interleave.wgsl", interleave),);
+        $callback!(("compute_utils/interleave.glsl", interleave),);
     };
 }
 

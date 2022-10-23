@@ -1,7 +1,5 @@
 use crate::backend::lazy::buffer_ring::{BufferRing, BufferRingConfig, BufferRingImpl};
-use crate::backend::lazy::{
-    DeviceToMainBufferUnmapped, LazyBackend, MainToDeviceBufferMapped, MainToDeviceBufferUnmapped,
-};
+use crate::backend::lazy::{LazyBackend, MainToDeviceBufferMapped, MainToDeviceBufferUnmapped};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -26,17 +24,14 @@ impl<L: LazyBackend> BufferRingImpl<L> for WriteImpl<L> {
 }
 
 impl<L: LazyBackend> WriteBufferRing<L> {
-    pub fn new(backend: Arc<L>, config: BufferRingConfig) -> Self {
-        BufferRing::new_from(WriteImpl { backend }, config)
+    pub async fn new(backend: Arc<L>, config: BufferRingConfig) -> Self {
+        BufferRing::new_from(WriteImpl { backend }, config).await
     }
 
     /// Copies a slice onto a GPU buffer
-    pub async fn write_slice(
-        &self,
-        dst: &L::DeviceOnlyBuffer,
-        offset: usize,
-        slice: &[u8; L::CHUNK_SIZE],
-    ) {
+    pub async fn write_slice(&self, dst: &L::DeviceOnlyBuffer, offset: usize, slice: &[u8]) {
+        assert_eq!(slice.len(), L::CHUNK_SIZE); // This should be checked at compile time but const generics are too buggy as of 23/10/2022
+
         let mut upload_buffer: L::MainToDeviceBufferMapped = self.pop().await;
 
         upload_buffer.view_mut().copy_from_slice(slice);
