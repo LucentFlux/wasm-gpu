@@ -5,14 +5,14 @@ use crate::backend::lazy::{
 use async_trait::async_trait;
 use std::sync::Arc;
 
-pub type WriteBufferRing<B: LazyBackend> = BufferRing<B::CHUNK_SIZE, WriteImpl<B>>;
+pub type WriteBufferRing<B: LazyBackend> = BufferRing<{ B::CHUNK_SIZE }, WriteImpl<B>>;
 
 struct WriteImpl<B: LazyBackend> {
     backend: Arc<B>,
 }
 
 #[async_trait]
-impl<B: LazyBackend> BufferRingImpl<B::CHUNK_SIZE> for WriteImpl<B> {
+impl<B: LazyBackend> BufferRingImpl<{ B::CHUNK_SIZE }> for WriteImpl<B> {
     type InitialBuffer = B::MainToDeviceBufferMapped;
     type FinalBuffer = B::MainToDeviceBufferUnmapped;
 
@@ -27,7 +27,7 @@ impl<B: LazyBackend> BufferRingImpl<B::CHUNK_SIZE> for WriteImpl<B> {
 
 impl<B: LazyBackend> WriteBufferRing<B> {
     pub fn new(backend: Arc<B>, config: BufferRingConfig) -> Self {
-        WriteBufferRing::new(WriteImpl { backend }, config)
+        BufferRing::new_from(WriteImpl { backend }, config)
     }
 
     /// Copies a slice onto a GPU buffer
@@ -46,7 +46,5 @@ impl<B: LazyBackend> WriteBufferRing<B> {
         upload_buffer.copy_to(dst, offset).await;
 
         self.push(upload_buffer);
-
-        return res;
     }
 }

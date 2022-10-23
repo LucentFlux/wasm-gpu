@@ -1,7 +1,6 @@
 use crate::compute_utils::Utils;
 use crate::typed::ToRange;
-use crate::{Backend, DeviceMemoryBlock, MainMemoryBlock};
-use std::marker::PhantomData;
+use crate::{Backend, DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
 use std::sync::Arc;
 
 pub struct HostInterleavedBuffer<B, const STRIDE: usize>
@@ -12,44 +11,79 @@ where
     count: usize,
 }
 
-impl<B, const STRIDE: usize> HostInterleavedBuffer<B, STRIDE>
-where
-    B: Backend,
-{
-    /// Take this interleaved buffer and move it to device memory
-    pub async fn move_to_main_memory(self) -> DeviceInterleavedBuffer<B, STRIDE> {
-        let buffer = self.buffer.move_to_device_memory().await;
-        DeviceInterleavedBuffer { buffer, count }
-    }
+pub type InterleavedBufferView<'a, const STRIDE: usize> = Vec<Vec<&'a [u8; STRIDE * 4]>>;
+pub type InterleavedBufferViewMut<'a, const STRIDE: usize> = Vec<Vec<&'a mut [u8; STRIDE * 4]>>;
 
-    #[doc = r#"Takes a memory block and interprets it as an interleaved buffer.
-        Bounds gives the bounds for each abstract interleaved buffer, in units of `STRIDE` bytes"#]
-    pub async fn get<S: ToRange<usize> + Send>(&self, bounds: S) -> Vec<Vec<&[u8; STRIDE]>> {
-        let s_len = source.len().await;
-        assert_eq!(s_len % (count * STRIDE), 0);
+macro_rules! impl_get {
+    (
+        with $self:ident on $bounds:ident
+        using $as_slice:ident
+        and $split_array_ref:ident
+    ) => {
+        let period = $self.count * STRIDE * 4;
 
-        let bounds = bounds.half_open(source.len().await / count);
-        let buffer_bounds = (bounds.start * count * STRIDE)..(bounds.end * count * STRIDE);
+        let s_len = $self.buffer.len();
+        assert_eq!(s_len % period, 0, "buffer must be cleanly divisible into ");
+
+        let bounds = $bounds.half_open($self.buffer.len() / $self.count);
+        let buffer_bounds = (bounds.start * period)..(bounds.end * period);
 
         assert!(buffer_bounds.end <= s_len);
 
-        let mut s = source.as_slice(buffer_bounds).await;
+        let mut s = $self.buffer.$as_slice(buffer_bounds).await;
 
-        debug_assert_eq!(s.len() % (count * STRIDE), 0);
+        assert_eq!(s.len() % period, 0);
 
-        let mut interpretations = vec![Vec::new(); count];
+        let mut interpretations = vec![Vec::new(); $self.count];
         while !s.is_empty() {
-            for i in 0..count {
-                let (lhs, rhs) = s.split_array_ref();
+            for i in 0..$self.count {
+                let (lhs, rhs) = s.$split_array_ref();
+
                 interpretations.get_mut(i).unwrap().push(lhs);
                 s = rhs;
             }
         }
 
-        Self {
-            interpretations,
-            _phantom: Default::default(),
+        return interpretations;
+    };
+}
+
+impl<B, const STRIDE: usize> HostInterleavedBuffer<B, STRIDE>
+where
+    B: Backend,
+{
+    /// Take this interleaved buffer and move it to device memory
+    pub async fn unmap(self) -> DeviceInterleavedBuffer<B, STRIDE> {
+        let buffer = self.buffer.unmap().await;
+        DeviceInterleavedBuffer {
+            buffer,
+            count: self.count,
         }
+    }
+
+    /// Takes a memory block and interprets it as an interleaved buffer.
+    ///
+    /// Bounds gives the bounds for each abstract interleaved buffer, in units of `STRIDE * 4` bytes
+    pub async fn get<S: ToRange<usize> + Send>(&self, bounds: S) -> InterleavedBufferView<STRIDE> {
+        impl_get!(
+            with self on bounds
+            using as_slice
+            and split_array_ref
+        );
+    }
+
+    /// Takes a memory block and interprets it as a mutable interleaved buffer.
+    ///
+    /// Bounds gives the bounds for each abstract interleaved buffer, in units of `STRIDE * 4` bytes
+    pub async fn get_mut<S: ToRange<usize> + Send>(
+        &mut self,
+        bounds: S,
+    ) -> InterleavedBufferViewMut<STRIDE> {
+        impl_get!(
+            with self on bounds
+            using as_slice_mut
+            and split_array_mut
+        );
     }
 }
 
@@ -61,18 +95,17 @@ where
     count: usize,
 }
 
-/// STRIDE is the length, in bytes, of each contiguous block of memory for each interleaved item
+/// STRIDE is the length, in u32s (4 bytes), of each contiguous block of memory for each interleaved item
 impl<B, const STRIDE: usize> DeviceInterleavedBuffer<B, STRIDE>
 where
     B: Backend,
 {
-    const _: () = assert!(STRIDE > 0, "Stride must be non-zero");
-    const _: () = assert_eq!(STRIDE % 4, 0, "Stride must be a multiple of 4 bytes");
+    const _A1: () = assert!(STRIDE > 0, "Stride must be non-zero");
 
     /// Takes a source buffer and duplicates it count times
     pub async fn new_interleaved_from(
         backend: Arc<B>,
-        source: &mut B::DeviceMemoryBlock,
+        source: &B::DeviceMemoryBlock,
         count: usize,
     ) -> Self {
         assert!(count > 0, "Count must be non-zero");
@@ -82,15 +115,18 @@ where
 
         backend
             .get_utils()
-            .interleave::<{ STRIDE / 4 }>(src, &mut buffer, count)
+            .interleave::<STRIDE>(source, &mut buffer, count)
             .await;
 
         Self { buffer, count }
     }
 
     /// Take this interleaved buffer and move it to main memory
-    pub async fn move_to_main_memory(self) -> HostInterleavedBuffer<B, STRIDE> {
-        let buffer = self.buffer.move_to_main_memory().await;
-        HostInterleavedBuffer { buffer, count }
+    pub async fn map(self) -> HostInterleavedBuffer<B, STRIDE> {
+        let buffer = self.buffer.map().await;
+        HostInterleavedBuffer {
+            buffer,
+            count: self.count,
+        }
     }
 }

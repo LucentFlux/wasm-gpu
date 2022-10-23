@@ -1,15 +1,23 @@
 use crate::impl_concrete_ptr;
 use crate::instance::table::abstr::AbstractTablePtr;
-use crate::memory::interleaved::InterleavedBuffer;
+use crate::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
 use crate::Backend;
 
 const STRIDE: usize = 1; // FuncRef is 1 x u32
 
-pub struct TableInstanceSet<B>
+pub struct DeviceTableInstanceSet<B>
 where
     B: Backend,
 {
-    data: InterleavedBuffer<B, STRIDE>,
+    data: DeviceInterleavedBuffer<B, STRIDE>,
+    id: usize,
+}
+
+pub struct HostTableInstanceSet<B>
+where
+    B: Backend,
+{
+    data: HostInterleavedBuffer<B, STRIDE>,
     id: usize,
 }
 

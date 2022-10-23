@@ -1,10 +1,11 @@
 #![cfg(test)]
 
-use crate::{wasp, BufferRingConfig, WgpuBackendConfig};
+use crate::backend::lazy::buffer_ring::BufferRingConfig;
+use crate::wasp;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
-pub async fn get_backend() -> wasp::WgpuBackend<1024> {
+pub async fn get_backend() -> wasp::VulkanoBackend<1024> {
     let instance = wgpu::Instance::new(wgpu::Backends::all());
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
@@ -18,13 +19,13 @@ pub async fn get_backend() -> wasp::WgpuBackend<1024> {
         .request_device(&Default::default(), None)
         .await
         .unwrap();
-    let conf = WgpuBackendConfig {
-        buffer_ring_config: BufferRingConfig {
+    let conf = wasp::VulkanoBackendConfig {
+        buffer_ring: BufferRingConfig {
             // Minimal memory footprint for tests
-            total_mem: 8 * 1024,
+            total_mem: 2 * 1024,
         },
     };
-    return wasp::WgpuBackend::new(device, queue, conf);
+    return wasp::VulkanoBackend::new(conf);
 }
 
 #[macro_export]

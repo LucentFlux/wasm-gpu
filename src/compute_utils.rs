@@ -52,7 +52,7 @@ pub trait Utils<B: Backend> {
     /// - `src.len() % STRIDE == 0`
     async fn interleave<const STRIDE: usize>(
         &self,
-        src: &mut B::DeviceMemoryBlock,
+        src: &B::DeviceMemoryBlock,
         dst: &mut B::DeviceMemoryBlock,
         count: usize,
     );

@@ -2,72 +2,96 @@ use crate::fenwick::FenwickTree;
 use crate::impl_concrete_ptr;
 use crate::instance::memory::abstr::AbstractMemoryPtr;
 use crate::memory::interleaved::{
-    InterleavedBuffer, InterleavedBufferView, InterleavedBufferViewMut,
+    DeviceInterleavedBuffer, HostInterleavedBuffer, InterleavedBufferView, InterleavedBufferViewMut,
 };
 use crate::typed::ToRange;
 use crate::Backend;
 
-const STRIDE: usize = 4;
+const STRIDE: usize = 4; // 4 * u32
 
-pub struct MemoryInstanceSet<B>
+#[derive(Clone)]
+struct Meta {
+    lengths: FenwickTree,
+    id: usize,
+}
+
+pub struct DeviceMemoryInstanceSet<B>
 where
     B: Backend,
 {
-    data: InterleavedBuffer<B, STRIDE>,
-    lengths: FenwickTree,
-    id: usize,
+    data: Vec<DeviceInterleavedBuffer<B, STRIDE>>,
+    meta: Meta,
 }
 
-impl<B: Backend> MemoryInstanceSet<B> {
-    pub async fn view<T, S: ToRange<usize> + Send>(&self, bounds: S) -> MemoryInstanceView<B> {
-        MemoryInstanceView {
-            id: self.id,
-            view: self.data.view(bounds).await,
-            lengths: self.lengths.clone(),
+pub struct HostMemoryInstanceSet<B>
+where
+    B: Backend,
+{
+    data: Vec<HostInterleavedBuffer<B, STRIDE>>,
+    meta: Meta,
+}
+
+/// A view of a memory for a specific wasm instance
+pub struct MemoryView<'a, B: Backend> {
+    buf: &'a HostInterleavedBuffer<B, STRIDE>,
+    index: usize,
+}
+
+impl<'a, B: Backend> MemoryView<'a, B> {
+    pub async fn get(&self, index: usize) -> u8 {
+        let chunk = index / STRIDE;
+        let offset = index % STRIDE;
+        let view: InterleavedBufferView<STRIDE> = self.buf.get(chunk..=chunk).await;
+
+        match view
+            .get(self.index)
+            .expect("memory index out of bounds")
+            .as_slice()
+        {
+            [v] => v[offset],
+            _ => panic!("failed to get single chunk"),
         }
     }
+}
 
-    pub async fn view_mut<T, S: ToRange<usize> + Send>(
-        &mut self,
-        bounds: S,
-    ) -> MemoryInstanceViewMut<B> {
-        MemoryInstanceViewMut {
-            id: self.id,
-            view: self.data.view_mut(bounds).await,
-            lengths: self.lengths.clone(),
+/// A mutable view of a memory for a specific wasm instance
+pub struct MemoryViewMut<'a, B: Backend> {
+    buf: &'a mut HostInterleavedBuffer<B, STRIDE>,
+    index: usize,
+}
+
+macro_rules! impl_get {
+    (with $self:ident, $ptr:ident using $get:ident making $MemoryView:ident) => {
+        assert_eq!(
+            $ptr.src.id, $self.meta.id,
+            "memory pointer does not belong to this memory instance set"
+        );
+        let buf = $self
+            .data
+            .$get($ptr.src.ptr)
+            .expect("memory pointer was valid but malformed");
+        $MemoryView {
+            buf,
+            index: $ptr.index,
         }
+    };
+}
+
+impl<B: Backend> HostMemoryInstanceSet<B> {
+    pub fn get<T>(&self, ptr: MemoryPtr<B, T>) -> MemoryView<B> {
+        impl_get!(
+            with self, ptr
+            using get
+            making MemoryView
+        );
     }
-}
 
-pub struct MemoryInstanceView<'a, B: Backend> {
-    view: InterleavedBufferView<'a, B, STRIDE>,
-    lengths: FenwickTree,
-    id: usize,
-}
-
-impl<'a, B: Backend> MemoryInstanceView<'a, B> {
-    pub fn get<'b: 'a, T>(&'b self, ptr: &MemoryPtr<B, T>) -> Option<&[&'a [u8; 4]]> {
-        assert_eq!(self.id, ptr.src.id);
-
-        let start = self.lengths.prefix_sum(ptr.src.ptr);
-        let end = self.lengths.prefix_sum(ptr.src.ptr + 1);
-        self.view.get(ptr.index).map(|v| &v.as_slice()[start..end])
-    }
-}
-
-pub struct MemoryInstanceViewMut<'a, B: Backend> {
-    view: InterleavedBufferViewMut<'a, B, STRIDE>,
-    lengths: FenwickTree,
-    id: usize,
-}
-
-impl<'a, B: Backend> MemoryInstanceViewMut<'a, B> {
-    pub fn get<'b: 'a, T>(&'b self, ptr: &MemoryPtr<B, T>) -> Option<&[&'a mut [u8; 4]]> {
-        assert_eq!(self.id, ptr.src.id);
-
-        let start = self.lengths.prefix_sum(ptr.src.ptr);
-        let end = self.lengths.prefix_sum(ptr.src.ptr + 1);
-        self.view.get(ptr.index).map(|v| &v.as_slice()[start..end])
+    pub fn get_mut<T>(&self, ptr: MemoryPtr<B, T>) -> MemoryViewMut<B> {
+        impl_get!(
+            with self, ptr
+            using get_mut
+            making MemoryViewMut
+        );
     }
 }
 

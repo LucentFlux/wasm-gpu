@@ -1,10 +1,8 @@
 pub mod read;
 pub mod write;
 
-use crate::backend::lazy::LazyBackend;
 use async_channel::{Receiver, Sender};
 use async_trait::async_trait;
-use std::ops::RangeBounds;
 use std::sync::Arc;
 
 #[derive(Copy, Clone)]
@@ -24,8 +22,8 @@ impl Default for BufferRingConfig {
 pub struct BufferRing<const SIZE: usize, Impl: BufferRingImpl<SIZE>> {
     config: BufferRingConfig,
 
-    unused_buffers: Receiver<Impl::Buffer>,
-    buffer_return: Sender<Impl::Buffer>,
+    unused_buffers: Receiver<Impl::InitialBuffer>,
+    buffer_return: Sender<Impl::InitialBuffer>,
 
     implementation: Arc<Impl>,
 }
@@ -44,7 +42,7 @@ trait BufferRingImpl<const SIZE: usize> {
 }
 
 impl<const SIZE: usize, Impl: BufferRingImpl<SIZE>> BufferRing<SIZE, Impl> {
-    pub fn new(implementation: Impl, config: BufferRingConfig) -> Self {
+    pub fn new_from(implementation: Impl, config: BufferRingConfig) -> Self {
         let buffer_count = config.total_mem / SIZE;
         let (buffer_return, unused_buffers) = async_channel::bounded(buffer_count);
         for _ in 0..buffer_count {
@@ -74,7 +72,7 @@ impl<const SIZE: usize, Impl: BufferRingImpl<SIZE>> BufferRing<SIZE, Impl> {
     }
 
     /// Buffer *must* have come from this ring. Executes in a tokio task
-    fn push(&self, buffer: Impl::Buffer) {
+    fn push(&self, buffer: Impl::FinalBuffer) {
         let ret = self.buffer_return.clone();
         let local_impl = self.implementation.clone();
         tokio::task::spawn(async move {

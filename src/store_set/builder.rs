@@ -1,10 +1,12 @@
 use crate::externs::NamedExtern;
-use crate::instance::data::DataInstance;
-use crate::instance::element::ElementInstance;
+use crate::instance::data::{DeviceDataInstance, HostDataInstance};
+use crate::instance::element::{DeviceElementInstance, HostElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
-use crate::instance::global::abstr::AbstractGlobalInstance;
-use crate::instance::memory::abstr::AbstractMemoryInstanceSet;
-use crate::instance::table::abstr::AbstractTableInstanceSet;
+use crate::instance::global::abstr::{DeviceAbstractGlobalInstance, HostAbstractGlobalInstance};
+use crate::instance::memory::abstr::{
+    DeviceAbstractMemoryInstanceSet, HostAbstractMemoryInstanceSet,
+};
+use crate::instance::table::abstr::{DeviceAbstractTableInstanceSet, HostAbstractTableInstanceSet};
 use crate::instance::ModuleInstance;
 use crate::{Backend, Engine, Func, Module, StoreSet};
 use std::sync::Arc;
@@ -17,12 +19,12 @@ where
 {
     backend: Arc<B>,
 
-    tables: AbstractTableInstanceSet<B>,
-    memories: AbstractMemoryInstanceSet<B>,
-    globals: AbstractGlobalInstance<B>,
+    tables: HostAbstractTableInstanceSet<B>,
+    memories: HostAbstractMemoryInstanceSet<B>,
+    globals: HostAbstractGlobalInstance<B>,
     // Immutable so don't need to be abstr
-    elements: ElementInstance<B>,
-    datas: DataInstance<B>,
+    elements: HostElementInstance<B>,
+    datas: HostDataInstance<B>,
     functions: FuncsInstance<B, T>,
 }
 
@@ -31,15 +33,15 @@ where
     B: Backend,
 {
     pub fn new(engine: &Engine<B>) -> Self {
+        let backend = engine.backend();
         Self {
-            backend: engine.backend(),
-
             functions: FuncsInstance::new(),
-            tables: AbstractTableInstanceSet::new(engine.backend()),
-            memories: AbstractMemoryInstanceSet::new(engine.backend()),
-            globals: AbstractGlobalInstance::new(engine.backend()),
-            elements: ElementInstance::new(engine.backend()),
-            datas: DataInstance::new(engine.backend()),
+            tables: HostAbstractTableInstanceSet::new(engine.backend()),
+            memories: HostAbstractMemoryInstanceSet::new(engine.backend()),
+            globals: HostAbstractGlobalInstance::new(&backend),
+            elements: HostElementInstance::new(engine.backend()),
+            datas: HostDataInstance::new(engine.backend()),
+            backend,
         }
     }
 
@@ -57,13 +59,17 @@ where
         // Validation
         let validated_imports = module.typecheck_imports(&imports)?;
 
+        // Predict the function pointers that we *will* be creating, for ref evaluation
+        let predicted_func_ptrs = module.predict_functions(&self.functions);
+
         // Globals
         let global_ptrs = module
-            .initialize_globals(&mut self.globals, validated_imports.globals())
+            .initialize_globals(
+                &mut self.globals,
+                validated_imports.globals(),
+                &predicted_func_ptrs,
+            )
             .await;
-
-        // Predict the function pointers that we *will* be creating
-        let predicted_func_ptrs = module.predict_functions(&self.functions);
 
         // Elements
         let element_ptrs = module
@@ -146,13 +152,44 @@ where
     }
 
     /// Takes this builder and makes it immutable, allowing instances to be created from it
-    pub fn complete(self) -> CompletedBuilder<B, T> {
-        CompletedBuilder { inner: self }
+    pub async fn complete(self) -> CompletedBuilder<B, T> {
+        let Self {
+            backend,
+            tables,
+            memories,
+            globals,
+            elements,
+            datas,
+            functions,
+        } = self;
+
+        let globals = globals.unmap().await;
+        let elements = elements.unmap().await;
+        let datas = datas.unmap().await;
+        let tables = tables.unmap().await;
+        let memories = memories.unmap().await;
+        CompletedBuilder {
+            backend,
+            tables,
+            memories,
+            globals,
+            elements,
+            datas,
+            functions,
+        }
     }
 }
 
 pub struct CompletedBuilder<B: Backend, T> {
-    inner: StoreSetBuilder<B, T>, // Just hide the builder :)
+    backend: Arc<B>,
+
+    // Move host things to GPU
+    tables: DeviceAbstractTableInstanceSet<B>,
+    memories: DeviceAbstractMemoryInstanceSet<B>,
+    globals: DeviceAbstractGlobalInstance<B>,
+    elements: DeviceElementInstance<B>,
+    datas: DeviceDataInstance<B>,
+    functions: FuncsInstance<B, T>,
 }
 
 impl<B: Backend, T> CompletedBuilder<B, T> {

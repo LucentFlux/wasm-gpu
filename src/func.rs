@@ -5,8 +5,9 @@ use std::marker::PhantomData;
 use wasmparser::{FuncType, ValType};
 
 use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
-use crate::instance::memory::concrete::{MemoryInstanceSet, MemoryInstanceView};
-use crate::instance::memory::concrete::{MemoryInstanceViewMut, MemoryPtr};
+use crate::instance::memory::concrete::{
+    HostMemoryInstanceSet, MemoryPtr, MemoryView, MemoryViewMut,
+};
 use crate::instance::ptrs::AbstractPtr;
 use crate::instance::ModuleInstance;
 use crate::store_set::StoreSet;
@@ -153,33 +154,11 @@ where
 {
     // Decomposed store
     data: &'a mut Vec<T>,
-    memory: &'a mut MemoryInstanceSet<B>,
+    memory: &'a mut HostMemoryInstanceSet<B>,
 
     // Info into store data
     index: usize,
     instance: &'a ModuleInstance<B, T>,
-}
-
-pub struct ViewedSlice<'a, B: Backend, T> {
-    ptr: MemoryPtr<B, T>,
-    view: MemoryInstanceView<'a, B>,
-}
-
-impl<'a, B: Backend, T> AsRef<[&'a [u8; 4]]> for ViewedSlice<'a, B, T> {
-    fn as_ref(&self) -> &[&'a [u8; 4]] {
-        self.view.get(&self.ptr).unwrap()
-    }
-}
-
-pub struct ViewedSliceMut<'a, B: Backend, T> {
-    ptr: MemoryPtr<B, T>,
-    view: MemoryInstanceViewMut<'a, B>,
-}
-
-impl<'a, B: Backend, T> AsRef<[&'a mut [u8; 4]]> for ViewedSliceMut<'a, B, T> {
-    fn as_ref(&self) -> &[&'a mut [u8; 4]] {
-        self.view.get(&self.ptr).unwrap()
-    }
 }
 
 impl<'a, B, T> Caller<'a, B, T>
@@ -208,46 +187,22 @@ where
         return self.data.get_mut(self.index).unwrap();
     }
 
-    pub async fn get_memory<S: ToRange<usize> + Send>(
-        &self,
-        name: &str,
-        bounds: S,
-    ) -> Option<ViewedSlice<B, T>> {
+    pub async fn get_memory(&self, name: &str) -> Option<MemoryView<B>> {
         let memptr = self.instance.get_memory_export(name).ok()?;
         let memptr = memptr.concrete(self.index);
 
-        let view = self.memory.view::<T, S>(bounds).await;
+        let view = self.memory.get::<T>(memptr);
 
-        // Check pointer is valid
-        {
-            let slice = view.get(&memptr);
-            if slice.is_none() {
-                return None;
-            }
-        }
-
-        return Some(ViewedSlice { ptr: memptr, view });
+        Some(view)
     }
 
-    pub async fn get_memory_mut<S: ToRange<usize> + Send>(
-        &'a mut self,
-        name: &str,
-        bounds: S,
-    ) -> Option<ViewedSliceMut<B, T>> {
+    pub async fn get_memory_mut(&self, name: &str) -> Option<MemoryViewMut<B>> {
         let memptr = self.instance.get_memory_export(name).ok()?;
         let memptr = memptr.concrete(self.index);
 
-        let view = self.memory.view_mut::<T, S>(bounds).await;
+        let view = self.memory.get_mut::<T>(memptr);
 
-        // Check pointer is valid
-        {
-            let slice = view.get(&memptr);
-            if slice.is_none() {
-                return None;
-            }
-        }
-
-        return Some(ViewedSliceMut { ptr: memptr, view });
+        Some(view)
     }
 }
 
@@ -304,14 +259,12 @@ mod tests {
                 let size = size.clone();
                 Box::pin(async move {
                     let mem = caller
-                        .get_memory("mem", ..)
+                        .get_memory("mem")
                         .await
                         .expect("memory mem not found");
 
-                    let mem = mem.as_ref().into_iter().flat_map(|v| v.into_iter());
-
-                    for (b1, b2) in expected_data.iter().zip_eq(mem) {
-                        assert_eq!(*b1, *b2);
+                    for (i, b) in expected_data.iter().enumerate() {
+                        assert_eq!(*b, mem.get(i));
                     }
 
                     return Ok(());

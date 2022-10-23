@@ -2,12 +2,12 @@ pub mod error;
 pub mod module_environ;
 
 use crate::externs::NamedExtern;
-use crate::instance::data::{DataInstance, DataPtr};
-use crate::instance::element::{ElementInstance, ElementPtr};
+use crate::instance::data::{DataPtr, HostDataInstance};
+use crate::instance::element::{ElementPtr, HostElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
-use crate::instance::global::abstr::{AbstractGlobalInstance, AbstractGlobalPtr};
-use crate::instance::memory::abstr::{AbstractMemoryInstanceSet, AbstractMemoryPtr};
-use crate::instance::table::abstr::{AbstractTableInstanceSet, AbstractTablePtr};
+use crate::instance::global::abstr::{AbstractGlobalPtr, HostAbstractGlobalInstance};
+use crate::instance::memory::abstr::{AbstractMemoryPtr, HostAbstractMemoryInstanceSet};
+use crate::instance::table::abstr::{AbstractTablePtr, HostAbstractTableInstanceSet};
 use crate::module::module_environ::{
     ImportTypeRef, ModuleEnviron, ModuleExport, ParsedElementKind, ParsedModule,
 };
@@ -160,11 +160,10 @@ where
     /// module, then writes the initial values
     pub(crate) async fn initialize_globals<T>(
         &self,
-        globals_instance: &mut AbstractGlobalInstance<B>,
-        globals: impl Iterator<Item = AbstractGlobalPtr<B, T>>,
+        globals_instance: &mut HostAbstractGlobalInstance<B>,
+        global_imports: impl Iterator<Item = AbstractGlobalPtr<B, T>>,
+        module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<AbstractGlobalPtr<B, T>> {
-        let globals = globals.collect_vec();
-
         // Make space for the values
         let values_len: usize = self
             .parsed
@@ -172,15 +171,13 @@ where
             .iter()
             .map(|g| wasm_ty_bytes(g.ty.content_type))
             .sum();
-        let values_len = values_len - globals.len(); // The imports don't take any space
         globals_instance.reserve(values_len).await;
 
         // Add the values
-        let mut imports_iter = globals.into_iter();
-        let mut results = Vec::new();
+        let mut results = global_imports.into_iter().collect_vec();
         for global in self.parsed.globals.iter() {
             let ptr: AbstractGlobalPtr<B, T> = globals_instance
-                .add_global(global.clone(), &mut imports_iter, results.as_slice())
+                .add_global(global.clone(), &results, &module_func_ptrs)
                 .await;
             results.push(ptr);
         }
@@ -204,9 +201,9 @@ where
     /// Extends elements buffers to be shared by all stores of a set, as passive elements are immutable
     pub(crate) async fn initialize_elements<T>(
         &self,
-        elements: &mut ElementInstance<B>,
+        elements: &mut HostElementInstance<B>,
         // Needed for const expr evaluation
-        module_globals: &mut AbstractGlobalInstance<B>,
+        module_globals: &mut HostAbstractGlobalInstance<B>,
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<ElementPtr<B, T>> {
@@ -241,12 +238,12 @@ where
 
     pub(crate) async fn initialize_tables<T>(
         &self,
-        tables: &mut AbstractTableInstanceSet<B>,
+        tables: &mut HostAbstractTableInstanceSet<B>,
         imported_tables: Iter<'_, AbstractTablePtr<B, T>>,
-        elements: &mut ElementInstance<B>,
+        elements: &mut HostElementInstance<B>,
         module_element_ptrs: &Vec<ElementPtr<B, T>>,
         // Needed for const expr evaluation
-        module_globals: &mut AbstractGlobalInstance<B>,
+        module_globals: &mut HostAbstractGlobalInstance<B>,
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<AbstractTablePtr<B, T>> {
@@ -291,7 +288,7 @@ where
 
     pub(crate) async fn initialize_datas<T>(
         &self,
-        datas: &mut DataInstance<B>,
+        datas: &mut HostDataInstance<B>,
     ) -> Vec<DataPtr<B, T>> {
         // Reserve space first
         let size: usize = self.parsed.datas.iter().map(|e| e.data.len()).sum();
@@ -309,12 +306,12 @@ where
 
     pub(crate) async fn initialize_memories<T>(
         &self,
-        memory_set: &mut AbstractMemoryInstanceSet<B>,
+        memory_set: &mut HostAbstractMemoryInstanceSet<B>,
         imported_memories: Iter<'_, AbstractMemoryPtr<B, T>>,
-        datas: &mut DataInstance<B>,
+        datas: &mut HostDataInstance<B>,
         module_data_ptrs: &Vec<DataPtr<B, T>>,
         // Needed for const expr evaluation
-        module_globals: &mut AbstractGlobalInstance<B>,
+        module_globals: &mut HostAbstractGlobalInstance<B>,
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<AbstractMemoryPtr<B, T>> {

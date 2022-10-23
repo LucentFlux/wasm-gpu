@@ -7,17 +7,25 @@ use wasmparser::TableType;
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
 
-/// Context in which an abstr table pointer is valid
-pub struct AbstractTableInstanceSet<B>
+pub struct DeviceAbstractTableInstanceSet<B>
 where
     B: Backend,
 {
     id: usize,
     backend: Arc<B>,
-    tables: Vec<AbstractTableInstance<B>>,
+    tables: Vec<DeviceAbstractTableInstance<B>>,
 }
 
-impl<B> AbstractTableInstanceSet<B>
+pub struct HostAbstractTableInstanceSet<B>
+where
+    B: Backend,
+{
+    id: usize,
+    backend: Arc<B>,
+    tables: Vec<HostAbstractTableInstance<B>>,
+}
+
+impl<B> HostAbstractTableInstanceSet<B>
 where
     B: Backend,
 {
@@ -31,7 +39,7 @@ where
 
     pub async fn add_table<T>(&mut self, plan: &TableType) -> AbstractTablePtr<B, T> {
         let ptr = self.tables.len();
-        self.tables.push(AbstractTableInstance::new(
+        self.tables.push(HostAbstractTableInstance::new(
             &self.backend,
             plan.initial as usize,
         ));
@@ -52,30 +60,51 @@ where
             .initialize::<T>(data, offset)
             .await
     }
+
+    pub async fn unmap(self) -> DeviceAbstractTableInstanceSet<B> {
+        let tables = self.tables.into_iter().map(|t| t.unmap());
+        let tables = futures::future::join_all(tables).await;
+
+        DeviceAbstractTableInstanceSet {
+            id: self.id,
+            backend: self.backend,
+            tables,
+        }
+    }
 }
 
-pub struct AbstractTableInstance<B>
+pub struct DeviceAbstractTableInstance<B>
 where
     B: Backend,
 {
-    /// Holds pointers
-    references: B::MainMemoryBlock,
-    len: usize,
+    references: B::DeviceMemoryBlock,
 }
 
-impl<B> AbstractTableInstance<B>
+pub struct HostAbstractTableInstance<B>
+where
+    B: Backend,
+{
+    references: B::MainMemoryBlock,
+}
+
+impl<B> HostAbstractTableInstance<B>
 where
     B: Backend,
 {
     pub fn new(backend: &B, initial_size: usize) -> Self {
         Self {
-            references: backend.create_device_memory_block(initial_size, None),
-            len: 0,
+            references: backend.create_device_memory_block(initial_size, None).map(),
         }
     }
 
     pub async fn initialize<T>(&mut self, data: &[u8], offset: usize) {
         self.references.write(data, offset).await;
+    }
+
+    pub async fn unmap(self) -> DeviceAbstractTableInstance<B> {
+        DeviceAbstractTableInstance {
+            references: self.references.unmap().await,
+        }
     }
 }
 

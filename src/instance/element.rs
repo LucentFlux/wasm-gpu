@@ -1,47 +1,59 @@
 use crate::atomic_counter::AtomicCounter;
-use crate::memory::DynamicMemoryBlock;
-use crate::typed::{FuncRef, WasmTyVal};
-use crate::{impl_immutable_ptr, Backend};
+use crate::typed::{FuncRef, WasmTyVal, WasmTyVec};
+use crate::{impl_immutable_ptr, Backend, MainMemoryBlock, MemoryBlock};
 use itertools::Itertools;
-use std::sync::Arc;
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
 
-pub struct ElementInstance<B>
+pub struct DeviceElementInstance<B>
 where
     B: Backend,
 {
-    /// Holds pointers that can later be copied into tables
-    references: DynamicMemoryBlock<B>,
-    len: usize,
+    references: B::DeviceMemoryBlock,
 
     id: usize,
 }
 
-impl<B> ElementInstance<B>
-where
-    B: Backend,
-{
-    pub fn new(backend: Arc<B>) -> Self {
+impl<B: Backend> DeviceElementInstance<B> {
+    pub fn new(backend: &B) -> Self {
         Self {
-            references: DynamicMemoryBlock::new(backend, 0, None),
-            len: 0,
+            references: backend.create_device_memory_block(0, None),
             id: COUNTER.next(),
         }
     }
 
+    pub async fn map(self) -> HostElementInstance<B> {
+        HostElementInstance {
+            references: self.references.map().await,
+            id: self.id,
+            head: self.id,
+        }
+    }
+}
+
+pub struct HostElementInstance<B>
+where
+    B: Backend,
+{
+    references: B::MainMemoryBlock,
+    head: usize,
+
+    id: usize,
+}
+
+impl<B: Backend> HostElementInstance<B> {
     /// Resizes the GPU buffers backing these elements by the specified amount.
     ///
     /// values_count is given in units of bytes, so an f64 is 8 bytes
     pub async fn reserve(&mut self, values_size: usize) {
-        self.references.extend(values_size).await;
+        self.references.flush_extend(values_size).await;
     }
 
     pub async fn add_element<T>(&mut self, element: Vec<Option<u32>>) -> ElementPtr<B, T> {
-        let start = self.len;
-        let end = self.len + (element.len() * std::mem::size_of::<u32>());
+        let start = self.head;
+        let end = start + (element.len() * FuncRef::byte_count());
         assert!(
-            end <= self.references.len().await,
+            end <= self.references.len(),
             "not enough space reserved to insert element to device buffer"
         );
 
@@ -55,17 +67,30 @@ where
                 .as_slice(),
         );
 
-        self.len = end;
+        self.head = end;
 
         return ElementPtr::new(start, self.id, element.len());
     }
 
-    pub(crate) async fn get<T>(&mut self, ptr: &ElementPtr<B, T>) -> &[u8] {
+    pub async fn get<T>(&mut self, ptr: &ElementPtr<B, T>) -> &[u8] {
         assert_eq!(ptr.id, self.id);
 
         let start = ptr.ptr;
         let end = start + (ptr.len * std::mem::size_of::<u32>());
         return self.references.as_slice(start..end).await;
+    }
+
+    pub async fn unmap(self) -> DeviceElementInstance<B> {
+        assert_eq!(
+            self.head,
+            self.references.len(),
+            "space reserved but not used"
+        );
+
+        DeviceElementInstance {
+            references: self.references.unmap().await,
+            id: self.id,
+        }
     }
 }
 

@@ -17,22 +17,10 @@ pub enum ImportTypeRef {
     Global(GlobalType),
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum GlobalInit {
-    I32Const(i32),
-    I64Const(i64),
-    F32Const(u32),
-    F64Const(u64),
-    V128Const(u128),
-    RefNullConst,
-    RefFunc(u32),
-    GetGlobal(u32),
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct Global {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Global<'data> {
     pub ty: GlobalType,
-    pub initializer: GlobalInit,
+    pub initializer: Vec<Operator<'data>>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -78,7 +66,7 @@ pub struct ParsedModule<'data> {
     pub imports: Vec<(&'data str, &'data str, ImportTypeRef)>,
     pub tables: Vec<TableType>,
     pub memories: Vec<MemoryType>,
-    pub globals: Vec<Global>,
+    pub globals: Vec<Global<'data>>,
     pub exports: HashMap<String, ModuleExport>,
     pub start_func: Option<u32>,
     pub elements: Vec<ParsedElement<'data>>,
@@ -240,24 +228,7 @@ impl ModuleEnviron {
                 for entry in globals {
                     let wasmparser::Global { ty, init_expr } = entry?;
                     let mut init_expr_reader = init_expr.get_binary_reader();
-                    let initializer = match init_expr_reader.read_operator()? {
-                        Operator::I32Const { value } => GlobalInit::I32Const(value),
-                        Operator::I64Const { value } => GlobalInit::I64Const(value),
-                        Operator::F32Const { value } => GlobalInit::F32Const(value.bits()),
-                        Operator::F64Const { value } => GlobalInit::F64Const(value.bits()),
-                        Operator::V128Const { value } => {
-                            GlobalInit::V128Const(u128::from_le_bytes(*value.bytes()))
-                        }
-                        Operator::RefNull { ty: _ } => GlobalInit::RefNullConst,
-                        Operator::RefFunc { function_index } => GlobalInit::RefFunc(function_index),
-                        Operator::GlobalGet { global_index } => GlobalInit::GetGlobal(global_index),
-                        s => {
-                            return Err(WasmError::Unsupported(format!(
-                                "unsupported init expr in global section: {:?}",
-                                s
-                            )));
-                        }
-                    };
+                    let initializer = init_expr_reader.into_iter().collect();
                     let ty = Global { ty, initializer };
                     result.globals.push(ty);
                 }

@@ -1,18 +1,19 @@
 mod compute_utils;
 
+use crate::backend::lazy::buffer_ring::BufferRingConfig;
 use crate::backend::lazy::{Lazy, LazyBackend};
 use std::fmt::{Debug, Formatter};
 
-struct VulkanoBackendLazy {}
+struct VulkanoBackendLazy<const CHUNK_SIZE: usize> {}
 
-impl Debug for VulkanoBackendLazy {
+impl<const CHUNK_SIZE: usize> Debug for VulkanoBackendLazy<CHUNK_SIZE> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "vulkano backend")
     }
 }
 
-impl LazyBackend for VulkanoBackendLazy {
-    const CHUNK_SIZE: usize = 0;
+impl<const CHUNK_SIZE: usize> LazyBackend for VulkanoBackendLazy<CHUNK_SIZE> {
+    const CHUNK_SIZE: usize = CHUNK_SIZE;
     type Utils = ();
     type DeviceToMainBufferMapped = ();
     type MainToDeviceBufferMapped = ();
@@ -41,4 +42,14 @@ impl LazyBackend for VulkanoBackendLazy {
     }
 }
 
-pub type VulkanoBackend = Lazy<VulkanoBackendLazy>;
+pub struct VulkanoBackendConfig {
+    pub(crate) buffer_ring: BufferRingConfig,
+}
+
+pub type VulkanoBackend<const CHUNK_SIZE: usize> = Lazy<VulkanoBackendLazy<CHUNK_SIZE>>;
+
+impl<const CHUNK_SIZE: usize> VulkanoBackend<CHUNK_SIZE> {
+    pub fn new(cfg: VulkanoBackendConfig) -> Self {
+        Lazy::new_from(VulkanoBackendLazy {}, cfg.buffer_ring)
+    }
+}

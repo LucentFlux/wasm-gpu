@@ -1,14 +1,13 @@
 use crate::backend::lazy::buffer_ring::read::ReadBufferRing;
 use crate::backend::lazy::buffer_ring::write::WriteBufferRing;
 use crate::backend::lazy::{DeviceOnlyBuffer, LazyBackend};
-use crate::memory::{DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
+use crate::memory::{MainMemoryBlock, MemoryBlock};
 use crate::typed::ToRange;
-use crate::Backend;
+use crate::DeviceMemoryBlock;
 use async_trait::async_trait;
 use futures::future::join_all;
 use std::alloc;
 use std::alloc::Layout;
-use std::cmp::min;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -156,8 +155,13 @@ struct HostMemoryBlob {
 }
 
 impl HostMemoryBlob {
+    fn new_layout(len: usize) -> Layout {
+        assert!(len > 0, "cannot allocate 0-length blob");
+        Layout::array::<u8>(len).unwrap()
+    }
+
     fn new(len: usize) -> Self {
-        let layout = Layout::array::<u8>(len).unwrap();
+        let layout = Self::new_layout(len);
         let ptr = unsafe { alloc::alloc(layout) };
         Self { ptr, len, layout }
     }
@@ -208,6 +212,18 @@ impl HostMemoryBlob {
 
         return slice;
     }
+
+    fn resize(&mut self, new_size: usize) {
+        if new_size == self.len {
+            return;
+        }
+
+        let new_ptr = unsafe { alloc::realloc(self.ptr, self.layout, new_size) };
+        assert!(!new_ptr.is_null(), "failed to allocate blob");
+        self.layout = Self::layout(new_size);
+        self.ptr = new_ptr;
+        self.len = new_size;
+    }
 }
 
 impl Drop for HostMemoryBlob {
@@ -223,29 +239,33 @@ unsafe impl Send for HostMemoryBlob where Box<[u8]>: Send {}
 unsafe impl Sync for HostMemoryBlob where Box<[u8]>: Sync {}
 
 struct LazyBuffer<B: LazyBackend> {
-    buffer: LazyBufferMemoryBlock<B>,
+    backing: LazyBufferMemoryBlock<B>,
     data: HostMemoryBlob,
-    chunks: Vec<LazyChunk<B::CHUNK_SIZE>>,
+    chunks: Vec<LazyChunk<{ B::CHUNK_SIZE }>>,
 }
 
 impl<B: LazyBackend> LazyBuffer<B> {
-    pub fn new(buffer: LazyBufferMemoryBlock<B>) -> Self {
+    fn new_chunk(i: usize) -> LazyChunk<{ B::CHUNK_SIZE }> {
+        LazyChunk::new(i * B::CHUNK_SIZE)
+    }
+
+    pub fn new(backing: LazyBufferMemoryBlock<B>) -> Self {
         let alignment = B::CHUNK_SIZE;
-        let full_len = buffer.buffer.len();
+        let full_len = backing.buffer.len();
 
         debug_assert_eq!(full_len % alignment, 0); // Exact chunks
 
         let mut chunks = Vec::new();
         chunks.reserve_exact(full_len / alignment);
         for i in 0..(full_len / alignment) {
-            chunks.push(LazyChunk::new(i * alignment))
+            chunks.push(Self::new_chunk(i))
         }
 
         // Create an unmanaged buffer in memory
         let data = HostMemoryBlob::new(full_len);
 
         Self {
-            buffer,
+            backing,
             data,
             chunks,
         }
@@ -266,13 +286,13 @@ impl<B: LazyBackend> LazyBuffer<B> {
 
         assert_ne!(byte_bounds.end, 0);
 
-        let start_chunk_inclusive = byte_bounds.start / BUFFER_SIZE;
-        let end_chunk_inclusive = (byte_bounds.end - 1) / BUFFER_SIZE;
+        let start_chunk_inclusive = byte_bounds.start / B::CHUNK_SIZE;
+        let end_chunk_inclusive = (byte_bounds.end - 1) / B::CHUNK_SIZE;
 
         // Check we found the right chunks
         let start_byte_inclusive = self.chunks[start_chunk_inclusive].data_offset as usize;
         let end_byte_exclusive =
-            self.chunks[end_chunk_inclusive].data_offset as usize + BUFFER_SIZE;
+            self.chunks[end_chunk_inclusive].data_offset as usize + B::CHUNK_SIZE;
         assert!(start_byte_inclusive <= byte_bounds.start);
         assert!(byte_bounds.end <= end_byte_exclusive);
 
@@ -282,7 +302,7 @@ impl<B: LazyBackend> LazyBuffer<B> {
         // Load all async
         let futures = chunks
             .into_iter()
-            .map(|chunk| chunk.ensure_downloaded(&self.buffer, mark_as_dirty, &self.data));
+            .map(|chunk| chunk.ensure_downloaded(&self.backing, mark_as_dirty, &self.data));
         join_all(futures).await;
     }
 
@@ -308,15 +328,53 @@ impl<B: LazyBackend> LazyBuffer<B> {
         return self.data.as_slice_mut(bounds);
     }
 
-    async fn unload(mut self) -> LazyBufferMemoryBlock<BUFFER_SIZE> {
+    async fn unload(mut self) -> LazyBufferMemoryBlock<B> {
         let futures = self
             .chunks
             .iter_mut()
-            .map(|chunk| chunk.upload(&self.buffer, &self.data));
+            .map(|chunk| chunk.upload(&self.backing, &self.data));
 
         join_all(futures).await;
 
-        self.buffer
+        self.backing
+    }
+
+    async fn resize_inplace(&mut self, new_len: usize) {
+        if new_len == self.backing.visible_len {
+            return;
+        }
+
+        // Calculate chunks
+        let new_real_size = min_alignment_gt(new_len, B::CHUNK_SIZE);
+        let new_chunks_count = new_real_size / B::CHUNK_SIZE;
+
+        // We may not need to change if we're within a chunk size still
+        if new_real_size != self.backing.buffer.len() {
+            // Create a new buffer and populate, without dropping any of our modified data
+            let mut new_buffer = self
+                .backing
+                .backend
+                .create_device_only_memory_block(new_len, None);
+            new_buffer.copy_from(&self.backing.buffer).await;
+        }
+
+        let chunks_count = self.chunks.len();
+        if new_chunks_count != chunks_count {
+            // Shrink chunks
+            for _ in new_chunks_count..chunks_count {
+                self.chunks
+                    .pop()
+                    .expect("chunks was empty when it shouldn't be")
+            }
+            // Grow chunks
+            let chunks_count = self.chunks.len();
+            for i in chunks_count..new_chunks_count {
+                self.chunks.push(Self::new_chunk(i))
+            }
+
+            // Resize blob
+            self.data.resize(new_real_size);
+        }
     }
 }
 
@@ -327,11 +385,11 @@ pub struct MappedLazyBuffer<B: LazyBackend> {
 #[async_trait]
 impl<B: LazyBackend> MemoryBlock<B> for MappedLazyBuffer<B> {
     fn backend(&self) -> &B {
-        self.data.buffer.backend()
+        self.data.backing.backend()
     }
 
     fn len(&self) -> usize {
-        self.data.buffer.visible_len
+        self.data.backing.visible_len
     }
 }
 
@@ -345,10 +403,16 @@ impl<B: LazyBackend> MainMemoryBlock<B> for MappedLazyBuffer<B> {
         self.data.as_slice_mut(bounds).await
     }
 
-    async fn move_to_device_memory(self) -> UnmappedLazyBuffer<B> {
+    async fn unmap(self) -> UnmappedLazyBuffer<B> {
         UnmappedLazyBuffer {
-            data: self.data.buffer,
+            data: self.data.backing,
         }
+    }
+
+    /// The `flush_resize` method from this trait can be more efficiently re-implemented here to avoid
+    /// flushing
+    async fn flush_resize(&mut self, new_len: usize) {
+        self.data.resize_inplace(new_len).await
     }
 }
 
@@ -392,7 +456,7 @@ impl<B: LazyBackend> MemoryBlock<B> for UnmappedLazyBuffer<B> {
 
 #[async_trait]
 impl<B: LazyBackend> DeviceMemoryBlock<B> for UnmappedLazyBuffer<B> {
-    async fn move_to_main_memory(self) -> MappedLazyBuffer<B> {
+    async fn map(self) -> MappedLazyBuffer<B> {
         MappedLazyBuffer {
             data: LazyBuffer::new(self.data),
         }

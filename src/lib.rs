@@ -8,8 +8,7 @@
 #![feature(split_array)]
 #![allow(incomplete_features)]
 #![feature(adt_const_params)]
-
-extern crate core;
+#![feature(generic_const_exprs)]
 
 mod atomic_counter;
 mod backend;
@@ -39,9 +38,8 @@ pub mod wasp {
     pub use panic_on_any::PanicOnAny;
 
     // Backends
-    pub use crate::wgpu::BufferRingConfig;
-    pub use crate::wgpu::WgpuBackend;
-    pub use crate::wgpu::WgpuBackendConfig;
+    pub use crate::vulkano::VulkanoBackend;
+    pub use crate::vulkano::VulkanoBackendConfig;
     pub use backend::Backend;
     // Memory
     pub use memory::DeviceMemoryBlock;

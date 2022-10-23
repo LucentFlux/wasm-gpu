@@ -3,14 +3,14 @@ use crate::backend::lazy::{DeviceToMainBufferMapped, DeviceToMainBufferUnmapped,
 use async_trait::async_trait;
 use std::sync::Arc;
 
-pub type ReadBufferRing<B: LazyBackend> = BufferRing<B::CHUNK_SIZE, ReadImpl<B>>;
+pub type ReadBufferRing<B: LazyBackend> = BufferRing<{ B::CHUNK_SIZE }, ReadImpl<B>>;
 
 struct ReadImpl<B: LazyBackend> {
     backend: Arc<B>,
 }
 
 #[async_trait]
-impl<B: LazyBackend> BufferRingImpl<B::CHUNK_SIZE> for ReadImpl<B> {
+impl<B: LazyBackend> BufferRingImpl<{ B::CHUNK_SIZE }> for ReadImpl<B> {
     type InitialBuffer = B::DeviceToMainBufferUnmapped;
     type FinalBuffer = B::DeviceToMainBufferMapped;
 
@@ -25,13 +25,13 @@ impl<B: LazyBackend> BufferRingImpl<B::CHUNK_SIZE> for ReadImpl<B> {
 
 impl<B: LazyBackend> ReadBufferRing<B> {
     pub fn new(backend: Arc<B>, config: BufferRingConfig) -> Self {
-        ReadBufferRing::new(ReadImpl { backend }, config)
+        BufferRing::new_from(ReadImpl { backend }, config)
     }
 
     /// Executes a closure with a slice of a GPU buffer.
     ///
     /// The slice generated has length BUFFER_SIZE
-    pub async fn with_slice<Res, F: FnOnce(&[u8; BUFFER_SIZE]) -> Res>(
+    pub async fn with_slice<Res, F: FnOnce(&[u8; B::CHUNK_SIZE]) -> Res>(
         &self,
         src: &B::DeviceOnlyBuffer,
         offset: usize,

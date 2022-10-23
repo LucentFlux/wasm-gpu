@@ -9,7 +9,7 @@ use crate::backend::lazy::buffer_ring::read::ReadBufferRing;
 use crate::backend::lazy::buffer_ring::write::WriteBufferRing;
 use crate::backend::lazy::buffer_ring::BufferRingConfig;
 use crate::backend::lazy::memory::{MappedLazyBuffer, UnmappedLazyBuffer};
-use crate::{Backend, DeviceMemoryBlock, MemoryBlock};
+use crate::Backend;
 use async_trait::async_trait;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -47,10 +47,15 @@ pub trait MainToDeviceBufferMapped<B: LazyBackend> {
 pub trait DeviceOnlyBuffer<B: LazyBackend> {
     fn backend(&self) -> &B;
     fn len(&self) -> usize;
+
+    /// Fills (as much as possible) this buffer from the other buffer.
+    /// If this buffer is smaller than the other then the other is truncated.
+    /// If the other is smaller than this buffer then the data stored in the remaining space is
+    /// implementation dependent, and should be treated as uninitialized.
     async fn copy_from(&mut self, other: &Self);
 }
 
-pub trait LazyBackend: Backend + Debug {
+pub trait LazyBackend: Debug {
     const CHUNK_SIZE: usize;
 
     type Utils: crate::compute_utils::Utils<Self>;
@@ -72,6 +77,7 @@ pub trait LazyBackend: Backend + Debug {
 }
 
 // Wrap a lazy backend to keep some more state
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Lazy<B: LazyBackend> {
     backend: Arc<B>,
 
@@ -80,7 +86,7 @@ pub struct Lazy<B: LazyBackend> {
 }
 
 impl<B: LazyBackend> Lazy<B> {
-    pub async fn new(backend: B, cfg: BufferRingConfig) -> Self {
+    pub fn new_from(backend: B, cfg: BufferRingConfig) -> Self {
         let backend = Arc::new(backend);
         Self {
             upload_buffers: Arc::new(WriteBufferRing::new(backend.clone(), cfg)),
@@ -91,20 +97,26 @@ impl<B: LazyBackend> Lazy<B> {
 }
 
 // Map the lazy backend API on to the generic backend API
-impl<L: LazyBackend> Backend for L {
+impl<B: LazyBackend> Backend for Lazy<B> {
     type DeviceMemoryBlock = UnmappedLazyBuffer<Self>;
     type MainMemoryBlock = MappedLazyBuffer<Self>;
-    type Utils = <Self as LazyBackend>::Utils;
+    type Utils = B::Utils;
 
     fn create_device_memory_block(
         &self,
         size: usize,
         initial_data: Option<&[u8]>,
     ) -> Self::DeviceMemoryBlock {
-        <Self as LazyBackend>::create_device_memory_block(self, size, initial_data)
+        UnmappedLazyBuffer::new(
+            self.backend.clone(),
+            self.upload_buffers.clone(),
+            self.download_buffers.clone(),
+            size,
+            initial_data,
+        )
     }
 
     fn get_utils(&self) -> &Self::Utils {
-        <Self as LazyBackend>::get_utils(self)
+        self.backend.get_utils()
     }
 }

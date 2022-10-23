@@ -5,7 +5,6 @@
 pub mod interleaved;
 
 use crate::Backend;
-use std::ops::RangeBounds;
 use std::ptr;
 
 use crate::typed::ToRange;
@@ -28,7 +27,7 @@ where
 {
     async fn as_slice<S: ToRange<usize> + Send>(&self, bounds: S) -> &[u8];
     async fn as_slice_mut<S: ToRange<usize> + Send>(&mut self, bounds: S) -> &mut [u8];
-    async fn move_to_device_memory(self) -> B::DeviceMemoryBlock;
+    async fn unmap(self) -> B::DeviceMemoryBlock;
 
     /// Convenience method for writing blocks of data
     async fn write(&mut self, data: &[u8], offset: usize) {
@@ -39,6 +38,8 @@ where
     }
 
     /// Resizes by moving off of main memory, reallocating and copying
+    ///
+    /// The `flush` portion of this operation is optional, and may be optimised away
     async fn flush_resize(&mut self, new_len: usize) {
         // We want to perform mem::replace, but with a value that doesn't exist yet, and do do this
         // async. This functionality doesn't yet exist in rust
@@ -46,9 +47,9 @@ where
             let tmp_mapped = ptr::read(self);
 
             // Must not panic before we get to `ptr::write`
-            let mut tmp_unmapped = tmp_mapped.move_to_device_memory().await;
+            let mut tmp_unmapped = tmp_mapped.unmap().await;
             tmp_unmapped.resize(new_len).await;
-            let tmp_mapped = tmp_unmapped.move_to_main_memory().await;
+            let tmp_mapped = tmp_unmapped.map().await;
 
             ptr::write(self, tmp_mapped);
         }
@@ -66,7 +67,7 @@ pub trait DeviceMemoryBlock<B>: MemoryBlock<B> + Sized
 where
     B: Backend,
 {
-    async fn move_to_main_memory(self) -> B::MainMemoryBlock;
+    async fn map(self) -> B::MainMemoryBlock;
     async fn copy_from(&mut self, other: &B::DeviceMemoryBlock);
 
     /// Resizes by reallocation and copying
