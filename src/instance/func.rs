@@ -1,7 +1,7 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::session::Session;
 use crate::typed::{FuncRef, Val, WasmTyVec};
-use crate::{impl_immutable_ptr, Backend, Func, StoreSet};
+use crate::{impl_immutable_ptr, Backend, DeviceStoreSet, Func};
 use anyhow::anyhow;
 use futures::future::BoxFuture;
 use futures::FutureExt;
@@ -107,7 +107,7 @@ impl<B: Backend, T> UntypedFuncPtr<B, T> {
     ///  - the function pointer does not refer to the store_set set
     fn call_all<'a>(
         &self,
-        stores: &'a mut StoreSet<B, T>,
+        stores: &'a mut DeviceStoreSet<B, T>,
         mut args_fn: impl FnMut(&T) -> Vec<Val>,
     ) -> BoxFuture<'a, Vec<anyhow::Result<Vec<Val>>>> {
         let args = stores.data.iter().map(args_fn).collect();
@@ -139,7 +139,7 @@ impl<B: Backend, T, Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<B, T, Pa
     ///  - the function pointer does not refer to the store_set set
     pub fn call_all<'a>(
         &self,
-        stores: &'a mut StoreSet<B, T>,
+        stores: &'a mut DeviceStoreSet<B, T>,
         mut args_fn: impl FnMut(&T) -> Params,
     ) -> BoxFuture<'a, Vec<anyhow::Result<Results>>> {
         let args = stores

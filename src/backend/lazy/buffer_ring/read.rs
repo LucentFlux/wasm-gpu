@@ -24,8 +24,8 @@ impl<L: LazyBackend> BufferRingImpl<L> for ReadImpl<L> {
 }
 
 impl<L: LazyBackend> ReadBufferRing<L> {
-    pub fn new(backend: Arc<L>, config: BufferRingConfig) -> Self {
-        BufferRing::new_from(ReadImpl { backend }, config)
+    pub async fn new(backend: Arc<L>, config: BufferRingConfig) -> Self {
+        BufferRing::new_from(ReadImpl { backend }, config).await
     }
 
     /// Executes a closure with a slice of a GPU buffer.

@@ -164,14 +164,25 @@ where
         global_imports: impl Iterator<Item = AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<AbstractGlobalPtr<B, T>> {
-        // Make space for the values
-        let values_len: usize = self
+        // Calculate space requirements
+        let (immutables, mutables): (Vec<_>, Vec<_>) = self
             .parsed
             .globals
             .iter()
-            .map(|g| wasm_ty_bytes(g.ty.content_type))
-            .sum();
-        globals_instance.reserve(values_len).await;
+            .map(|g| (g.ty.mutable, wasm_ty_bytes(g.ty.content_type)))
+            .partition(|(is_mutable, _)| *is_mutable);
+
+        let is_immutable = immutables.first().unwrap_or(&(false, 0)).0;
+        let is_mutable = mutables.first().unwrap_or(&(true, 0)).0;
+        assert!(is_immutable);
+        assert!(is_mutable);
+
+        let immutable_space: usize = immutables.into_iter().map(|(_, v)| v).sum();
+        let mutable_space: usize = mutables.into_iter().map(|(_, v)| v).sum();
+
+        // Reserve
+        globals_instance.reserve_immutable(immutable_space).await;
+        globals_instance.reserve_mutable(mutable_space).await;
 
         // Add the values
         let mut results = global_imports.into_iter().collect_vec();

@@ -1,8 +1,6 @@
 use crate::compute_utils::Utils;
 use crate::typed::ToRange;
 use crate::{Backend, DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
-use std::iter::Flatten;
-use std::slice::Iter;
 use std::sync::Arc;
 
 pub struct HostInterleavedBuffer<B, const STRIDE: usize>
@@ -17,7 +15,7 @@ pub struct InterleavedBufferView<'a>(Vec<Vec<&'a [u8]>>);
 pub struct InterleavedBufferViewMut<'a>(Vec<Vec<&'a mut [u8]>>);
 
 impl<'a> InterleavedBufferView<'a> {
-    pub fn get(&self, index: usize) -> Option<impl Iterator<Item = &'a [u8]>> {
+    pub fn get(&'a self, index: usize) -> Option<impl Iterator<Item = &'a u8>> {
         self.0
             .get(index)
             .map(|v| v.into_iter().map(|v2| v2.into_iter()).flatten())
@@ -25,9 +23,9 @@ impl<'a> InterleavedBufferView<'a> {
 }
 
 impl<'a> InterleavedBufferViewMut<'a> {
-    pub fn get(&mut self, index: usize) -> Option<impl Iterator<Item = &'a mut [u8]>> {
+    pub fn get(&'a mut self, index: usize) -> Option<impl Iterator<Item = &'a mut u8>> {
         self.0
-            .get(index)
+            .get_mut(index)
             .map(|v| v.into_iter().map(|v2| v2.into_iter()).flatten())
     }
 }
@@ -37,8 +35,8 @@ macro_rules! impl_get {
         $ret:path,
         with $self:ident on $bounds:ident
         using $as_slice:ident
-        and $split_array_ref:ident
-    ) => {
+        and $split_ref:ident
+    ) => {{
         let period = $self.count * STRIDE * 4;
 
         let s_len = $self.buffer.len();
@@ -56,15 +54,15 @@ macro_rules! impl_get {
         let mut interpretations = vec![Vec::new(); $self.count];
         while !s.is_empty() {
             for i in 0..$self.count {
-                let (lhs, rhs) = s.$split_array_ref();
+                let (lhs, rhs) = s.$split_ref(STRIDE);
 
                 interpretations.get_mut(i).unwrap().push(lhs);
                 s = rhs;
             }
         }
 
-        return $ret(interpretations);
-    };
+        $ret(interpretations)
+    }};
 }
 
 impl<B, const STRIDE: usize> HostInterleavedBuffer<B, STRIDE>
@@ -84,10 +82,10 @@ where
     ///
     /// Bounds gives the bounds for each abstract interleaved buffer, in units of `STRIDE * 4` bytes
     pub async fn get<S: ToRange<usize> + Send>(&self, bounds: S) -> InterleavedBufferView {
-        impl_get!(InterleavedBufferView,
+        return impl_get!(InterleavedBufferView,
             with self on bounds
             using as_slice
-            and split_array_ref
+            and split_at
         );
     }
 
@@ -98,10 +96,10 @@ where
         &mut self,
         bounds: S,
     ) -> InterleavedBufferViewMut {
-        impl_get!(InterleavedBufferViewMut,
+        return impl_get!(InterleavedBufferViewMut,
             with self on bounds
             using as_slice_mut
-            and split_array_mut
+            and split_at_mut
         );
     }
 }

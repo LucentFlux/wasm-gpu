@@ -144,7 +144,10 @@ pub trait WasmTyVec: Sized {
     fn try_from_bytes(bs: &[u8]) -> anyhow::Result<Self>;
     fn to_bytes(self: &Self) -> Vec<u8>;
     fn byte_count() -> usize {
-        Self::VAL_TYPES.into_iter(|ty| wasm_ty_bytes(ty)).sum()
+        Self::VAL_TYPES
+            .into_iter()
+            .map(|ty| wasm_ty_bytes(*ty))
+            .sum()
     }
 }
 

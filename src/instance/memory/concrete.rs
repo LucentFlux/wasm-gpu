@@ -40,7 +40,7 @@ impl<'a, B: Backend> MemoryView<'a, B> {
     pub async fn get(&self, index: usize) -> u8 {
         let chunk = index / STRIDE;
         let offset = index % STRIDE;
-        let view: InterleavedBufferView<STRIDE> = self.buf.get(chunk..=chunk).await;
+        let view: InterleavedBufferView = self.buf.get(chunk..=chunk).await;
 
         match view
             .get(self.index)
@@ -60,7 +60,7 @@ pub struct MemoryViewMut<'a, B: Backend> {
 }
 
 macro_rules! impl_get {
-    (with $self:ident, $ptr:ident using $get:ident making $MemoryView:ident) => {
+    (with $self:ident, $ptr:ident using $get:ident making $MemoryView:ident) => {{
         assert_eq!(
             $ptr.src.id, $self.meta.id,
             "memory pointer does not belong to this memory instance set"
@@ -73,12 +73,12 @@ macro_rules! impl_get {
             buf,
             index: $ptr.index,
         }
-    };
+    }};
 }
 
 impl<B: Backend> HostMemoryInstanceSet<B> {
     pub fn get<T>(&self, ptr: MemoryPtr<B, T>) -> MemoryView<B> {
-        impl_get!(
+        return impl_get!(
             with self, ptr
             using get
             making MemoryView
@@ -86,7 +86,7 @@ impl<B: Backend> HostMemoryInstanceSet<B> {
     }
 
     pub fn get_mut<T>(&self, ptr: MemoryPtr<B, T>) -> MemoryViewMut<B> {
-        impl_get!(
+        return impl_get!(
             with self, ptr
             using get_mut
             making MemoryViewMut

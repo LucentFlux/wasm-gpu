@@ -38,7 +38,8 @@ impl<B: Backend> HostAbstractMemoryInstanceSet<B> {
         self.memories.push(
             self.backend
                 .create_device_memory_block(plan.initial as usize, None)
-                .map(),
+                .map()
+                .await,
         );
         return AbstractMemoryPtr::new(ptr, self.id, plan.clone());
     }

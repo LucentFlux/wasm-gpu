@@ -11,7 +11,7 @@ use crate::backend::lazy::buffer_ring::BufferRingConfig;
 use crate::backend::lazy::memory::{MappedLazyBuffer, UnmappedLazyBuffer};
 use crate::Backend;
 use async_trait::async_trait;
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
 pub mod buffer_ring;
@@ -77,22 +77,37 @@ pub trait LazyBackend: Debug + Sized + Send + Sync {
 }
 
 // Wrap a lazy backend to keep some more state
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
-pub struct Lazy<L: LazyBackend> {
-    lazy: Arc<L>,
+struct LazyInternal<L: LazyBackend> {
+    pub lazy: Arc<L>,
 
-    upload_buffers: Arc<WriteBufferRing<L>>,
-    download_buffers: Arc<ReadBufferRing<L>>,
+    pub upload_buffers: Arc<WriteBufferRing<L>>,
+    pub download_buffers: Arc<ReadBufferRing<L>>,
+}
+
+pub struct Lazy<L: LazyBackend> {
+    imp: Arc<LazyInternal<L>>,
 }
 
 impl<L: LazyBackend> Lazy<L> {
-    pub fn new_from(lazy: L, cfg: BufferRingConfig) -> Self {
+    pub async fn new_from(lazy: L, cfg: BufferRingConfig) -> Self {
         let backend = Arc::new(lazy);
-        Self {
-            upload_buffers: Arc::new(WriteBufferRing::new(backend.clone(), cfg)),
-            download_buffers: Arc::new(ReadBufferRing::new(backend.clone(), cfg)),
+        let internal = LazyInternal {
+            upload_buffers: Arc::new(WriteBufferRing::new(backend.clone(), cfg).await),
+            download_buffers: Arc::new(ReadBufferRing::new(backend.clone(), cfg).await),
             lazy: backend,
+        };
+
+        Self {
+            imp: Arc::new(internal),
         }
+    }
+}
+
+impl<L: LazyBackend> Debug for Lazy<L> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Lazy (")?;
+        self.lazy.fmt(f)?;
+        write!(f, ")")
     }
 }
 
@@ -107,13 +122,7 @@ impl<L: LazyBackend> Backend for Lazy<L> {
         size: usize,
         initial_data: Option<&[u8]>,
     ) -> Self::DeviceMemoryBlock {
-        UnmappedLazyBuffer::new(
-            self.lazy.clone(),
-            self.upload_buffers.clone(),
-            self.download_buffers.clone(),
-            size,
-            initial_data,
-        )
+        UnmappedLazyBuffer::new(self.imp.clone(), size, initial_data)
     }
 
     fn get_utils(&self) -> &Self::Utils {

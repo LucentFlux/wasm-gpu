@@ -1,6 +1,6 @@
 use crate::instance::func::UntypedFuncPtr;
 use crate::typed::Val;
-use crate::{Backend, StoreSet};
+use crate::{Backend, DeviceStoreSet};
 use futures::future::BoxFuture;
 use std::sync::Arc;
 
@@ -18,7 +18,7 @@ where
     B: Backend,
 {
     backend: Arc<B>,
-    stores: &'a mut StoreSet<B, T>,
+    stores: &'a mut DeviceStoreSet<B, T>,
     tasks: Vec<(UntypedFuncPtr<B, T>, Vec<Val>)>,
 }
 
@@ -28,7 +28,7 @@ where
 {
     pub fn new(
         backend: Arc<B>,
-        stores: &'a mut StoreSet<B, T>,
+        stores: &'a mut DeviceStoreSet<B, T>,
         entry_func: UntypedFuncPtr<B, T>, // We want to enter at the same point
         args: Vec<Vec<Val>>,
     ) -> Self {

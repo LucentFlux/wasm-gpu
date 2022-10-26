@@ -8,7 +8,8 @@ use crate::instance::memory::abstr::{
 };
 use crate::instance::table::abstr::{DeviceAbstractTableInstanceSet, HostAbstractTableInstanceSet};
 use crate::instance::ModuleInstance;
-use crate::{Backend, Engine, Func, Module, StoreSet};
+use crate::{Backend, DeviceStoreSet, Engine, Func, Module};
+use std::future::join;
 use std::sync::Arc;
 
 /// Acts like a traditional OOP factory where we initialise modules into this before
@@ -32,15 +33,22 @@ impl<B, T> StoreSetBuilder<B, T>
 where
     B: Backend,
 {
-    pub fn new(engine: &Engine<B>) -> Self {
+    pub async fn new(engine: &Engine<B>) -> Self {
         let backend = engine.backend();
+
+        let globals_fut = HostAbstractGlobalInstance::new(&backend);
+        let elements_fut = HostElementInstance::new(&backend);
+        let datas_fut = HostDataInstance::new(&backend);
+
+        let (globals, elements, datas) = join!(globals_fut, elements_fut, datas_fut).await;
+
         Self {
             functions: FuncsInstance::new(),
             tables: HostAbstractTableInstanceSet::new(engine.backend()),
             memories: HostAbstractMemoryInstanceSet::new(engine.backend()),
-            globals: HostAbstractGlobalInstance::new(&backend),
-            elements: HostElementInstance::new(engine.backend()),
-            datas: HostDataInstance::new(engine.backend()),
+            globals,
+            elements,
+            datas,
             backend,
         }
     }
@@ -195,7 +203,7 @@ pub struct CompletedBuilder<B: Backend, T> {
 impl<B: Backend, T> CompletedBuilder<B, T> {
     /// Takes the instructions provided to this builder and produces a collection of stores which can
     /// be used to evaluate instructions
-    pub async fn build(&self, values: impl IntoIterator<Item = T>) -> StoreSet<B, T> {
+    pub async fn build(&self, values: impl IntoIterator<Item = T>) -> DeviceStoreSet<B, T> {
         // Here we take all of the initialisation that we did that can be shared and spin it into several
         // instances. This shouldn't involve moving any data to the device, instead data that has already
         // been provided to the device should be cloned and specialised as needed for a collection of instances

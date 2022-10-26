@@ -8,7 +8,7 @@ use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
 use crate::instance::memory::concrete::{HostMemoryInstanceSet, MemoryView, MemoryViewMut};
 use crate::instance::ptrs::AbstractPtr;
 use crate::instance::ModuleInstance;
-use crate::store_set::StoreSet;
+use crate::store_set::{DeviceStoreSet, HostStoreSet};
 use crate::typed::{Val, WasmTyVec};
 use crate::{Backend, StoreSetBuilder};
 
@@ -164,13 +164,13 @@ where
     B: Backend,
 {
     pub fn new(
-        stores: &'a mut StoreSet<B, T>,
+        stores: &'a mut HostStoreSet<B, T>,
         index: usize,
         instance: &'a ModuleInstance<B, T>,
     ) -> Self {
         Self {
             data: &mut stores.data,
-            memory: &mut stores.memories,
+            memory: &mut stores.owned.memories,
 
             index,
             instance,
@@ -261,7 +261,7 @@ mod tests {
                         .expect("memory mem not found");
 
                     for (i, b) in expected_data.iter().enumerate() {
-                        assert_eq!(*b, mem.get(i));
+                        assert_eq!(*b, mem.get(i).await);
                     }
 
                     return Ok(());
@@ -284,7 +284,7 @@ mod tests {
             .get_typed_func::<(), ()>("read")
             .expect("could not get hello function from all instances");
 
-        let stores_builder = stores_builder.complete();
+        let stores_builder = stores_builder.complete().await;
 
         let mut stores = stores_builder.build(0..10).await;
 

@@ -31,7 +31,7 @@ macro_rules! impl_immutable_ptr {
 
             $($e_vis $e_ident : $e_type ,)*
 
-            _phantom_data: std::marker::PhantomData<($($($lt ,)*)*)>,
+            _phantom_data: std::marker::PhantomData<fn($($($lt ,)*)*)>,
         }
 
         impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* $name $(<$($lt),*>)*
@@ -76,7 +76,7 @@ macro_rules! impl_immutable_ptr {
         {
             fn eq(&self, other: &Self) -> bool {
                 self.id == other.id && self.ptr == other.ptr
-                $( && self.$e_ident.eq(other.$e_ident))*
+                $( && self.$e_ident.eq(&other.$e_ident))*
             }
         }
         impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Eq for $name$(<$($lt),*>)*
@@ -177,7 +177,7 @@ macro_rules! impl_concrete_ptr {
 
             $($e_vis $e_ident : $e_type),*
 
-            _phantom_data: std::marker::PhantomData<($($($lt ,)*)*)>,
+            _phantom_data: std::marker::PhantomData<fn($($($lt ,)*)*)>,
         }
 
 
@@ -212,7 +212,7 @@ macro_rules! impl_concrete_ptr {
         {
             fn eq(&self, other: &Self) -> bool {
                 self.src.eq(other.src) && self.index == other.index
-                $( && self.$e_ident.eq(other.$e_ident))*
+                $( && self.$e_ident.eq(&other.$e_ident))*
             }
         }
         impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Eq for $name$(<$($lt),*>)*

@@ -1,4 +1,5 @@
 use crate::atomic_counter::AtomicCounter;
+use crate::memory::DeviceMemoryBlock;
 use crate::typed::{FuncRef, WasmTyVal, WasmTyVec};
 use crate::{impl_immutable_ptr, Backend, MainMemoryBlock, MemoryBlock};
 use itertools::Itertools;
@@ -26,7 +27,7 @@ impl<B: Backend> DeviceElementInstance<B> {
         HostElementInstance {
             references: self.references.map().await,
             id: self.id,
-            head: self.id,
+            head: self.references.len(),
         }
     }
 }

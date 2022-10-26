@@ -2,7 +2,7 @@
 #![feature(async_closure)]
 #![feature(macro_metavar_expr)]
 #![feature(associated_type_defaults)]
-#![feature(future_join)]
+#![feature(future_join, future_poll_fn)]
 #![feature(unboxed_closures)]
 #![feature(fn_traits)]
 #![feature(split_array)]
@@ -54,7 +54,7 @@ pub mod wasp {
     pub use externs::Extern;
     // Store
     pub use crate::store_set::builder::StoreSetBuilder;
-    pub use store_set::StoreSet;
+    pub use store_set::DeviceStoreSet;
     // Instance
     pub use instance::InstanceSet;
     pub use instance::ModuleInstance;

@@ -4,6 +4,7 @@ use crate::instance::global::concrete::GlobalPtr;
 use crate::module::module_environ::Global;
 use crate::typed::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal, WasmTyVec};
 use crate::{impl_abstract_ptr, Backend, DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
+use std::future::join;
 use std::mem::size_of;
 use wasmparser::{GlobalType, Operator, ValType};
 
@@ -33,11 +34,15 @@ where
 }
 
 impl<B: Backend> HostAbstractGlobalInstance<B> {
-    pub fn new(backend: &B) -> Self {
+    pub async fn new(backend: &B) -> Self {
+        let immutable_values_fut = backend.create_device_memory_block(0, None).map();
+        let mutable_values_fut = backend.create_device_memory_block(0, None).map();
+        let (immutable_values, mutable_values) =
+            join!(immutable_values_fut, mutable_values_fut).await;
         Self {
-            immutable_values: backend.create_device_memory_block(0, None).map(),
+            immutable_values,
             immutable_values_head: 0,
-            mutable_values: backend.create_device_memory_block(0, None).map(),
+            mutable_values,
             mutable_values_head: 0,
             id: COUNTER.next(),
         }

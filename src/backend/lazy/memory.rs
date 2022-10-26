@@ -1,6 +1,4 @@
-use crate::backend::lazy::buffer_ring::read::ReadBufferRing;
-use crate::backend::lazy::buffer_ring::write::WriteBufferRing;
-use crate::backend::lazy::{DeviceOnlyBuffer, Lazy, LazyBackend};
+use crate::backend::lazy::{DeviceOnlyBuffer, Lazy, LazyBackend, LazyInternal};
 use crate::memory::{MainMemoryBlock, MemoryBlock};
 use crate::typed::ToRange;
 use crate::DeviceMemoryBlock;
@@ -24,9 +22,7 @@ fn min_alignment_gt(size: usize, alignment: usize) -> usize {
 }
 
 struct LazyBufferMemoryBlock<L: LazyBackend> {
-    backend: Arc<Lazy<L>>,
-    pub upload_buffers: Arc<WriteBufferRing<L>>,
-    pub download_buffers: Arc<ReadBufferRing<L>>,
+    backend: Arc<LazyInternal<L>>,
     pub buffer: L::DeviceOnlyBuffer, // Stored on the GPU
     pub visible_len: usize,
 }
@@ -34,7 +30,7 @@ struct LazyBufferMemoryBlock<L: LazyBackend> {
 #[async_trait]
 impl<L: LazyBackend> MemoryBlock<Lazy<L>> for LazyBufferMemoryBlock<L> {
     fn backend(&self) -> &Lazy<L> {
-        self.backend.as_ref()
+        self.backend.lazy.as_ref()
     }
 
     fn len(&self) -> usize {
@@ -87,6 +83,7 @@ impl<L: LazyBackend> LazyChunk<L> {
         }
 
         block
+            .backend
             .download_buffers
             .with_slice(&block.buffer, self.data_offset, move |slice| {
                 // Safety proof:
@@ -131,6 +128,7 @@ impl<L: LazyBackend> LazyChunk<L> {
         let src = buffer.as_slice(start..(start + L::CHUNK_SIZE));
 
         block
+            .backend
             .upload_buffers
             .write_slice(
                 &block.buffer,
@@ -219,7 +217,7 @@ impl HostMemoryBlob {
 
         let new_ptr = unsafe { alloc::realloc(self.ptr, self.layout, new_size) };
         assert!(!new_ptr.is_null(), "failed to allocate blob");
-        self.layout = Self::layout(new_size);
+        self.layout = Self::new_layout(new_size);
         self.ptr = new_ptr;
         self.len = new_size;
     }
@@ -423,13 +421,7 @@ pub struct UnmappedLazyBuffer<L: LazyBackend> {
 }
 
 impl<L: LazyBackend> UnmappedLazyBuffer<L> {
-    pub fn new(
-        backend: Arc<Lazy<L>>,
-        upload_buffers: Arc<WriteBufferRing<L>>,
-        download_buffers: Arc<ReadBufferRing<L>>,
-        size: usize,
-        initial_data: Option<&[u8]>,
-    ) -> Self {
+    pub fn new(backend: Arc<LazyInternal<L>>, size: usize, initial_data: Option<&[u8]>) -> Self {
         let real_size = min_alignment_gt(size, L::CHUNK_SIZE);
         let buffer = <L as LazyBackend>::create_device_only_memory_block(
             &backend.lazy,
@@ -439,8 +431,6 @@ impl<L: LazyBackend> UnmappedLazyBuffer<L> {
         Self {
             data: LazyBufferMemoryBlock {
                 backend,
-                upload_buffers,
-                download_buffers,
                 buffer,
                 visible_len: size,
             },
