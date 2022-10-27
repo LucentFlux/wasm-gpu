@@ -4,6 +4,8 @@ use crate::instance::memory::abstr::AbstractMemoryPtr;
 use crate::instance::table::abstr::AbstractTablePtr;
 use crate::typed::WasmTyVec;
 use crate::Backend;
+use itertools::Itertools;
+use wasmparser::{FuncType, GlobalType, TableType};
 
 pub struct NamedExtern<B, T>
 where
@@ -33,6 +35,39 @@ where
     Global(AbstractGlobalPtr<B, T>),
     Table(AbstractTablePtr<B, T>),
     Memory(AbstractMemoryPtr<B, T>),
+}
+
+impl<B, T> Extern<B, T>
+where
+    B: Backend,
+{
+    pub fn signature(&self) -> String {
+        match self {
+            Extern::Func(f) => {
+                let ty: &FuncType = f.ty();
+                format!(
+                    "function ({:?})->({:?})",
+                    ty.params().iter().map(|p| format!("{:?}", p)).join(", "),
+                    ty.results().iter().map(|r| format!("{:?}", r)).join(", "),
+                )
+            }
+            Extern::Global(g) => {
+                let ty: &GlobalType = g.ty();
+                format!(
+                    "global {}{:?}",
+                    if ty.mutable { "mut " } else { "" },
+                    ty.content_type
+                )
+            }
+            Extern::Table(t) => {
+                let ty: &TableType = t.ty();
+                format!("table of {:?}", ty.element_type)
+            }
+            Extern::Memory(_m) => {
+                format!("memory",)
+            }
+        }
+    }
 }
 
 impl<B, T> Clone for Extern<B, T>

@@ -7,7 +7,7 @@ use crate::instance::memory::abstr::{
     DeviceAbstractMemoryInstanceSet, HostAbstractMemoryInstanceSet,
 };
 use crate::instance::table::abstr::{DeviceAbstractTableInstanceSet, HostAbstractTableInstanceSet};
-use crate::instance::ModuleInstance;
+use crate::instance::ModuleInstanceSet;
 use crate::{Backend, DeviceStoreSet, Engine, Func, Module};
 use std::future::join;
 use std::sync::Arc;
@@ -36,9 +36,9 @@ where
     pub async fn new(engine: &Engine<B>) -> Self {
         let backend = engine.backend();
 
-        let globals_fut = HostAbstractGlobalInstance::new(&backend);
-        let elements_fut = HostElementInstance::new(&backend);
-        let datas_fut = HostDataInstance::new(&backend);
+        let globals_fut = HostAbstractGlobalInstance::new(backend.as_ref());
+        let elements_fut = DeviceElementInstance::new(backend.as_ref()).map();
+        let datas_fut = DeviceDataInstance::new(backend.as_ref()).map();
 
         let (globals, elements, datas) = join!(globals_fut, elements_fut, datas_fut).await;
 
@@ -63,7 +63,7 @@ where
         &mut self,
         module: &Module<'_, B>,
         imports: Vec<NamedExtern<B, T>>,
-    ) -> anyhow::Result<ModuleInstance<B, T>> {
+    ) -> anyhow::Result<ModuleInstanceSet<B, T>> {
         // Validation
         let validated_imports = module.typecheck_imports(&imports)?;
 
@@ -74,7 +74,7 @@ where
         let global_ptrs = module
             .initialize_globals(
                 &mut self.globals,
-                validated_imports.globals(),
+                validated_imports.globals().map(|p| p.clone()),
                 &predicted_func_ptrs,
             )
             .await;
@@ -130,22 +130,25 @@ where
                 &memory_ptrs,
             )
             .await;
-        assert_eq!(predicted_func_ptrs, func_ptrs);
+        if predicted_func_ptrs != func_ptrs {
+            panic!("predicted function pointers did not match later calculated pointers");
+        }
 
         // Final setup, consisting of the Start function, must be performed in the build step if it
         // calls any host functions
         let start_fn = module.start_fn(&func_ptrs);
-
-        // Collect exports from pointers
-        let exports = module.collect_exports(&global_ptrs, &table_ptrs, &memory_ptrs, &func_ptrs);
 
         // Lock vectors to be immutable
         let func_ptrs = func_ptrs.into_iter().collect();
         let table_ptrs = table_ptrs.into_iter().collect();
         let memory_ptrs = memory_ptrs.into_iter().collect();
         let global_ptrs = global_ptrs.into_iter().collect();
-        let exports = exports.into_iter().collect();
-        return Ok(ModuleInstance::new(
+        let exports = module
+            .exports()
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        return Ok(ModuleInstanceSet::new(
             func_ptrs,
             table_ptrs,
             memory_ptrs,

@@ -25,7 +25,7 @@ pub async fn get_backend() -> wasp::VulkanoBackend<1024> {
             total_mem: 2 * 1024,
         },
     };
-    return wasp::VulkanoBackend::new(conf);
+    return wasp::VulkanoBackend::new(conf).await;
 }
 
 #[macro_export]

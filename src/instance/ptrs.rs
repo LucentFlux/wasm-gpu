@@ -44,6 +44,12 @@ macro_rules! impl_immutable_ptr {
                     _phantom_data: Default::default(),
                 }
             }
+
+            $(
+                pub fn $e_ident(&self) -> & $e_type {
+                    &self.$e_ident
+                }
+            )*
         }
 
         impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Clone for $name $(<$($lt),*>)*
@@ -180,6 +186,14 @@ macro_rules! impl_concrete_ptr {
             _phantom_data: std::marker::PhantomData<fn($($($lt ,)*)*)>,
         }
 
+        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* $name $(<$($lt),*>)*
+        {
+            $(
+                pub fn $e_ident(&self) -> & $e_type {
+                    &self.$e_ident
+                }
+            )*
+        }
 
         impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Clone for $name $(<$($lt),*>)*
         where <Self as crate::instance::ptrs::ConcretePtr>::AbstractPtr : Clone, $( $e_type : Clone,)*
@@ -211,7 +225,7 @@ macro_rules! impl_concrete_ptr {
             $( $e_type : PartialEq<$e_type>,)*
         {
             fn eq(&self, other: &Self) -> bool {
-                self.src.eq(other.src) && self.index == other.index
+                self.src.eq(&other.src) && self.index == other.index
                 $( && self.$e_ident.eq(&other.$e_ident))*
             }
         }

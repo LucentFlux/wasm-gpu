@@ -1,10 +1,10 @@
 use crate::module::error::WasmError;
-use anyhow::anyhow;
 use std::collections::HashMap;
 use std::ops::Range;
 use wasmparser::{
-    Data, ElementItem, ElementKind, Encoding, ExternalKind, GlobalType, MemoryType, Operator,
-    Parser, Payload, TableType, Type, TypeRef, ValType, Validator,
+    BinaryReaderError, Data, ElementItem, ElementKind, Encoding, ExternalKind,
+    FuncValidatorAllocations, GlobalType, MemoryType, Operator, Parser, Payload, TableType, Type,
+    TypeRef, ValType, Validator,
 };
 
 type WasmResult<T> = Result<T, WasmError>;
@@ -17,7 +17,7 @@ pub enum ImportTypeRef {
     Global(GlobalType),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct Global<'data> {
     pub ty: GlobalType,
     pub initializer: Vec<Operator<'data>>,
@@ -76,6 +76,7 @@ pub struct ParsedModule<'data> {
 
 struct IntermediateData {
     function_types: Vec<u32>,
+    allocs: Option<FuncValidatorAllocations>,
 }
 
 pub struct ModuleEnviron {
@@ -102,6 +103,7 @@ impl ModuleEnviron {
         };
         let mut scratch = IntermediateData {
             function_types: vec![],
+            allocs: None,
         };
 
         for payload in parser.parse_all(data) {
@@ -228,7 +230,10 @@ impl ModuleEnviron {
                 for entry in globals {
                     let wasmparser::Global { ty, init_expr } = entry?;
                     let mut init_expr_reader = init_expr.get_binary_reader();
-                    let initializer = init_expr_reader.into_iter().collect();
+                    let mut initializer = Vec::new();
+                    while !init_expr_reader.eof() {
+                        initializer.push(init_expr_reader.read_operator()?)
+                    }
                     let ty = Global { ty, initializer };
                     result.globals.push(ty);
                 }
@@ -284,9 +289,9 @@ impl ModuleEnviron {
                         for item in items_reader {
                             match item? {
                                 ElementItem::Expr(expr) => {
-                                    let expr: anyhow::Result<Vec<Operator>> =
+                                    let expr: Result<Vec<Operator>, BinaryReaderError> =
                                         expr.get_operators_reader().into_iter().collect();
-                                    items.push(expr.map_err(|e| anyhow!("{}", e))?)
+                                    items.push(expr?)
                                 }
                                 _ => unreachable!(),
                             }
@@ -316,11 +321,11 @@ impl ModuleEnviron {
                             table_index,
                             offset_expr,
                         } => {
-                            let offset_expr: Vec<Operator> =
-                                offset_expr.get_operators_reader().into_iter().collect()?;
+                            let offset_expr: Result<Vec<Operator>, BinaryReaderError> =
+                                offset_expr.get_operators_reader().into_iter().collect();
                             ParsedElementKind::Active {
                                 table_index,
-                                offset_expr,
+                                offset_expr: offset_expr?,
                             }
                         }
                         ElementKind::Declared => ParsedElementKind::Declared,
@@ -342,8 +347,11 @@ impl ModuleEnviron {
             }
 
             Payload::CodeSectionEntry(mut body) => {
-                let mut validator = self.validator.code_section_entry(&body)?;
+                let validator = self.validator.code_section_entry(&body)?;
+                let mut validator =
+                    validator.into_validator(scratch.allocs.take().unwrap_or_default());
                 validator.validate(&body)?;
+                scratch.allocs = Some(validator.into_allocations());
 
                 let func_id = result.functions.len();
                 let type_id = scratch.function_types.get(func_id).expect("function types vec was not large enough - this should have been caught at validation");

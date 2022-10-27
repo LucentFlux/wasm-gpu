@@ -49,7 +49,7 @@ pub struct VulkanoBackendConfig {
 pub type VulkanoBackend<const CHUNK_SIZE: usize> = Lazy<VulkanoBackendLazy<CHUNK_SIZE>>;
 
 impl<const CHUNK_SIZE: usize> VulkanoBackend<CHUNK_SIZE> {
-    pub fn new(cfg: VulkanoBackendConfig) -> Self {
-        Lazy::new_from(VulkanoBackendLazy {}, cfg.buffer_ring)
+    pub async fn new(cfg: VulkanoBackendConfig) -> Self {
+        Lazy::new_from(VulkanoBackendLazy {}, cfg.buffer_ring).await
     }
 }

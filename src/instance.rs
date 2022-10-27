@@ -4,14 +4,11 @@ use crate::instance::global::abstr::AbstractGlobalPtr;
 use crate::instance::memory::abstr::AbstractMemoryPtr;
 use crate::instance::table::abstr::AbstractTablePtr;
 use crate::module::module_environ::ModuleExport;
-use crate::read_only::{AppendOnlyVec, ReadOnly};
+use crate::read_only::AppendOnlyVec;
 use crate::typed::WasmTyVec;
 use crate::Backend;
 use anyhow::{anyhow, Context};
-use elsa::sync::FrozenMap;
-use itertools::Itertools;
-use std::ops::Deref;
-use std::sync::Arc;
+use std::collections::HashMap;
 
 pub mod data;
 pub mod element;
@@ -21,7 +18,7 @@ pub mod memory;
 pub mod ptrs;
 pub mod table;
 
-pub struct ModuleInstance<B, T>
+pub struct ModuleInstanceSet<B, T>
 where
     B: Backend,
 {
@@ -29,11 +26,11 @@ where
     tables: AppendOnlyVec<AbstractTablePtr<B, T>>,
     memories: AppendOnlyVec<AbstractMemoryPtr<B, T>>,
     globals: AppendOnlyVec<AbstractGlobalPtr<B, T>>,
-    exports: FrozenMap<String, Arc<ReadOnly<ModuleExport>>>,
+    exports: HashMap<String, ModuleExport>,
     start_fn: Option<UntypedFuncPtr<B, T>>,
 }
 
-impl<B, T> ModuleInstance<B, T>
+impl<B, T> ModuleInstanceSet<B, T>
 where
     B: Backend,
 {
@@ -42,7 +39,7 @@ where
         tables: AppendOnlyVec<AbstractTablePtr<B, T>>,
         memories: AppendOnlyVec<AbstractMemoryPtr<B, T>>,
         globals: AppendOnlyVec<AbstractGlobalPtr<B, T>>,
-        exports: FrozenMap<String, Arc<ReadOnly<ModuleExport>>>,
+        exports: HashMap<String, ModuleExport>,
         start_fn: Option<UntypedFuncPtr<B, T>>,
     ) -> Self {
         Self {
@@ -57,7 +54,7 @@ where
 
     pub fn get_export(&self, name: &str) -> Option<Extern<B, T>> {
         let mod_exp = self.exports.get(name)?;
-        return Some(match mod_exp.read().unwrap().deref() {
+        return Some(match &mod_exp {
             ModuleExport::Func(ptr) => Extern::Func(self.funcs.get(*ptr)?.clone()),
             ModuleExport::Global(ptr) => Extern::Global(self.globals.get(*ptr)?.clone()),
             ModuleExport::Table(ptr) => Extern::Table(self.tables.get(*ptr)?.clone()),
@@ -105,45 +102,5 @@ where
                     name
                 )),
             })
-    }
-}
-
-pub trait InstanceSet<B, T>
-where
-    B: Backend,
-{
-    fn get_funcs(self, name: &str) -> Vec<anyhow::Result<UntypedFuncPtr<B, T>>>;
-
-    fn get_typed_funcs<Params, Results>(
-        self,
-        name: &str,
-    ) -> Vec<anyhow::Result<TypedFuncPtr<B, T, Params, Results>>>
-    where
-        Params: WasmTyVec,
-        Results: WasmTyVec;
-}
-
-impl<'a, V, B: 'a, T: 'a> InstanceSet<B, T> for V
-where
-    V: IntoIterator<Item = &'a ModuleInstance<B, T>>,
-    B: Backend,
-{
-    fn get_funcs(self, name: &str) -> Vec<anyhow::Result<UntypedFuncPtr<B, T>>> {
-        self.into_iter()
-            .map(|s: &'a ModuleInstance<B, T>| s.get_func(name))
-            .collect_vec()
-    }
-
-    fn get_typed_funcs<Params, Results>(
-        self,
-        name: &str,
-    ) -> Vec<anyhow::Result<TypedFuncPtr<B, T, Params, Results>>>
-    where
-        Params: WasmTyVec,
-        Results: WasmTyVec,
-    {
-        self.into_iter()
-            .map(|instance: &'a ModuleInstance<B, T>| instance.get_typed_func(name))
-            .collect_vec()
     }
 }

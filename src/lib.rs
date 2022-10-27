@@ -1,14 +1,5 @@
-#![feature(generic_associated_types)]
+#![feature(future_join)]
 #![feature(async_closure)]
-#![feature(macro_metavar_expr)]
-#![feature(associated_type_defaults)]
-#![feature(future_join, future_poll_fn)]
-#![feature(unboxed_closures)]
-#![feature(fn_traits)]
-#![feature(split_array)]
-#![allow(incomplete_features)]
-#![feature(adt_const_params)]
-#![feature(generic_const_exprs)]
 
 mod atomic_counter;
 mod backend;
@@ -56,8 +47,7 @@ pub mod wasp {
     pub use crate::store_set::builder::StoreSetBuilder;
     pub use store_set::DeviceStoreSet;
     // Instance
-    pub use instance::InstanceSet;
-    pub use instance::ModuleInstance;
+    pub use instance::ModuleInstanceSet;
     // Func
     pub use func::Caller;
     pub use func::Func;

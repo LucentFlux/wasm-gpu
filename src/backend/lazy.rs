@@ -76,29 +76,32 @@ pub trait LazyBackend: Debug + Sized + Send + Sync {
     fn create_main_to_device_memory(&self) -> Self::MainToDeviceBufferUnmapped;
 }
 
-// Wrap a lazy backend to keep some more state
-struct LazyInternal<L: LazyBackend> {
+/// Wrap a lazy backend to keep some more state.
+pub struct Lazy<L: LazyBackend> {
     pub lazy: Arc<L>,
 
     pub upload_buffers: Arc<WriteBufferRing<L>>,
     pub download_buffers: Arc<ReadBufferRing<L>>,
 }
 
-pub struct Lazy<L: LazyBackend> {
-    imp: Arc<LazyInternal<L>>,
+impl<L: LazyBackend> Clone for Lazy<L> {
+    fn clone(&self) -> Self {
+        Self {
+            lazy: self.lazy.clone(),
+            upload_buffers: self.upload_buffers.clone(),
+            download_buffers: self.download_buffers.clone(),
+        }
+    }
 }
 
 impl<L: LazyBackend> Lazy<L> {
     pub async fn new_from(lazy: L, cfg: BufferRingConfig) -> Self {
         let backend = Arc::new(lazy);
-        let internal = LazyInternal {
+
+        Self {
             upload_buffers: Arc::new(WriteBufferRing::new(backend.clone(), cfg).await),
             download_buffers: Arc::new(ReadBufferRing::new(backend.clone(), cfg).await),
             lazy: backend,
-        };
-
-        Self {
-            imp: Arc::new(internal),
         }
     }
 }
@@ -122,7 +125,7 @@ impl<L: LazyBackend> Backend for Lazy<L> {
         size: usize,
         initial_data: Option<&[u8]>,
     ) -> Self::DeviceMemoryBlock {
-        UnmappedLazyBuffer::new(self.imp.clone(), size, initial_data)
+        UnmappedLazyBuffer::new(self.clone(), size, initial_data)
     }
 
     fn get_utils(&self) -> &Self::Utils {

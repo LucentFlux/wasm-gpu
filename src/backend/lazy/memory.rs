@@ -1,4 +1,4 @@
-use crate::backend::lazy::{DeviceOnlyBuffer, Lazy, LazyBackend, LazyInternal};
+use crate::backend::lazy::{DeviceOnlyBuffer, Lazy, LazyBackend};
 use crate::memory::{MainMemoryBlock, MemoryBlock};
 use crate::typed::ToRange;
 use crate::DeviceMemoryBlock;
@@ -8,7 +8,6 @@ use std::alloc;
 use std::alloc::Layout;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 /// Calculates the minimum x s.t. x is a multiple of alignment and x >= size
 fn min_alignment_gt(size: usize, alignment: usize) -> usize {
@@ -22,7 +21,7 @@ fn min_alignment_gt(size: usize, alignment: usize) -> usize {
 }
 
 struct LazyBufferMemoryBlock<L: LazyBackend> {
-    backend: Arc<LazyInternal<L>>,
+    backend: Lazy<L>,
     pub buffer: L::DeviceOnlyBuffer, // Stored on the GPU
     pub visible_len: usize,
 }
@@ -30,7 +29,7 @@ struct LazyBufferMemoryBlock<L: LazyBackend> {
 #[async_trait]
 impl<L: LazyBackend> MemoryBlock<Lazy<L>> for LazyBufferMemoryBlock<L> {
     fn backend(&self) -> &Lazy<L> {
-        self.backend.lazy.as_ref()
+        &self.backend
     }
 
     fn len(&self) -> usize {
@@ -421,7 +420,7 @@ pub struct UnmappedLazyBuffer<L: LazyBackend> {
 }
 
 impl<L: LazyBackend> UnmappedLazyBuffer<L> {
-    pub fn new(backend: Arc<LazyInternal<L>>, size: usize, initial_data: Option<&[u8]>) -> Self {
+    pub fn new(backend: Lazy<L>, size: usize, initial_data: Option<&[u8]>) -> Self {
         let real_size = min_alignment_gt(size, L::CHUNK_SIZE);
         let buffer = <L as LazyBackend>::create_device_only_memory_block(
             &backend.lazy,

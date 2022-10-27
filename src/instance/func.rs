@@ -68,10 +68,6 @@ impl_immutable_ptr!(
 );
 
 impl<B: Backend, T> UntypedFuncPtr<B, T> {
-    pub fn ty(&self) -> FuncType {
-        return self.ty.clone();
-    }
-
     pub fn to_func_ref(&self) -> FuncRef {
         FuncRef::from_u32(self.ptr as u32)
     }
@@ -126,10 +122,6 @@ impl_immutable_ptr!(
 );
 
 impl<B: Backend, T, Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<B, T, Params, Results> {
-    pub fn ty(&self) -> FuncType {
-        return self.ty.clone();
-    }
-
     pub fn as_untyped(&self) -> UntypedFuncPtr<B, T> {
         UntypedFuncPtr::new(self.ptr, self.id, self.ty.clone())
     }

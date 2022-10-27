@@ -25,9 +25,9 @@ impl<B: Backend> DeviceElementInstance<B> {
 
     pub async fn map(self) -> HostElementInstance<B> {
         HostElementInstance {
+            head: self.references.len(),
             references: self.references.map().await,
             id: self.id,
-            head: self.references.len(),
         }
     }
 }

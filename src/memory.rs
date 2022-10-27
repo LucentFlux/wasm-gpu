@@ -23,8 +23,7 @@ where
 #[async_trait]
 pub trait MainMemoryBlock<B>: MemoryBlock<B> + Sized
 where
-    B: Backend,
-    <B as Backend>::MainMemoryBlock: MainMemoryBlock<B>,
+    B: Backend<MainMemoryBlock = Self>,
 {
     async fn as_slice<S: ToRange<usize> + Send>(&self, bounds: S) -> &[u8];
     async fn as_slice_mut<S: ToRange<usize> + Send>(&mut self, bounds: S) -> &mut [u8];
@@ -66,7 +65,7 @@ where
 #[async_trait]
 pub trait DeviceMemoryBlock<B>: MemoryBlock<B> + Sized
 where
-    B: Backend,
+    B: Backend<DeviceMemoryBlock = Self>,
 {
     async fn map(self) -> B::MainMemoryBlock;
     async fn copy_from(&mut self, other: &B::DeviceMemoryBlock);
@@ -76,7 +75,7 @@ where
         let backend = self.backend();
         let mut new_buffer = backend.create_device_memory_block(new_len, None);
         new_buffer.copy_from(&self);
-        std::mem::swap(&mut self, &mut new_buffer);
+        std::mem::swap(self, &mut new_buffer);
     }
 
     /// Convenience wrapper around `resize` that adds more space
@@ -92,7 +91,7 @@ pub fn limits_match<V: Ord>(n1: V, m1: Option<V>, n2: V, m2: Option<V>) -> bool 
     }
     return match (m1, m2) {
         (None, None) => true,
-        (Some(m1), Some(m2)) => (m1 >= m2),
+        (Some(m1), Some(m2)) => m1 >= m2,
         (_, _) => false,
     };
 }

@@ -2,9 +2,10 @@ use crate::fenwick::FenwickTree;
 use crate::impl_concrete_ptr;
 use crate::instance::memory::abstr::AbstractMemoryPtr;
 use crate::memory::interleaved::{
-    DeviceInterleavedBuffer, HostInterleavedBuffer, InterleavedBufferView,
+    DeviceInterleavedBuffer, HostInterleavedBuffer, InterleavedBufferView, InterleavedBufferViewMut,
 };
 use crate::Backend;
+use itertools::Itertools;
 
 const STRIDE: usize = 4; // 4 * u32
 
@@ -40,16 +41,20 @@ impl<'a, B: Backend> MemoryView<'a, B> {
     pub async fn get(&self, index: usize) -> u8 {
         let chunk = index / STRIDE;
         let offset = index % STRIDE;
-        let view: InterleavedBufferView = self.buf.get(chunk..=chunk).await;
+        let view: InterleavedBufferView = self
+            .buf
+            .get(chunk..=chunk)
+            .await
+            .expect("memory index chunk out of bounds");
 
-        match view
+        let vec = view
             .get(self.index)
-            .expect("memory index out of bounds")
-            .as_slice()
-        {
-            [v] => v[offset],
-            _ => panic!("failed to get single chunk"),
-        }
+            .expect("memory index offset out of bounds")
+            .collect_vec();
+
+        assert_eq!(vec.len(), STRIDE);
+
+        return *vec[offset];
     }
 }
 
@@ -57,6 +62,31 @@ impl<'a, B: Backend> MemoryView<'a, B> {
 pub struct MemoryViewMut<'a, B: Backend> {
     buf: &'a mut HostInterleavedBuffer<B, STRIDE>,
     index: usize,
+}
+
+impl<'a, B: Backend> MemoryViewMut<'a, B> {
+    pub async fn get_mut(&'a mut self, index: usize) -> &'a mut u8 {
+        let chunk = index / STRIDE;
+        let offset = index % STRIDE;
+        let view: InterleavedBufferViewMut = self
+            .buf
+            .get_mut(chunk..=chunk)
+            .await
+            .expect("memory index chunk out of bounds");
+
+        return view
+            .take(self.index)
+            .expect("memory index offset out of bounds")
+            .skip(offset)
+            .next()
+            .expect(
+                format!(
+                    "chunk of size {} did not have an index {} element",
+                    STRIDE, offset
+                )
+                .as_str(),
+            );
+    }
 }
 
 macro_rules! impl_get {

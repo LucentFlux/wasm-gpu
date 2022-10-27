@@ -126,7 +126,7 @@ where
                         .get((*f_id) as usize)
                         .expect("import function id was out of range");
                     match (ty, provided_import) {
-                        (Type::Func(f1), Extern::Func(f2)) => f2.is_type(f1),
+                        (Type::Func(f1), Extern::Func(f2)) => f2.ty().eq(f1),
                         _ => false,
                     }
                 }
@@ -148,7 +148,7 @@ where
                 return Err(anyhow!(
                     "import types do not match - expected {:?} but got {:?}",
                     required_import,
-                    provided_import
+                    provided_import.signature()
                 ));
             }
         }
@@ -220,7 +220,12 @@ where
     ) -> Vec<ElementPtr<B, T>> {
         // Reserve space first
         let size: usize = std::mem::size_of::<FuncRef>()
-            * self.parsed.elements.iter().map(|e| e.items.len()).sum();
+            * self
+                .parsed
+                .elements
+                .iter()
+                .map(|e| e.items.len())
+                .sum::<usize>();
         elements.reserve(size).await;
 
         // Then add
@@ -356,64 +361,7 @@ where
         }
     }
 
-    pub fn collect_exports<T>(
-        &self,
-        module_globals: &Vec<AbstractGlobalPtr<B, T>>,
-        module_tables: &Vec<AbstractTablePtr<B, T>>,
-        module_memories: &Vec<AbstractMemoryPtr<B, T>>,
-        module_funcs: &Vec<UntypedFuncPtr<B, T>>,
-    ) -> Vec<NamedExtern<B, T>> {
-        let mut externs = Vec::new();
-
-        for (e_name, export) in self.parsed.exports.iter() {
-            let module = self.name.to_owned();
-            let name = e_name.clone();
-            let ext = match export {
-                ModuleExport::Func(index) => {
-                    let ptr = module_funcs
-                        .get(*index)
-                        .expect("exported func was outside range of module functions");
-                    NamedExtern {
-                        module,
-                        name,
-                        ext: Extern::Func(ptr.clone()),
-                    }
-                }
-                ModuleExport::Table(index) => {
-                    let ptr = module_tables
-                        .get(*index)
-                        .expect("exported table was outside range of module tables");
-                    NamedExtern {
-                        module,
-                        name,
-                        ext: Extern::Table(ptr.clone()),
-                    }
-                }
-                ModuleExport::Memory(index) => {
-                    let ptr = module_memories
-                        .get(*index)
-                        .expect("exported memory was outside range of module memories");
-                    NamedExtern {
-                        module,
-                        name,
-                        ext: Extern::Memory(ptr.clone()),
-                    }
-                }
-                ModuleExport::Global(index) => {
-                    let ptr = module_globals
-                        .get(*index)
-                        .expect("exported global was outside range of module globals");
-                    NamedExtern {
-                        module,
-                        name,
-                        ext: Extern::Global(ptr.clone()),
-                    }
-                }
-            };
-
-            externs.push(ext);
-        }
-
-        return externs;
+    pub fn exports(&self) -> &HashMap<String, ModuleExport> {
+        &self.parsed.exports
     }
 }

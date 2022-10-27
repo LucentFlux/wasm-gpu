@@ -15,7 +15,7 @@ pub struct InterleavedBufferView<'a>(Vec<Vec<&'a [u8]>>);
 pub struct InterleavedBufferViewMut<'a>(Vec<Vec<&'a mut [u8]>>);
 
 impl<'a> InterleavedBufferView<'a> {
-    pub fn get(&'a self, index: usize) -> Option<impl Iterator<Item = &'a u8>> {
+    pub fn get<'b: 'a>(&'b self, index: usize) -> Option<impl Iterator<Item = &'a u8> + 'a> {
         self.0
             .get(index)
             .map(|v| v.into_iter().map(|v2| v2.into_iter()).flatten())
@@ -23,9 +23,20 @@ impl<'a> InterleavedBufferView<'a> {
 }
 
 impl<'a> InterleavedBufferViewMut<'a> {
-    pub fn get(&'a mut self, index: usize) -> Option<impl Iterator<Item = &'a mut u8>> {
+    pub fn get<'b: 'a>(
+        &'b mut self,
+        index: usize,
+    ) -> Option<impl Iterator<Item = &'a mut u8> + 'a> {
         self.0
             .get_mut(index)
+            .map(|v| v.into_iter().map(|v2| v2.into_iter()).flatten())
+    }
+
+    pub fn take(self, index: usize) -> Option<impl Iterator<Item = &'a mut u8> + 'a> {
+        self.0
+            .into_iter()
+            .skip(index)
+            .next()
             .map(|v| v.into_iter().map(|v2| v2.into_iter()).flatten())
     }
 }
@@ -40,28 +51,38 @@ macro_rules! impl_get {
         let period = $self.count * STRIDE * 4;
 
         let s_len = $self.buffer.len();
-        assert_eq!(s_len % period, 0, "buffer must be cleanly divisible into ");
+        assert_eq!(
+            s_len % period,
+            0,
+            "buffer must be cleanly divisible into period"
+        );
 
         let bounds = $bounds.half_open($self.buffer.len() / $self.count);
         let buffer_bounds = (bounds.start * period)..(bounds.end * period);
 
-        assert!(buffer_bounds.end <= s_len);
+        if buffer_bounds.end > s_len {
+            None
+        } else {
+            let mut s = $self.buffer.$as_slice(buffer_bounds).await;
 
-        let mut s = $self.buffer.$as_slice(buffer_bounds).await;
+            assert_eq!(s.len() % period, 0);
 
-        assert_eq!(s.len() % period, 0);
-
-        let mut interpretations = vec![Vec::new(); $self.count];
-        while !s.is_empty() {
-            for i in 0..$self.count {
-                let (lhs, rhs) = s.$split_ref(STRIDE);
-
-                interpretations.get_mut(i).unwrap().push(lhs);
-                s = rhs;
+            let mut interpretations = Vec::new();
+            interpretations.reserve($self.count);
+            for _ in 0..$self.count {
+                interpretations.push(Vec::new());
             }
-        }
+            while !s.is_empty() {
+                for i in 0..$self.count {
+                    let (lhs, rhs) = s.$split_ref(STRIDE);
 
-        $ret(interpretations)
+                    interpretations.get_mut(i).unwrap().push(lhs);
+                    s = rhs;
+                }
+            }
+
+            Some($ret(interpretations))
+        }
     }};
 }
 
@@ -81,7 +102,7 @@ where
     /// Takes a memory block and interprets it as an interleaved buffer.
     ///
     /// Bounds gives the bounds for each abstract interleaved buffer, in units of `STRIDE * 4` bytes
-    pub async fn get<S: ToRange<usize> + Send>(&self, bounds: S) -> InterleavedBufferView {
+    pub async fn get<S: ToRange<usize> + Send>(&self, bounds: S) -> Option<InterleavedBufferView> {
         return impl_get!(InterleavedBufferView,
             with self on bounds
             using as_slice
@@ -95,7 +116,7 @@ where
     pub async fn get_mut<S: ToRange<usize> + Send>(
         &mut self,
         bounds: S,
-    ) -> InterleavedBufferViewMut {
+    ) -> Option<InterleavedBufferViewMut> {
         return impl_get!(InterleavedBufferViewMut,
             with self on bounds
             using as_slice_mut

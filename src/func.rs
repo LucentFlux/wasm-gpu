@@ -7,8 +7,8 @@ use wasmparser::{FuncType, ValType};
 use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
 use crate::instance::memory::concrete::{HostMemoryInstanceSet, MemoryView, MemoryViewMut};
 use crate::instance::ptrs::AbstractPtr;
-use crate::instance::ModuleInstance;
-use crate::store_set::{DeviceStoreSet, HostStoreSet};
+use crate::instance::ModuleInstanceSet;
+use crate::store_set::HostStoreSet;
 use crate::typed::{Val, WasmTyVec};
 use crate::{Backend, StoreSetBuilder};
 
@@ -156,7 +156,7 @@ where
 
     // Info into store data
     index: usize,
-    instance: &'a ModuleInstance<B, T>,
+    instance: &'a ModuleInstanceSet<B, T>,
 }
 
 impl<'a, B, T> Caller<'a, B, T>
@@ -166,7 +166,7 @@ where
     pub fn new(
         stores: &'a mut HostStoreSet<B, T>,
         index: usize,
-        instance: &'a ModuleInstance<B, T>,
+        instance: &'a ModuleInstanceSet<B, T>,
     ) -> Self {
         Self {
             data: &mut stores.data,
@@ -231,7 +231,7 @@ mod tests {
 
         let engine = wasp::Engine::new(backend, Config::default());
 
-        let mut stores_builder = StoreSetBuilder::new(&engine);
+        let mut stores_builder = StoreSetBuilder::new(&engine).await;
         let mut data_string = "".to_owned();
         for byte in expected_data.iter() {
             data_string += format!("\\{:02x?}", byte).as_str();
@@ -264,7 +264,7 @@ mod tests {
                         assert_eq!(*b, mem.get(i).await);
                     }
 
-                    return Ok(());
+                    Ok(())
                 })
             },
         );
