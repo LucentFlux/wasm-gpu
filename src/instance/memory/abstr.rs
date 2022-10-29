@@ -18,7 +18,7 @@ where
 
 impl<B: Backend> DeviceAbstractMemoryInstanceSet<B> {
     pub async fn build(&self, count: usize) -> DeviceMemoryInstanceSet<B> {
-        DeviceMemoryInstanceSet::new(self.backend.clone(), &self.memories, count, self.id)
+        DeviceMemoryInstanceSet::new(self.backend.clone(), &self.memories, count, self.id).await
     }
 }
 

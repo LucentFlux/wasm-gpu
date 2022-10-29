@@ -1,14 +1,14 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::instance::func::UntypedFuncPtr;
-use crate::instance::global::concrete::{DeviceMutableGlobalInstanceSet, GlobalPtr};
+use crate::instance::global::concrete::DeviceMutableGlobalInstanceSet;
+use crate::instance::global::concrete::GlobalMutablePtr;
+use crate::instance::global::immutable::GlobalImmutablePtr;
 use crate::instance::global::immutable::{
     DeviceImmutableGlobalsInstance, HostImmutableGlobalsInstance,
 };
 use crate::module::module_environ::Global;
-use crate::typed::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal, WasmTyVec};
-use crate::{
-    impl_abstract_ptr, impl_immutable_ptr, Backend, DeviceMemoryBlock, MainMemoryBlock, MemoryBlock,
-};
+use crate::typed::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal};
+use crate::{impl_abstract_ptr, Backend, DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
 use std::future::join;
 use std::mem::size_of;
 use std::sync::Arc;
@@ -171,7 +171,7 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
 
     /// A typed version of `get`, panics if types mismatch
     pub async fn get_typed<T, V: WasmTyVal>(&mut self, ptr: &AbstractGlobalPtr<B, T>) -> V {
-        assert_eq!(self.id, ptr.id);
+        assert_eq!(self.id, ptr.id());
         assert!(ptr.content_type().eq(&V::VAL_TYPE));
 
         match ptr {
@@ -202,9 +202,9 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
     }
 
     pub async fn get<T>(&mut self, ptr: &AbstractGlobalPtr<B, T>) -> Val {
-        assert_eq!(self.id, ptr.id);
+        assert_eq!(self.id, ptr.id());
 
-        match &ptr.ty.content_type {
+        match &ptr.content_type() {
             ValType::I32 => self.get_val::<T, i32>(ptr).await,
             ValType::I64 => self.get_val::<T, i64>(ptr).await,
             ValType::F32 => self.get_val::<T, Ieee32>(ptr).await,
@@ -251,18 +251,19 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
 impl_abstract_ptr!(
     pub struct AbstractGlobalMutablePtr<B: Backend, T> {
         pub(in crate::instance::global) data...
-        ty: ValType,
+        content_type: ValType,
     } with concrete GlobalMutablePtr<B, T>;
 );
 
 impl<B: Backend, T> AbstractGlobalMutablePtr<B, T> {
     pub fn is_type(&self, ty: &GlobalType) -> bool {
-        return self.ty.eq(ty.content_type) && ty.mutable;
+        return self.content_type.eq(&ty.content_type) && ty.mutable;
     }
 }
 
+#[derive(Debug)]
 pub enum AbstractGlobalPtr<B: Backend, T> {
-    Immutable(AbstractGlobalImmutablePtr<B, T>),
+    Immutable(GlobalImmutablePtr<B, T>),
     Mutable(AbstractGlobalMutablePtr<B, T>),
 }
 
@@ -274,10 +275,40 @@ impl<B: Backend, T> AbstractGlobalPtr<B, T> {
         }
     }
 
+    fn id(&self) -> usize {
+        match self {
+            AbstractGlobalPtr::Immutable(ptr) => ptr.id(),
+            AbstractGlobalPtr::Mutable(ptr) => ptr.id,
+        }
+    }
+
     pub fn content_type(&self) -> &ValType {
         match self {
-            AbstractGlobalPtr::Immutable(ptr) => ptr.ty(),
-            AbstractGlobalPtr::Mutable(ptr) => ptr.ty(),
+            AbstractGlobalPtr::Immutable(ptr) => ptr.content_type(),
+            AbstractGlobalPtr::Mutable(ptr) => ptr.content_type(),
+        }
+    }
+
+    pub fn mutable(&self) -> bool {
+        match self {
+            AbstractGlobalPtr::Immutable(_) => false,
+            AbstractGlobalPtr::Mutable(_) => true,
+        }
+    }
+
+    pub fn ty(&self) -> GlobalType {
+        GlobalType {
+            content_type: *self.content_type(),
+            mutable: self.mutable(),
+        }
+    }
+}
+
+impl<B: Backend, T> Clone for AbstractGlobalPtr<B, T> {
+    fn clone(&self) -> Self {
+        match self {
+            AbstractGlobalPtr::Immutable(ptr) => AbstractGlobalPtr::Immutable(ptr.clone()),
+            AbstractGlobalPtr::Mutable(ptr) => AbstractGlobalPtr::Mutable(ptr.clone()),
         }
     }
 }

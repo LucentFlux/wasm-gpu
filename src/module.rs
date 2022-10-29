@@ -146,10 +146,10 @@ where
             } else {
                 // Add to validated
                 match provided_import {
-                    Extern::Func(f) => validated_imports.functions.push(f),
-                    Extern::Global(g) => validated_imports.globals.push(g),
-                    Extern::Table(t) => validated_imports.tables.push(t),
-                    Extern::Memory(m) => validated_imports.memories.push(m),
+                    Extern::Func(f) => validated_imports.functions.push(f.clone()),
+                    Extern::Global(g) => validated_imports.globals.push(g.clone()),
+                    Extern::Table(t) => validated_imports.tables.push(t.clone()),
+                    Extern::Memory(m) => validated_imports.memories.push(m.clone()),
                 }
             }
         }

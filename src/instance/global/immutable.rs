@@ -1,3 +1,4 @@
+use crate::memory::DeviceMemoryBlock;
 use crate::typed::WasmTyVal;
 use crate::{impl_immutable_ptr, Backend, MainMemoryBlock, MemoryBlock};
 use std::mem::size_of;
@@ -99,12 +100,16 @@ impl<B: Backend> HostImmutableGlobalsInstance<B> {
 impl_immutable_ptr!(
     pub struct GlobalImmutablePtr<B: Backend, T> {
         data...
-        ty: ValType,
+        content_type: ValType,
     }
 );
 
 impl<B: Backend, T> GlobalImmutablePtr<B, T> {
     pub fn is_type(&self, ty: &GlobalType) -> bool {
-        return self.ty.eq(ty.content_type) && !ty.mutable;
+        return self.content_type.eq(&ty.content_type) && !ty.mutable;
+    }
+
+    pub(in crate::instance::global) fn id(&self) -> usize {
+        return self.id;
     }
 }

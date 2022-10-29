@@ -21,11 +21,11 @@ where
 {
     pub async fn new(
         backend: Arc<B>,
-        sources: impl IntoIterator<Item = &B::DeviceMemoryBlock>,
+        sources: &Vec<B::DeviceMemoryBlock>,
         count: usize,
         id: usize,
     ) -> Self {
-        let tables = sources.map(|source| {
+        let tables = sources.iter().map(|source| {
             DeviceInterleavedBuffer::new_interleaved_from(backend.clone(), source, count)
         });
         let tables = join_all(tables).await;

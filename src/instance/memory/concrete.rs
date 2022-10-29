@@ -31,21 +31,18 @@ where
 {
     pub async fn new(
         backend: Arc<B>,
-        sources: impl IntoIterator<Item = &B::DeviceMemoryBlock>,
+        sources: &Vec<B::DeviceMemoryBlock>,
         count: usize,
         id: usize,
     ) -> Self {
-        let memories = sources
-            .into_iter()
-            .map(|source: &B::DeviceMemoryBlock| async {
-                (
-                    source.len(),
-                    DeviceInterleavedBuffer::new_interleaved_from(backend.clone(), source, count)
-                        .await,
-                )
-            });
+        let memories = sources.iter().map(|source: &B::DeviceMemoryBlock| async {
+            (
+                source.len(),
+                DeviceInterleavedBuffer::new_interleaved_from(backend.clone(), source, count).await,
+            )
+        });
         let memory_and_infos = join_all(memories).await;
-        let lengths = memory_and_infos.iter().map(|(len, _)| len);
+        let lengths = memory_and_infos.iter().map(|(len, _)| *len);
         let lengths = FenwickTree::new(lengths);
         let memories = memory_and_infos
             .into_iter()

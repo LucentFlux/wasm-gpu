@@ -1,3 +1,4 @@
+use crate::instance::global::abstr::AbstractGlobalMutablePtr;
 use crate::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
 use crate::{impl_concrete_ptr, Backend};
 use std::sync::Arc;

@@ -52,7 +52,7 @@ where
                 )
             }
             Extern::Global(g) => {
-                let ty: &GlobalType = g.ty();
+                let ty: GlobalType = g.ty();
                 format!(
                     "global {}{:?}",
                     if ty.mutable { "mut " } else { "" },

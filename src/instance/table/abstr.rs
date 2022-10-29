@@ -3,6 +3,7 @@ use crate::instance::table::concrete::{DeviceTableInstanceSet, TablePtr};
 use crate::memory::limits_match;
 use crate::memory::DeviceMemoryBlock;
 use crate::{impl_abstract_ptr, Backend, MainMemoryBlock};
+use std::hash::Hasher;
 use std::sync::Arc;
 use wasmparser::TableType;
 
@@ -14,12 +15,12 @@ where
 {
     id: usize,
     backend: Arc<B>,
-    tables: Vec<DeviceAbstractTableInstance<B>>,
+    tables: Vec<B::DeviceMemoryBlock>,
 }
 
 impl<B: Backend> DeviceAbstractTableInstanceSet<B> {
     pub async fn build(&self, count: usize) -> DeviceTableInstanceSet<B> {
-        DeviceTableInstanceSet::new(self.backend.clone(), &self.tables, count, self.id)
+        DeviceTableInstanceSet::new(self.backend.clone(), &self.tables, count, self.id).await
     }
 }
 
@@ -29,7 +30,7 @@ where
 {
     id: usize,
     backend: Arc<B>,
-    tables: Vec<HostAbstractTableInstance<B>>,
+    tables: Vec<B::MainMemoryBlock>,
 }
 
 impl<B> HostAbstractTableInstanceSet<B>
@@ -47,7 +48,10 @@ where
     pub async fn add_table<T>(&mut self, plan: &TableType) -> AbstractTablePtr<B, T> {
         let ptr = self.tables.len();
         self.tables.push(
-            HostAbstractTableInstance::new(self.backend.as_ref(), plan.initial as usize).await,
+            self.backend
+                .create_device_memory_block(plan.initial as usize, None)
+                .map()
+                .await,
         );
         return AbstractTablePtr::new(ptr, self.id, plan.clone());
     }
@@ -63,7 +67,7 @@ where
         self.tables
             .get_mut(ptr.ptr)
             .unwrap() // This is append only, so having a pointer implies the item exists
-            .initialize::<T>(data, offset)
+            .write(data, offset)
             .await
     }
 
@@ -75,44 +79,6 @@ where
             id: self.id,
             backend: self.backend,
             tables,
-        }
-    }
-}
-
-pub struct DeviceAbstractTableInstance<B>
-where
-    B: Backend,
-{
-    references: B::DeviceMemoryBlock,
-}
-
-pub struct HostAbstractTableInstance<B>
-where
-    B: Backend,
-{
-    references: B::MainMemoryBlock,
-}
-
-impl<B> HostAbstractTableInstance<B>
-where
-    B: Backend,
-{
-    pub async fn new(backend: &B, initial_size: usize) -> Self {
-        Self {
-            references: backend
-                .create_device_memory_block(initial_size, None)
-                .map()
-                .await,
-        }
-    }
-
-    pub async fn initialize<T>(&mut self, data: &[u8], offset: usize) {
-        self.references.write(data, offset).await;
-    }
-
-    pub async fn unmap(self) -> DeviceAbstractTableInstance<B> {
-        DeviceAbstractTableInstance {
-            references: self.references.unmap().await,
         }
     }
 }
