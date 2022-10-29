@@ -6,7 +6,17 @@ pub struct FenwickTree {
 }
 
 impl FenwickTree {
-    pub fn new() {}
+    pub fn new(lengths: impl ExactSizeIterator<Item = usize>) -> Self {
+        let mut new = Self {
+            data: vec![0usize; lengths.len()],
+        };
+
+        for (i, len) in lengths.enumerate() {
+            new.update(i, len);
+        }
+
+        new
+    }
 
     pub fn update(&mut self, index: usize, delta: usize) {
         update(self.data.as_mut_slice(), index, delta);

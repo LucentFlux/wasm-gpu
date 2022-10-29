@@ -21,9 +21,9 @@ impl<B: Backend> DeviceDataInstance<B> {
 
     pub async fn map(self) -> HostDataInstance<B> {
         HostDataInstance {
+            head: self.datas.len(),
             datas: self.datas.map().await,
             id: self.id,
-            head: self.id,
         }
     }
 }

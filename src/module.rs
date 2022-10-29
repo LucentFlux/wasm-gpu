@@ -65,18 +65,19 @@ where
     B: Backend,
 {
     pub fn new(engine: &Engine<B>, bytes: Vec<u8>, name: &str) -> Result<Self, Error> {
-        let wasm: Cow<'a, [u8]> = wat::parse_bytes(bytes.as_slice())?;
+        let wasm: Cow<'_, [u8]> = wat::parse_bytes(bytes.as_slice())?;
+        let wasm = wasm.to_vec();
 
         let mut validator = Validator::new_with_features(engine.config().features.clone());
         let parser = wasmparser::Parser::new(0);
         let parsed = ModuleEnviron::new(validator)
-            .translate(parser, &wasm)
+            .translate(parser, wasm.as_slice())
             .context("failed to parse WebAssembly module")?;
 
         return Ok(Self {
             name: name.to_owned(),
             backend: engine.backend(),
-            source: bytes,
+            source: wasm,
             parsed,
         });
     }
@@ -118,30 +119,22 @@ where
             ))?;
 
             // Check type
-            let matches = match required_import {
-                ImportTypeRef::Func(f_id) => {
+            let matches = match (required_import, provided_import) {
+                (ImportTypeRef::Func(f_id), Extern::Func(f2)) => {
                     let ty = self
                         .parsed
                         .types
                         .get((*f_id) as usize)
                         .expect("import function id was out of range");
-                    match (ty, provided_import) {
-                        (Type::Func(f1), Extern::Func(f2)) => f2.ty().eq(f1),
+                    match ty {
+                        Type::Func(f1) => f2.ty().eq(f1),
                         _ => false,
                     }
                 }
-                ImportTypeRef::Table(t1) => match provided_import {
-                    Extern::Table(t2) => t2.is_type(t1),
-                    _ => false,
-                },
-                ImportTypeRef::Memory(m1) => match provided_import {
-                    Extern::Memory(m2) => m2.is_type(m1),
-                    _ => false,
-                },
-                ImportTypeRef::Global(g1) => match provided_import {
-                    Extern::Global(g2) => g2.is_type(g1),
-                    _ => false,
-                },
+                (ImportTypeRef::Table(t1), Extern::Table(t2)) => t2.is_type(t1),
+                (ImportTypeRef::Memory(m1), Extern::Memory(m2)) => m2.is_type(m1),
+                (ImportTypeRef::Global(g1), Extern::Global(g2)) => g2.is_type(g1),
+                _ => false,
             };
 
             if !matches {
@@ -150,6 +143,14 @@ where
                     required_import,
                     provided_import.signature()
                 ));
+            } else {
+                // Add to validated
+                match provided_import {
+                    Extern::Func(f) => validated_imports.functions.push(f),
+                    Extern::Global(g) => validated_imports.globals.push(g),
+                    Extern::Table(t) => validated_imports.tables.push(t),
+                    Extern::Memory(m) => validated_imports.memories.push(m),
+                }
             }
         }
 

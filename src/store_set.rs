@@ -4,7 +4,10 @@
 use crate::instance::data::DeviceDataInstance;
 use crate::instance::element::DeviceElementInstance;
 use crate::instance::func::FuncsInstance;
-use crate::instance::global::concrete::{DeviceGlobalInstanceSet, HostGlobalInstanceSet};
+use crate::instance::global::concrete::{
+    DeviceMutableGlobalInstanceSet, HostMutableGlobalInstanceSet,
+};
+use crate::instance::global::immutable::DeviceImmutableGlobalsInstance;
 use crate::instance::memory::concrete::{DeviceMemoryInstanceSet, HostMemoryInstanceSet};
 use crate::instance::table::concrete::{DeviceTableInstanceSet, HostTableInstanceSet};
 use crate::Backend;
@@ -18,7 +21,7 @@ where
 {
     pub tables: DeviceTableInstanceSet<B>,
     pub memories: DeviceMemoryInstanceSet<B>,
-    pub globals: DeviceGlobalInstanceSet<B>,
+    pub mutable_globals: DeviceMutableGlobalInstanceSet<B>,
 }
 
 pub struct HostStoreSetData<B>
@@ -27,7 +30,7 @@ where
 {
     pub tables: HostTableInstanceSet<B>,
     pub memories: HostMemoryInstanceSet<B>,
-    pub globals: HostGlobalInstanceSet<B>,
+    pub mutable_globals: HostMutableGlobalInstanceSet<B>,
 }
 
 /// All of the state for a collection of active WASM state machines
@@ -41,6 +44,7 @@ where
     pub functions: Arc<FuncsInstance<B, T>>,
     pub elements: Arc<DeviceElementInstance<B>>,
     pub datas: Arc<DeviceDataInstance<B>>,
+    pub immutable_globals: Arc<DeviceImmutableGlobalsInstance<B>>,
     pub owned: O,
 }
 

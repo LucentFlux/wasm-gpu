@@ -1,11 +1,17 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::instance::func::UntypedFuncPtr;
-use crate::instance::global::concrete::GlobalPtr;
+use crate::instance::global::concrete::{DeviceMutableGlobalInstanceSet, GlobalPtr};
+use crate::instance::global::immutable::{
+    DeviceImmutableGlobalsInstance, HostImmutableGlobalsInstance,
+};
 use crate::module::module_environ::Global;
 use crate::typed::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal, WasmTyVec};
-use crate::{impl_abstract_ptr, Backend, DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
+use crate::{
+    impl_abstract_ptr, impl_immutable_ptr, Backend, DeviceMemoryBlock, MainMemoryBlock, MemoryBlock,
+};
 use std::future::join;
 use std::mem::size_of;
+use std::sync::Arc;
 use wasmparser::{GlobalType, Operator, ValType};
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
@@ -14,10 +20,27 @@ pub struct DeviceAbstractGlobalInstance<B>
 where
     B: Backend,
 {
-    immutable_values: B::DeviceMemoryBlock,
-    mutable_values: B::DeviceMemoryBlock,
+    pub immutable_values: Arc<DeviceImmutableGlobalsInstance<B>>,
+    pub mutable_values: B::DeviceMemoryBlock,
 
     id: usize,
+}
+
+impl<B: Backend> DeviceAbstractGlobalInstance<B> {
+    pub async fn build(
+        &self,
+        backend: Arc<B>,
+        count: usize,
+    ) -> (
+        DeviceMutableGlobalInstanceSet<B>,
+        Arc<DeviceImmutableGlobalsInstance<B>>,
+    ) {
+        let mutables =
+            DeviceMutableGlobalInstanceSet::new(backend, &self.mutable_values, count, self.id)
+                .await;
+
+        return (mutables, self.immutable_values.clone());
+    }
 }
 
 pub struct HostAbstractGlobalInstance<B>
@@ -25,8 +48,7 @@ where
     B: Backend,
 {
     /// Holds values, some mutable and some immutable by the typing information in the pointer
-    immutable_values: B::MainMemoryBlock,
-    immutable_values_head: usize,
+    immutable_values: HostImmutableGlobalsInstance<B>,
     mutable_values: B::MainMemoryBlock,
     mutable_values_head: usize,
 
@@ -35,16 +57,16 @@ where
 
 impl<B: Backend> HostAbstractGlobalInstance<B> {
     pub async fn new(backend: &B) -> Self {
-        let immutable_values_fut = backend.create_device_memory_block(0, None).map();
+        let id = COUNTER.next();
+        let immutable_values_fut = DeviceImmutableGlobalsInstance::new(backend, id).map();
         let mutable_values_fut = backend.create_device_memory_block(0, None).map();
         let (immutable_values, mutable_values) =
             join!(immutable_values_fut, mutable_values_fut).await;
         Self {
             immutable_values,
-            immutable_values_head: 0,
             mutable_values,
             mutable_values_head: 0,
-            id: COUNTER.next(),
+            id,
         }
     }
 
@@ -107,10 +129,35 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
 
     /// values_count is given in units of bytes, so an f64 is 8 bytes
     pub async fn reserve_immutable(&mut self, values_size: usize) {
-        self.immutable_values.flush_extend(values_size).await;
+        self.immutable_values.reserve(values_size).await;
     }
 
-    pub async fn push(&mut self, val: Val, mutable: bool) -> usize {
+    async fn push_typed<V, T>(&mut self, v: V, mutable: bool) -> AbstractGlobalPtr<B, T>
+    where
+        V: WasmTyVal,
+    {
+        if !mutable {
+            let immutable_ptr = self.immutable_values.push_typed(v).await;
+            return AbstractGlobalPtr::Immutable(immutable_ptr);
+        }
+
+        let bytes = v.to_bytes();
+
+        let start = self.mutable_values_head;
+        let end = start + bytes.len();
+
+        assert!(end <= self.mutable_values.len(), "index out of bounds");
+        let slice = self.mutable_values.as_slice_mut(start..end).await;
+
+        slice.copy_from_slice(bytes.as_slice());
+
+        self.mutable_values_head = end;
+
+        let mutable_ptr = AbstractGlobalMutablePtr::new(start, self.id, V::VAL_TYPE);
+        return AbstractGlobalPtr::Mutable(mutable_ptr);
+    }
+
+    pub async fn push<T>(&mut self, val: Val, mutable: bool) -> AbstractGlobalPtr<B, T> {
         match val {
             Val::I32(v) => self.push_typed(v, mutable).await,
             Val::I64(v) => self.push_typed(v, mutable).await,
@@ -122,36 +169,32 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
         }
     }
 
-    fn get_values_head(&mut self, mutable: bool) -> &mut usize {
-        if mutable {
-            &mut self.mutable_values_head
-        } else {
-            &mut self.immutable_values_head
+    /// A typed version of `get`, panics if types mismatch
+    pub async fn get_typed<T, V: WasmTyVal>(&mut self, ptr: &AbstractGlobalPtr<B, T>) -> V {
+        assert_eq!(self.id, ptr.id);
+        assert!(ptr.content_type().eq(&V::VAL_TYPE));
+
+        match ptr {
+            AbstractGlobalPtr::Immutable(immutable_ptr) => {
+                self.immutable_values.get_typed(immutable_ptr).await
+            }
+            AbstractGlobalPtr::Mutable(mutable_ptr) => {
+                let start = mutable_ptr.ptr;
+                let end = start + size_of::<V>();
+
+                assert!(end <= self.mutable_values.len(), "index out of bounds");
+                let slice = self.mutable_values.as_slice(start..end).await;
+
+                return V::try_from_bytes(slice).expect(
+                    format!(
+                        "could not parse memory - invalid state for {}: {:?}",
+                        std::any::type_name::<V>(),
+                        slice
+                    )
+                    .as_str(),
+                );
+            }
         }
-    }
-
-    async fn push_typed<V>(&mut self, v: V, mutable: bool) -> usize
-    where
-        V: WasmTyVec,
-    {
-        let bytes = v.to_bytes();
-
-        let start = *self.get_values_head(mutable);
-        let end = start + bytes.len();
-
-        let slice = if mutable {
-            assert!(end <= self.mutable_values.len(), "index out of bounds");
-            self.mutable_values.as_slice_mut(start..end).await
-        } else {
-            assert!(end <= self.immutable_values.len(), "index out of bounds");
-            self.immutable_values.as_slice_mut(start..end).await
-        };
-
-        slice.copy_from_slice(bytes.as_slice());
-
-        *self.get_values_head(mutable) = end;
-
-        return start;
     }
 
     async fn get_val<T, V: WasmTyVal>(&mut self, ptr: &AbstractGlobalPtr<B, T>) -> Val {
@@ -172,32 +215,6 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
         }
     }
 
-    /// A typed version of `get`, panics if types mismatch
-    pub async fn get_typed<T, V: WasmTyVal>(&mut self, ptr: &AbstractGlobalPtr<B, T>) -> V {
-        assert_eq!(self.id, ptr.id);
-        assert!(ptr.ty.content_type.eq(&V::VAL_TYPE));
-
-        let start = ptr.ptr;
-        let end = start + size_of::<V>();
-
-        let slice = if ptr.ty.mutable {
-            assert!(end <= self.mutable_values.len(), "index out of bounds");
-            self.mutable_values.as_slice(start..end).await
-        } else {
-            assert!(end <= self.immutable_values.len(), "index out of bounds");
-            self.immutable_values.as_slice(start..end).await
-        };
-
-        return V::try_from_bytes(slice).expect(
-            format!(
-                "could not parse memory - invalid state for {}: {:?}",
-                std::any::type_name::<V>(),
-                slice
-            )
-            .as_str(),
-        );
-    }
-
     pub async fn add_global<T>(
         &mut self,
         global: Global<'_>,
@@ -213,17 +230,10 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
             global.ty.content_type,
             "global evaluation had differing type to definition"
         );
-        let pos = self.push(val, global.ty.mutable).await;
-
-        return AbstractGlobalPtr::new(pos, self.id, global.ty);
+        return self.push(val, global.ty.mutable).await;
     }
 
     pub async fn unmap(self) -> DeviceAbstractGlobalInstance<B> {
-        assert_eq!(
-            self.immutable_values_head,
-            self.immutable_values.len(),
-            "immutable space reserved but not used"
-        );
         assert_eq!(
             self.mutable_values_head,
             self.mutable_values.len(),
@@ -231,7 +241,7 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
         );
 
         DeviceAbstractGlobalInstance {
-            immutable_values: self.immutable_values.unmap().await,
+            immutable_values: Arc::new(self.immutable_values.unmap().await),
             mutable_values: self.mutable_values.unmap().await,
             id: self.id,
         }
@@ -239,14 +249,35 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
 }
 
 impl_abstract_ptr!(
-    pub struct AbstractGlobalPtr<B: Backend, T> {
+    pub struct AbstractGlobalMutablePtr<B: Backend, T> {
         pub(in crate::instance::global) data...
-        ty: GlobalType, // Also used to decide whether to try to read from the mutable or the immutable buffer
-    } with concrete GlobalPtr<B, T>;
+        ty: ValType,
+    } with concrete GlobalMutablePtr<B, T>;
 );
+
+impl<B: Backend, T> AbstractGlobalMutablePtr<B, T> {
+    pub fn is_type(&self, ty: &GlobalType) -> bool {
+        return self.ty.eq(ty.content_type) && ty.mutable;
+    }
+}
+
+pub enum AbstractGlobalPtr<B: Backend, T> {
+    Immutable(AbstractGlobalImmutablePtr<B, T>),
+    Mutable(AbstractGlobalMutablePtr<B, T>),
+}
 
 impl<B: Backend, T> AbstractGlobalPtr<B, T> {
     pub fn is_type(&self, ty: &GlobalType) -> bool {
-        return self.ty.eq(ty);
+        match self {
+            AbstractGlobalPtr::Immutable(ptr) => ptr.is_type(ty),
+            AbstractGlobalPtr::Mutable(ptr) => ptr.is_type(ty),
+        }
+    }
+
+    pub fn content_type(&self) -> &ValType {
+        match self {
+            AbstractGlobalPtr::Immutable(ptr) => ptr.ty(),
+            AbstractGlobalPtr::Mutable(ptr) => ptr.ty(),
+        }
     }
 }

@@ -1,11 +1,13 @@
 use crate::fenwick::FenwickTree;
-use crate::impl_concrete_ptr;
 use crate::instance::memory::abstr::AbstractMemoryPtr;
 use crate::memory::interleaved::{
     DeviceInterleavedBuffer, HostInterleavedBuffer, InterleavedBufferView, InterleavedBufferViewMut,
 };
 use crate::Backend;
+use crate::{impl_concrete_ptr, MemoryBlock};
+use futures::future::join_all;
 use itertools::Itertools;
+use std::sync::Arc;
 
 const STRIDE: usize = 4; // 4 * u32
 
@@ -21,6 +23,39 @@ where
 {
     data: Vec<DeviceInterleavedBuffer<B, STRIDE>>,
     meta: Meta,
+}
+
+impl<B> DeviceMemoryInstanceSet<B>
+where
+    B: Backend,
+{
+    pub async fn new(
+        backend: Arc<B>,
+        sources: impl IntoIterator<Item = &B::DeviceMemoryBlock>,
+        count: usize,
+        id: usize,
+    ) -> Self {
+        let memories = sources
+            .into_iter()
+            .map(|source: &B::DeviceMemoryBlock| async {
+                (
+                    source.len(),
+                    DeviceInterleavedBuffer::new_interleaved_from(backend.clone(), source, count)
+                        .await,
+                )
+            });
+        let memory_and_infos = join_all(memories).await;
+        let lengths = memory_and_infos.iter().map(|(len, _)| len);
+        let lengths = FenwickTree::new(lengths);
+        let memories = memory_and_infos
+            .into_iter()
+            .map(|(_, memory)| memory)
+            .collect();
+        Self {
+            data: memories,
+            meta: Meta { lengths, id },
+        }
+    }
 }
 
 pub struct HostMemoryInstanceSet<B>

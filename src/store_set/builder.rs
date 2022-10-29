@@ -8,6 +8,7 @@ use crate::instance::memory::abstr::{
 };
 use crate::instance::table::abstr::{DeviceAbstractTableInstanceSet, HostAbstractTableInstanceSet};
 use crate::instance::ModuleInstanceSet;
+use crate::store_set::DeviceStoreSetData;
 use crate::{Backend, DeviceStoreSet, Engine, Func, Module};
 use std::future::join;
 use std::sync::Arc;
@@ -184,9 +185,9 @@ where
             tables,
             memories,
             globals,
-            elements,
-            datas,
-            functions,
+            elements: Arc::new(elements),
+            datas: Arc::new(datas),
+            functions: Arc::new(functions),
         }
     }
 }
@@ -198,9 +199,9 @@ pub struct CompletedBuilder<B: Backend, T> {
     tables: DeviceAbstractTableInstanceSet<B>,
     memories: DeviceAbstractMemoryInstanceSet<B>,
     globals: DeviceAbstractGlobalInstance<B>,
-    elements: DeviceElementInstance<B>,
-    datas: DeviceDataInstance<B>,
-    functions: FuncsInstance<B, T>,
+    elements: Arc<DeviceElementInstance<B>>,
+    datas: Arc<DeviceDataInstance<B>>,
+    functions: Arc<FuncsInstance<B, T>>,
 }
 
 impl<B: Backend, T> CompletedBuilder<B, T> {
@@ -210,6 +211,27 @@ impl<B: Backend, T> CompletedBuilder<B, T> {
         // Here we take all of the initialisation that we did that can be shared and spin it into several
         // instances. This shouldn't involve moving any data to the device, instead data that has already
         // been provided to the device should be cloned and specialised as needed for a collection of instances
-        unimplemented!()
+        let data: Vec<_> = values.into_iter().collect();
+
+        let tables = self.tables.build(data.len()).await;
+
+        let memories = self.memories.build(data.len()).await;
+
+        let (mutable_globals, immutable_globals) =
+            self.globals.build(self.backend.clone(), data.len()).await;
+
+        DeviceStoreSet {
+            backend: self.backend.clone(),
+            data,
+            functions: self.functions.clone(),
+            elements: self.elements.clone(),
+            datas: self.datas.clone(),
+            immutable_globals,
+            owned: DeviceStoreSetData {
+                tables,
+                memories,
+                mutable_globals,
+            },
+        }
     }
 }

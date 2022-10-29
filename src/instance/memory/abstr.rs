@@ -1,5 +1,5 @@
 use crate::atomic_counter::AtomicCounter;
-use crate::instance::memory::concrete::MemoryPtr;
+use crate::instance::memory::concrete::{DeviceMemoryInstanceSet, MemoryPtr};
 use crate::memory::limits_match;
 use crate::{impl_abstract_ptr, Backend, DeviceMemoryBlock, MainMemoryBlock};
 use std::sync::Arc;
@@ -11,8 +11,15 @@ pub struct DeviceAbstractMemoryInstanceSet<B>
 where
     B: Backend,
 {
+    backend: Arc<B>,
     memories: Vec<B::DeviceMemoryBlock>,
     id: usize,
+}
+
+impl<B: Backend> DeviceAbstractMemoryInstanceSet<B> {
+    pub async fn build(&self, count: usize) -> DeviceMemoryInstanceSet<B> {
+        DeviceMemoryInstanceSet::new(self.backend.clone(), &self.memories, count, self.id)
+    }
 }
 
 pub struct HostAbstractMemoryInstanceSet<B>
@@ -68,6 +75,7 @@ impl<B: Backend> HostAbstractMemoryInstanceSet<B> {
         DeviceAbstractMemoryInstanceSet {
             id: self.id,
             memories,
+            backend: self.backend,
         }
     }
 }
