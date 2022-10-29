@@ -415,7 +415,10 @@ impl<L: LazyBackend> MainMemoryBlock<Lazy<L>> for MappedLazyBuffer<L> {
     }
 }
 
-pub struct UnmappedLazyBuffer<L: LazyBackend> {
+pub struct UnmappedLazyBuffer<L: LazyBackend>
+where
+    Self: Send,
+{
     data: LazyBufferMemoryBlock<L>,
 }
 

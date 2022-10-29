@@ -34,7 +34,7 @@ impl<L: LazyBackend> WriteBufferRing<L> {
 
         let mut upload_buffer: L::MainToDeviceBufferMapped = self.pop().await;
 
-        upload_buffer.view_mut().copy_from_slice(slice);
+        upload_buffer.write(slice);
 
         let upload_buffer = upload_buffer.unmap().await;
 

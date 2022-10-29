@@ -43,13 +43,10 @@ impl<L: LazyBackend> ReadBufferRing<L> {
 
         let download_buffer = download_buffer.map().await;
 
-        let res = {
-            let view = download_buffer.view();
-
-            assert_eq!(view.len(), L::CHUNK_SIZE);
-
-            cont(view)
-        };
+        let res = download_buffer.view(move |slice| {
+            assert_eq!(slice.len(), L::CHUNK_SIZE);
+            cont(slice)
+        });
 
         self.push(download_buffer);
 

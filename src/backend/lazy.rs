@@ -26,7 +26,7 @@ pub trait DeviceToMainBufferUnmapped<L: LazyBackend> {
 }
 #[async_trait]
 pub trait DeviceToMainBufferMapped<L: LazyBackend> {
-    fn view(&self) -> &[u8];
+    fn view<Res, F: FnOnce(&[u8]) -> Res>(&self, callback: F) -> Res;
 
     async fn unmap(self) -> L::DeviceToMainBufferUnmapped;
 }
@@ -39,7 +39,7 @@ pub trait MainToDeviceBufferUnmapped<L: LazyBackend> {
 }
 #[async_trait]
 pub trait MainToDeviceBufferMapped<L: LazyBackend> {
-    fn view_mut(&mut self) -> &mut [u8];
+    fn write(&mut self, val: &[u8]);
 
     async fn unmap(self) -> L::MainToDeviceBufferUnmapped;
 }

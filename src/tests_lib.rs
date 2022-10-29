@@ -5,7 +5,7 @@ use crate::wasp;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
-pub async fn get_backend() -> wasp::VulkanoBackend<1024> {
+pub async fn get_backend() -> wasp::VulkanoBackend {
     let instance = wgpu::Instance::new(wgpu::Backends::all());
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
