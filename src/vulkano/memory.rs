@@ -9,18 +9,34 @@ use vulkano::buffer::{
     BufferAccess, BufferUsage, CpuAccessibleBuffer, DeviceLocalBuffer, TypedBufferAccess,
 };
 use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, BufferCopy, CommandBufferUsage, CopyBufferInfo,
+    AutoCommandBufferBuilder, BufferCopy, CommandBufferExecFuture, CommandBufferUsage,
+    CopyBufferInfo, PrimaryAutoCommandBuffer,
 };
-use vulkano::sync::GpuFuture;
+use vulkano::sync::{FenceSignalFuture, GpuFuture};
 use vulkano::{sync, DeviceSize};
 
 pub struct DeviceOnlyBuffer {
     backend: VulkanoBackendLazy,
-    buffer: Arc<DeviceLocalBuffer<[u8]>>,
+    buffer: Option<Arc<DeviceLocalBuffer<[u8]>>>,
 }
 
 impl DeviceOnlyBuffer {
     pub fn new(backend: VulkanoBackendLazy, size: usize, initial_data: Option<&[u8]>) -> Self {
+        if let Some(v) = initial_data {
+            assert_eq!(
+                v.len(),
+                size,
+                "initial data must match the length of the buffer"
+            );
+        }
+
+        if size == 0 {
+            return Self {
+                buffer: None,
+                backend,
+            };
+        }
+
         let usage = BufferUsage {
             transfer_src: true,
             transfer_dst: true,
@@ -48,7 +64,10 @@ impl DeviceOnlyBuffer {
                 buffer
             }
         };
-        Self { buffer, backend }
+        Self {
+            buffer: Some(buffer),
+            backend,
+        }
     }
 }
 
@@ -59,7 +78,10 @@ impl lazy::DeviceOnlyBuffer<VulkanoBackendLazy> for DeviceOnlyBuffer {
     }
 
     fn len(&self) -> usize {
-        self.buffer.len() as usize
+        match &self.buffer {
+            None => 0,
+            Some(buffer) => buffer.len() as usize,
+        }
     }
 
     async fn copy_from(&mut self, other: &Self) {
@@ -72,6 +94,12 @@ impl lazy::DeviceOnlyBuffer<VulkanoBackendLazy> for DeviceOnlyBuffer {
 
         let source = other.buffer.clone();
         let destination = self.buffer.clone();
+
+        let (source, destination) = match (source, destination) {
+            (None, _) => return,
+            (_, None) => return,
+            (Some(source), Some(destination)) => (source, destination),
+        };
 
         let mut command = CopyBufferInfo::buffers(source, destination);
 
@@ -115,7 +143,7 @@ impl lazy::DeviceToMainBufferMapped<VulkanoBackendLazy> for DeviceToMainBufferMa
 pub struct DeviceToMainBufferUnmapped {
     backend: VulkanoBackendLazy,
     buffer: Arc<CpuAccessibleBuffer<[u8]>>,
-    work: Option<Box<dyn GpuFuture + Send>>,
+    work: Option<Box<FenceSignalFuture<Box<dyn GpuFuture + Send>>>>,
 }
 
 fn add_copy_to_work<
@@ -127,7 +155,7 @@ fn add_copy_to_work<
     destination: Arc<B2>,
     backend: &VulkanoBackendLazy,
     mut work: Option<Box<dyn GpuFuture + Send>>,
-) -> Box<dyn GpuFuture + Send> {
+) -> FenceSignalFuture<Box<dyn GpuFuture + Send>> {
     let mut builder = AutoCommandBufferBuilder::primary(
         backend.device.clone(),
         backend.queue_family_index,
@@ -149,17 +177,16 @@ fn add_copy_to_work<
 
     let command_buffer = builder.build().unwrap();
 
-    let prev_work = work
-        .take()
-        .unwrap_or_else(|| Box::new(sync::now(backend.device.clone())));
+    let prev_work = work.unwrap_or_else(|| Box::new(sync::now(backend.device.clone())));
 
-    let future = prev_work
-        .then_execute(backend.queue.clone(), command_buffer)
-        .unwrap()
-        .then_signal_semaphore_and_flush()
-        .unwrap();
+    let future: Box<dyn GpuFuture + Send> = Box::new(
+        prev_work
+            .then_execute(backend.queue.clone(), command_buffer)
+            .unwrap(),
+    );
+    let future = future.then_signal_fence_and_flush().unwrap();
 
-    return Box::new(future);
+    return future;
 }
 
 impl DeviceToMainBufferUnmapped {
@@ -192,10 +219,19 @@ impl lazy::DeviceToMainBufferUnmapped<VulkanoBackendLazy> for DeviceToMainBuffer
         let source = src.buffer.clone();
         let destination = self.buffer.clone();
 
-        let new_work =
-            add_copy_to_work(offset, source, destination, &self.backend, self.work.take());
+        let source = match source {
+            None => return,
+            Some(source) => source,
+        };
 
-        self.work = Some(new_work);
+        // Remap to wide pointer for dynamic dispatch - there may be a nicer way to get rust to do this :)
+        let old_work = self.work.take().map(|old_work| {
+            let old_work: Box<dyn GpuFuture + Send> = Box::new(*old_work);
+            old_work
+        });
+        let new_work = add_copy_to_work(offset, source, destination, &self.backend, old_work);
+
+        self.work = Some(Box::new(new_work));
     }
 
     async fn map(self) -> DeviceToMainBufferMapped {
@@ -207,9 +243,10 @@ impl lazy::DeviceToMainBufferUnmapped<VulkanoBackendLazy> for DeviceToMainBuffer
 
         // Complete all outstanding work
         if let Some(work) = work {
-            let fence = work.then_signal_fence_and_flush().unwrap();
             // TODO: Switch to await once merged https://github.com/vulkano-rs/vulkano/pull/2051
-            fence.wait(None).unwrap()
+            if !work.is_signaled().unwrap() {
+                work.wait(None).unwrap();
+            }
         }
 
         DeviceToMainBufferMapped { buffer, backend }
@@ -267,6 +304,11 @@ impl lazy::MainToDeviceBufferUnmapped<VulkanoBackendLazy> for MainToDeviceBuffer
     async fn copy_to(&self, dst: &DeviceOnlyBuffer, offset: usize) {
         let source = self.buffer.clone();
         let destination = dst.buffer.clone();
+
+        let destination = match destination {
+            None => return,
+            Some(destination) => destination,
+        };
 
         let new_work = add_copy_to_work(offset, source, destination, &self.backend, None);
 

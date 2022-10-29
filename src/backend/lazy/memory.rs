@@ -151,12 +151,14 @@ struct HostMemoryBlob {
 }
 
 impl HostMemoryBlob {
-    fn new_layout(len: usize) -> Layout {
-        assert!(len > 0, "cannot allocate 0-length blob");
+    fn new_layout(mut len: usize) -> Layout {
+        if len == 0 {
+            len = 1; // Single byte allocation shouldn't hurt anyone :)
+        }
         Layout::array::<u8>(len).unwrap()
     }
 
-    fn new(len: usize) -> Self {
+    fn new(mut len: usize) -> Self {
         let layout = Self::new_layout(len);
         let ptr = unsafe { alloc::alloc(layout) };
         Self { ptr, len, layout }
@@ -299,11 +301,16 @@ impl<L: LazyBackend> LazyBuffer<L> {
         let futures = chunks
             .into_iter()
             .map(|chunk| chunk.ensure_downloaded(&self.backing, mark_as_dirty, &self.data));
+
         join_all(futures).await;
     }
 
     async fn as_slice<S: ToRange<usize>>(&self, bounds: S) -> &[u8] {
         let bounds = bounds.half_open(self.backing.visible_len);
+
+        if bounds.start >= bounds.end {
+            return &[];
+        }
 
         assert!(bounds.start < self.backing.visible_len);
         assert!(bounds.end <= self.backing.visible_len);
@@ -315,6 +322,10 @@ impl<L: LazyBackend> LazyBuffer<L> {
 
     async fn as_slice_mut<S: ToRange<usize>>(&mut self, bounds: S) -> &mut [u8] {
         let bounds = bounds.half_open(self.backing.visible_len);
+
+        if bounds.start >= bounds.end {
+            return &mut [];
+        }
 
         assert!(bounds.start < self.backing.visible_len);
         assert!(bounds.end <= self.backing.visible_len);
@@ -425,6 +436,24 @@ where
 impl<L: LazyBackend> UnmappedLazyBuffer<L> {
     pub fn new(backend: Lazy<L>, size: usize, initial_data: Option<&[u8]>) -> Self {
         let real_size = min_alignment_gt(size, L::CHUNK_SIZE);
+
+        // Pad initial data
+        let mut initial_data = initial_data;
+        let mut padded = vec![];
+        if real_size != size {
+            if let Some(v) = initial_data {
+                assert_eq!(
+                    v.len(),
+                    size,
+                    "initial data must match the visible length of the buffer"
+                );
+                padded = vec![0u8; real_size];
+                padded.as_mut_slice()[0..size].copy_from_slice(v);
+            }
+
+            initial_data = initial_data.map(|_| padded.as_slice());
+        }
+
         let buffer = <L as LazyBackend>::create_device_only_memory_block(
             &backend.lazy,
             real_size,

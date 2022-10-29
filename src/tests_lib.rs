@@ -6,26 +6,13 @@ use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
 pub async fn get_backend() -> wasp::VulkanoBackend {
-    let instance = wgpu::Instance::new(wgpu::Backends::all());
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        })
-        .await
-        .unwrap();
-    let (device, queue) = adapter
-        .request_device(&Default::default(), None)
-        .await
-        .unwrap();
     let conf = wasp::VulkanoBackendConfig {
         buffer_ring: BufferRingConfig {
             // Minimal memory footprint for tests
             total_mem: 2 * 1024,
         },
     };
-    return wasp::VulkanoBackend::new(conf).await;
+    return wasp::VulkanoBackend::new(conf, None).await;
 }
 
 #[macro_export]

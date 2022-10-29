@@ -6,6 +6,7 @@ use crate::backend::lazy::{Lazy, LazyBackend};
 use crate::vulkano::compute_utils::VulkanoComputeUtils;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
+use vulkano::device::physical::PhysicalDevice;
 use vulkano::device::{Device, DeviceCreateInfo, Queue, QueueCreateInfo};
 use vulkano::instance::{Instance, InstanceCreateInfo};
 use vulkano::VulkanLibrary;
@@ -61,21 +62,30 @@ pub struct VulkanoBackendConfig {
 pub type VulkanoBackend = Lazy<VulkanoBackendLazy>;
 
 impl VulkanoBackend {
-    pub async fn new(cfg: VulkanoBackendConfig) -> Self {
+    pub async fn new(
+        cfg: VulkanoBackendConfig,
+        predicate_physical: Option<fn(Arc<PhysicalDevice>) -> bool>,
+    ) -> Self {
         let library = VulkanLibrary::new().expect("no local Vulkan library/DLL");
         let instance = Instance::new(library, InstanceCreateInfo::default())
             .expect("failed to create instance");
+
+        let predicate_physical = predicate_physical.unwrap_or(|_| true);
 
         let (queue_family_index, physical) = instance
             .enumerate_physical_devices()
             .expect("could not enumerate devices")
             .filter_map(|physical| {
-                let compute_index = physical
-                    .queue_family_properties()
-                    .iter()
-                    .enumerate()
-                    .position(|(_, q)| q.queue_flags.compute);
-                compute_index.map(|i| (i as u32, physical))
+                if predicate_physical(physical.clone()) {
+                    let compute_index = physical
+                        .queue_family_properties()
+                        .iter()
+                        .enumerate()
+                        .position(|(_, q)| q.queue_flags.compute);
+                    compute_index.map(|i| (i as u32, physical))
+                } else {
+                    None
+                }
             })
             .next()
             .expect("no devices available");

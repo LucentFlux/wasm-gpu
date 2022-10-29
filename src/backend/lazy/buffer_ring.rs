@@ -52,7 +52,7 @@ impl<L: LazyBackend, Impl: BufferRingImpl<L> + 'static> BufferRing<L, Impl> {
             // Future should immediately resolve since we reserved space
             let fut = buffer_return.send(new_buffer);
             fut.await
-                .expect("failed to initialize buffers for data transfer")
+                .expect("failed to initialize buffers for data transfer");
         }
 
         Self {
