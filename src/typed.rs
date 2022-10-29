@@ -186,7 +186,7 @@ macro_rules! impl_vec_base {
                     return Err(Error::from(WasmTyVecError {}));
                 }
 
-                let bsc = [0u8; std::mem::size_of::<$t>()];
+                let mut bsc = [0u8; std::mem::size_of::<$t>()];
                 bsc.copy_from_slice(bs);
                 Ok(<$t>::from_le_bytes(bsc))
             }

@@ -9,7 +9,7 @@ use crate::instance::global::abstr::{AbstractGlobalPtr, HostAbstractGlobalInstan
 use crate::instance::memory::abstr::{AbstractMemoryPtr, HostAbstractMemoryInstanceSet};
 use crate::instance::table::abstr::{AbstractTablePtr, HostAbstractTableInstanceSet};
 use crate::module::module_environ::{
-    ImportTypeRef, ModuleEnviron, ModuleExport, ParsedElementKind, ParsedModule,
+    ImportTypeRef, ModuleEnviron, ModuleExport, ParsedElementKind, ParsedModule, ParsedModuleUnit,
 };
 use crate::typed::{wasm_ty_bytes, FuncRef, Val};
 use crate::{Backend, Engine, Extern};
@@ -22,14 +22,13 @@ use std::sync::Arc;
 use wasmparser::{Type, ValType, Validator};
 
 /// A wasm module that has not been instantiated
-pub struct Module<'a, B>
+pub struct Module<B>
 where
     B: Backend,
 {
     name: String,
     backend: Arc<B>,
-    source: Vec<u8>,
-    parsed: ParsedModule<'a>,
+    parsed: ParsedModuleUnit,
 }
 
 pub struct ValidatedImports<B, T>
@@ -60,24 +59,29 @@ where
     }
 }
 
-impl<'a, B> Module<'a, B>
+impl<B> Module<B>
 where
     B: Backend,
 {
+    fn parse(engine: &Engine<B>, wasm: Vec<u8>) -> Result<ParsedModuleUnit, Error> {
+        let mut validator = Validator::new_with_features(engine.config().features.clone());
+        let parser = wasmparser::Parser::new(0);
+        let parsed = ModuleEnviron::new(validator)
+            .translate(parser, wasm)
+            .context("failed to parse WebAssembly module")?;
+
+        return Ok(parsed);
+    }
+
     pub fn new(engine: &Engine<B>, bytes: Vec<u8>, name: &str) -> Result<Self, Error> {
         let wasm: Cow<'_, [u8]> = wat::parse_bytes(bytes.as_slice())?;
         let wasm = wasm.to_vec();
 
-        let mut validator = Validator::new_with_features(engine.config().features.clone());
-        let parser = wasmparser::Parser::new(0);
-        let parsed = ModuleEnviron::new(validator)
-            .translate(parser, wasm.as_slice())
-            .context("failed to parse WebAssembly module")?;
+        let parsed = Self::parse(engine, wasm)?;
 
         return Ok(Self {
             name: name.to_owned(),
             backend: engine.backend(),
-            source: wasm,
             parsed,
         });
     }
@@ -109,7 +113,7 @@ where
             tables: vec![],
             memories: vec![],
         };
-        for (module, name, required_import) in self.parsed.imports.iter() {
+        for (module, name, required_import) in self.parsed.borrow_sections().imports.iter() {
             // Get provided
             let key = (module.to_string(), name.to_string());
             let provided_import = import_by_name.get(&key).ok_or(anyhow!(
@@ -123,6 +127,7 @@ where
                 (ImportTypeRef::Func(f_id), Extern::Func(f2)) => {
                     let ty = self
                         .parsed
+                        .borrow_sections()
                         .types
                         .get((*f_id) as usize)
                         .expect("import function id was out of range");
@@ -168,6 +173,7 @@ where
         // Calculate space requirements
         let (immutables, mutables): (Vec<_>, Vec<_>) = self
             .parsed
+            .borrow_sections()
             .globals
             .iter()
             .map(|g| (g.ty.mutable, wasm_ty_bytes(g.ty.content_type)))
@@ -187,7 +193,7 @@ where
 
         // Add the values
         let mut results = global_imports.into_iter().collect_vec();
-        for global in self.parsed.globals.iter() {
+        for global in self.parsed.borrow_sections().globals.iter() {
             let ptr: AbstractGlobalPtr<B, T> = globals_instance
                 .add_global(global.clone(), &results, &module_func_ptrs)
                 .await;
@@ -201,8 +207,9 @@ where
         &self,
         functions: &FuncsInstance<B, T>,
     ) -> Vec<UntypedFuncPtr<B, T>> {
-        let types = self.parsed.functions.iter().map(|f| {
+        let types = self.parsed.borrow_sections().functions.iter().map(|f| {
             self.parsed
+                .borrow_sections()
                 .types
                 .get(f.type_id as usize)
                 .expect("function type index out of range")
@@ -223,6 +230,7 @@ where
         let size: usize = std::mem::size_of::<FuncRef>()
             * self
                 .parsed
+                .borrow_sections()
                 .elements
                 .iter()
                 .map(|e| e.items.len())
@@ -231,7 +239,7 @@ where
 
         // Then add
         let mut ptrs = Vec::new();
-        for element in self.parsed.elements.iter() {
+        for element in self.parsed.borrow_sections().elements.iter() {
             // Evaluate values
             let mut vals = Vec::new();
             for expr in element.items.iter() {
@@ -268,13 +276,19 @@ where
         let mut ptrs = imported_tables.map(|tp| tp.clone()).collect_vec();
 
         // Create tables first
-        for table_plan in self.parsed.tables.iter() {
+        for table_plan in self.parsed.borrow_sections().tables.iter() {
             let ptr = tables.add_table(table_plan).await;
             ptrs.push(ptr);
         }
 
         // Initialise from elements
-        for (element, element_ptr) in self.parsed.elements.iter().zip_eq(module_element_ptrs) {
+        for (element, element_ptr) in self
+            .parsed
+            .borrow_sections()
+            .elements
+            .iter()
+            .zip_eq(module_element_ptrs)
+        {
             match &element.kind {
                 ParsedElementKind::Active {
                     table_index,
@@ -308,12 +322,18 @@ where
         datas: &mut HostDataInstance<B>,
     ) -> Vec<DataPtr<B, T>> {
         // Reserve space first
-        let size: usize = self.parsed.datas.iter().map(|e| e.data.len()).sum();
+        let size: usize = self
+            .parsed
+            .borrow_sections()
+            .datas
+            .iter()
+            .map(|e| e.data.len())
+            .sum();
         datas.reserve(size).await;
 
         // Then add
         let mut ptrs = Vec::new();
-        for data in self.parsed.datas.iter() {
+        for data in self.parsed.borrow_sections().datas.iter() {
             let ptr = datas.add_data(data.data).await;
             ptrs.push(ptr);
         }
@@ -352,7 +372,7 @@ where
         &self,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Option<UntypedFuncPtr<B, T>> {
-        match self.parsed.start_func {
+        match self.parsed.borrow_sections().start_func {
             None => None,
             Some(i) => {
                 let i = usize::try_from(i).unwrap();
@@ -363,6 +383,6 @@ where
     }
 
     pub fn exports(&self) -> &HashMap<String, ModuleExport> {
-        &self.parsed.exports
+        &self.parsed.borrow_sections().exports
     }
 }

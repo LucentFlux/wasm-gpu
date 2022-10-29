@@ -147,7 +147,7 @@ impl<B: Backend> HostMemoryInstanceSet<B> {
         );
     }
 
-    pub fn get_mut<T>(&self, ptr: MemoryPtr<B, T>) -> MemoryViewMut<B> {
+    pub fn get_mut<T>(&mut self, ptr: MemoryPtr<B, T>) -> MemoryViewMut<B> {
         return impl_get!(
             with self, ptr
             using get_mut

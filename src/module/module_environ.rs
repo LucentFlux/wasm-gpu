@@ -1,4 +1,5 @@
 use crate::module::error::WasmError;
+use ouroboros::self_referencing;
 use std::collections::HashMap;
 use std::ops::Range;
 use wasmparser::{
@@ -74,6 +75,15 @@ pub struct ParsedModule<'data> {
     pub functions: Vec<ParsedFunc<'data>>,
 }
 
+#[self_referencing]
+pub struct ParsedModuleUnit {
+    pub src: Vec<u8>,
+
+    #[borrows(src)]
+    #[covariant]
+    pub sections: ParsedModule<'this>,
+}
+
 struct IntermediateData {
     function_types: Vec<u32>,
     allocs: Option<FuncValidatorAllocations>,
@@ -88,40 +98,45 @@ impl ModuleEnviron {
         Self { validator }
     }
 
-    pub fn translate(mut self, parser: Parser, data: &[u8]) -> WasmResult<ParsedModule> {
-        let mut result = ParsedModule {
-            types: vec![],
-            imports: vec![],
-            tables: vec![],
-            memories: vec![],
-            globals: vec![],
-            exports: Default::default(),
-            start_func: None,
-            elements: vec![],
-            datas: vec![],
-            functions: vec![],
-        };
-        let mut scratch = IntermediateData {
-            function_types: vec![],
-            allocs: None,
-        };
+    pub fn translate(mut self, parser: Parser, src: Vec<u8>) -> WasmResult<ParsedModuleUnit> {
+        let unit = ParsedModuleUnit::try_new(src, |src| {
+            let mut result = ParsedModule {
+                types: vec![],
+                imports: vec![],
+                tables: vec![],
+                memories: vec![],
+                globals: vec![],
+                exports: Default::default(),
+                start_func: None,
+                elements: vec![],
+                datas: vec![],
+                functions: vec![],
+            };
 
-        for payload in parser.parse_all(data) {
-            self.translate_payload(payload?, &mut scratch, &mut result)?;
-        }
+            let mut scratch = IntermediateData {
+                function_types: vec![],
+                allocs: None,
+            };
 
-        // Minimise space - we presumably won't be doing anything more
-        result.types.shrink_to_fit();
-        result.imports.shrink_to_fit();
-        result.tables.shrink_to_fit();
-        result.memories.shrink_to_fit();
-        result.globals.shrink_to_fit();
-        result.exports.shrink_to_fit();
-        result.elements.shrink_to_fit();
-        result.datas.shrink_to_fit();
-        result.functions.shrink_to_fit();
+            for payload in parser.parse_all(src.as_slice()) {
+                self.translate_payload(payload?, &mut scratch, &mut result)?;
+            }
 
-        Ok(result)
+            // Minimise space - we presumably won't be doing anything more
+            result.types.shrink_to_fit();
+            result.imports.shrink_to_fit();
+            result.tables.shrink_to_fit();
+            result.memories.shrink_to_fit();
+            result.globals.shrink_to_fit();
+            result.exports.shrink_to_fit();
+            result.elements.shrink_to_fit();
+            result.datas.shrink_to_fit();
+            result.functions.shrink_to_fit();
+
+            Ok::<_, WasmError>(result)
+        })?;
+
+        return Ok(unit);
     }
 
     fn translate_payload<'data>(
@@ -346,7 +361,7 @@ impl ModuleEnviron {
                 result.functions.reserve(cnt);
             }
 
-            Payload::CodeSectionEntry(mut body) => {
+            Payload::CodeSectionEntry(body) => {
                 let validator = self.validator.code_section_entry(&body)?;
                 let mut validator =
                     validator.into_validator(scratch.allocs.take().unwrap_or_default());

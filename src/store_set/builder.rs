@@ -62,7 +62,7 @@ where
     /// stores from the builder involves no copying of data from the CPU to the GPU, only within the GPU.
     pub async fn instantiate_module(
         &mut self,
-        module: &Module<'_, B>,
+        module: &Module<B>,
         imports: Vec<NamedExtern<B, T>>,
     ) -> anyhow::Result<ModuleInstanceSet<B, T>> {
         // Validation

@@ -55,7 +55,7 @@ pub trait DeviceOnlyBuffer<L: LazyBackend> {
     async fn copy_from(&mut self, other: &Self);
 }
 
-pub trait LazyBackend: Debug + Sized + Send + Sync {
+pub trait LazyBackend: Debug + Sized + Send + Sync + 'static {
     const CHUNK_SIZE: usize;
 
     type Utils: crate::compute_utils::Utils<Lazy<Self>>;

@@ -34,6 +34,7 @@ fenwick = "2.0.1"
 async-channel = "1.7"
 vulkano = "0.31"
 vulkano-shaders = "0.31"
+ouroboros = "0.15"
 
 # Tmp dependencies
 tokio = { version = "1", features = ["full"] }

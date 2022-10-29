@@ -118,7 +118,10 @@ pub struct DeviceToMainBufferUnmapped {
     work: Option<Box<dyn GpuFuture + Send>>,
 }
 
-fn add_copy_to_work<B1: BufferAccess + TypedBufferAccess, B2: BufferAccess + TypedBufferAccess>(
+fn add_copy_to_work<
+    B1: BufferAccess + TypedBufferAccess + 'static,
+    B2: BufferAccess + TypedBufferAccess + 'static,
+>(
     offset: usize,
     source: Arc<B1>,
     destination: Arc<B2>,
@@ -133,11 +136,12 @@ fn add_copy_to_work<B1: BufferAccess + TypedBufferAccess, B2: BufferAccess + Typ
     .unwrap();
 
     let offset = offset as DeviceSize;
+    let size = min(source.len() - offset, destination.len());
     let mut command = CopyBufferInfo::buffers(source, destination);
     command.regions[0] = BufferCopy {
         src_offset: offset,
         dst_offset: 0,
-        size: min(source.len() - offset, destination.len()),
+        size,
         ..Default::default()
     };
 

@@ -194,7 +194,7 @@ where
         Some(view)
     }
 
-    pub async fn get_memory_mut(&self, name: &str) -> Option<MemoryViewMut<B>> {
+    pub async fn get_memory_mut(&mut self, name: &str) -> Option<MemoryViewMut<B>> {
         let memptr = self.instance.get_memory_export(name).ok()?;
         let memptr = memptr.concrete(self.index);
 

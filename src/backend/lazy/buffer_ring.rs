@@ -42,7 +42,7 @@ trait BufferRingImpl<L: LazyBackend>: Send + Sync {
     async fn clean(&self, buff: Self::FinalBuffer) -> Self::InitialBuffer;
 }
 
-impl<L: LazyBackend, Impl: BufferRingImpl<L>> BufferRing<L, Impl> {
+impl<L: LazyBackend, Impl: BufferRingImpl<L> + 'static> BufferRing<L, Impl> {
     pub async fn new_from(implementation: Impl, config: BufferRingConfig) -> Self {
         let buffer_count = config.total_mem / L::CHUNK_SIZE;
         let (buffer_return, unused_buffers) = async_channel::bounded(buffer_count);

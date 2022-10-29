@@ -72,7 +72,7 @@ macro_rules! impl_immutable_ptr {
                 state.write_usize(self.id);
                 state.write_usize(self.ptr);
                 $(
-                    self.$e_ident.hash(&mut state);
+                    self.$e_ident.hash(state);
                 )*
             }
         }
@@ -212,10 +212,10 @@ macro_rules! impl_concrete_ptr {
         where <Self as crate::instance::ptrs::ConcretePtr>::AbstractPtr : std::hash::Hash, $( $e_type : std::hash::Hash,)*
         {
             fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-                self.src.hash(&mut state);
+                self.src.hash(state);
                 state.write_usize(self.index);
                 $(
-                    self.$e_ident.hash(&mut state);
+                    self.$e_ident.hash(state);
                 )*
             }
         }
