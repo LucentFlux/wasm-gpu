@@ -247,7 +247,8 @@ mod tests {
             + r#""))
             )
         "#;
-        let module = wasp::Module::new(&engine, wat.into_bytes(), "testmod1").unwrap();
+        let wat = wat.into_bytes();
+        let module = wasp::Module::new(&engine, &wat, "testmod1").unwrap();
 
         let host_read = Func::wrap(
             &mut stores_builder,

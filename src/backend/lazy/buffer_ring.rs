@@ -31,7 +31,7 @@ pub struct BufferRing<L: LazyBackend, Impl: BufferRingImpl<L>> {
 
 /// Pulls out the shared logic between send and receive
 #[async_trait]
-trait BufferRingImpl<L: LazyBackend>: Send + Sync {
+pub trait BufferRingImpl<L: LazyBackend>: Send + Sync {
     type InitialBuffer: Send;
     type FinalBuffer: Send;
 

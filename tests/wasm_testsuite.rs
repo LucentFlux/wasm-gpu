@@ -1,5 +1,5 @@
 use tokio::runtime::Runtime;
-use wasm_spirv::{wasp, BufferRingConfig, Config, WgpuBackend, WgpuBackendConfig};
+use wasm_spirv::{wasp, BufferRingConfig, Config};
 use wast::lexer::Lexer;
 use wast::token::Span;
 use wast::{
@@ -12,7 +12,7 @@ fn gen_check(path: &str, test_index: usize) {
     check(path, test_index)
 }
 
-pub async fn get_backend() -> wasp::WgpuBackend {
+pub async fn get_backend() -> wasp::VulkanoBackend {
     let instance = wgpu::Instance::new(wgpu::Backends::all());
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
@@ -26,14 +26,13 @@ pub async fn get_backend() -> wasp::WgpuBackend {
         .request_device(&Default::default(), None)
         .await
         .unwrap();
-    let conf = WgpuBackendConfig {
-        buffer_ring_config: BufferRingConfig {
+    let conf = wasp::VulkanoBackendConfig {
+        buffer_ring: BufferRingConfig {
             // Minimal memory footprint for tests
-            total_mem: 128,
-            buffer_size: 128,
+            total_mem: 2 * 1024,
         },
     };
-    return wasp::WgpuBackend::new(device, queue, conf);
+    return wasp::VulkanoBackend::new(conf).await;
 }
 
 #[inline(never)] // Reduce code bloat to avoid OOM sigkill
@@ -109,7 +108,7 @@ async fn test_assert_malformed_or_invalid(span: Span, mut module: QuoteWat<'_>, 
 
     let engine = wasp::Engine::new(backend, Config::default());
 
-    let module = wasp::Module::new(&engine, bytes);
+    let module = wasp::Module::new(&engine, &bytes, "test");
 
     assert!(
         module.is_err(),

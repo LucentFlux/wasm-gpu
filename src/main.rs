@@ -1,12 +1,12 @@
 #![feature(async_closure)]
 
-use wasm_spirv::{wasp, Caller, Config, FuncSet, InstanceSet, PanicOnAny};
+use wasm_spirv::{imports, wasp, Caller, Config, PanicOnAny};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    // wgpu setup
+    // vulkano setup
     let instance = wgpu::Instance::new(wgpu::Backends::all());
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
@@ -20,9 +20,15 @@ async fn main() -> anyhow::Result<()> {
         .request_device(&Default::default(), None)
         .await
         .unwrap();
+    let conf = wasp::VulkanoBackendConfig {
+        buffer_ring: wasp::BufferRingConfig {
+            // Minimal memory footprint for tests
+            total_mem: 2 * 1024,
+        },
+    };
 
     // wasm setup
-    let spirv_backend = wasp::WgpuBackend::new(device, queue, Default::default());
+    let spirv_backend = wasp::VulkanoBackend::new(conf).await;
 
     let engine = wasp::Engine::new(spirv_backend, Config::default());
     let wat = r#"
@@ -34,11 +40,11 @@ async fn main() -> anyhow::Result<()> {
                 call $host_hello)
         )
     "#;
-    let module = wasp::Module::new(&engine, wat)?;
+    let module = wasp::Module::new(&engine, wat.as_bytes(), "main")?;
 
-    let mut stores = wasp::StoreSetBuilder::new(&engine);
+    let mut store_builder = wasp::StoreSetBuilder::new(&engine).await;
 
-    let host_hello = wasp::Func::wrap(&stores, |caller: Caller<_, u32>, param: i32| {
+    let host_hello = wasp::Func::wrap(&mut store_builder, |caller: Caller<_, u32>, param: i32| {
         Box::pin(async move {
             println!("Got {} from WebAssembly", param);
             println!("my host state is: {}", caller.data());
@@ -47,13 +53,23 @@ async fn main() -> anyhow::Result<()> {
         })
     });
 
-    let instances = stores
-        .instantiate_module(&module, &[host_hello])
+    let instances = store_builder
+        .instantiate_module(
+            &module,
+            imports! {
+                "host": {
+                    "hello": host_hello
+                }
+            },
+        )
         .await
-        .expect_all("could not instantiate all modules");
+        .expect("could not instantiate all modules");
     let hellos = instances
-        .get_typed_funcs::<(), ()>("hello")
-        .expect_all("could not get hello function from all instances");
+        .get_typed_func::<(), ()>("hello")
+        .expect("could not get hello function from all instances");
+
+    let store_source = store_builder.complete().await;
+    let mut stores = store_source.build([16]).await;
 
     hellos
         .call_all(&mut stores, |_| ())

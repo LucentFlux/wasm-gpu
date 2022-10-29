@@ -11,7 +11,7 @@ use vulkano::instance::{Instance, InstanceCreateInfo};
 use vulkano::VulkanLibrary;
 
 #[derive(Clone)]
-struct VulkanoBackendLazy {
+pub struct VulkanoBackendLazy {
     device: Arc<Device>,
     queue: Arc<Queue>,
     queue_family_index: u32,
@@ -55,7 +55,7 @@ impl LazyBackend for VulkanoBackendLazy {
 }
 
 pub struct VulkanoBackendConfig {
-    pub(crate) buffer_ring: BufferRingConfig,
+    pub buffer_ring: BufferRingConfig,
 }
 
 pub type VulkanoBackend = Lazy<VulkanoBackendLazy>;

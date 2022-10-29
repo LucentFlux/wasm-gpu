@@ -145,10 +145,10 @@ macro_rules! imports {
         vec![
             $(
                 $(
-                    crate::externs::NamedExtern {
+                    $crate::wasp::externs::NamedExtern {
                         module: $module.to_string(),
                         name: $name.to_string(),
-                        ext: crate::externs::Extern::from($ext)
+                        ext: $crate::wasp::externs::Extern::from($ext)
                     },
                 )*
             )*

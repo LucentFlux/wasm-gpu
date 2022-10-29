@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 pub type ReadBufferRing<L: LazyBackend> = BufferRing<L, ReadImpl<L>>;
 
-struct ReadImpl<B: LazyBackend> {
+pub struct ReadImpl<B: LazyBackend> {
     backend: Arc<B>,
 }
 

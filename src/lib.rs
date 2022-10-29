@@ -31,6 +31,7 @@ pub mod wasp {
     // Backends
     pub use crate::vulkano::VulkanoBackend;
     pub use crate::vulkano::VulkanoBackendConfig;
+    pub use backend::lazy::buffer_ring::BufferRingConfig;
     pub use backend::Backend;
     // Memory
     pub use memory::DeviceMemoryBlock;
@@ -42,12 +43,18 @@ pub mod wasp {
     // Module
     pub use module::Module;
     // Externs
-    pub use externs::Extern;
+    pub mod externs {
+        pub use crate::externs::Extern;
+        pub use crate::externs::NamedExtern;
+    }
     // Store
-    pub use crate::store_set::builder::StoreSetBuilder;
+    pub use store_set::builder::StoreSetBuilder;
     pub use store_set::DeviceStoreSet;
     // Instance
     pub use instance::ModuleInstanceSet;
+    // Ptr
+    pub use instance::func::TypedFuncPtr;
+    pub use instance::func::UntypedFuncPtr;
     // Func
     pub use func::Caller;
     pub use func::Func;

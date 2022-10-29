@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 pub type WriteBufferRing<L: LazyBackend> = BufferRing<L, WriteImpl<L>>;
 
-struct WriteImpl<L: LazyBackend> {
+pub struct WriteImpl<L: LazyBackend> {
     backend: Arc<L>,
 }
 

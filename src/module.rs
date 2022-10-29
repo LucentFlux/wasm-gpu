@@ -1,7 +1,7 @@
 pub mod error;
 pub mod module_environ;
 
-use crate::externs::NamedExtern;
+use crate::externs::{Extern, NamedExtern};
 use crate::instance::data::{DataPtr, HostDataInstance};
 use crate::instance::element::{ElementPtr, HostElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
@@ -9,10 +9,10 @@ use crate::instance::global::abstr::{AbstractGlobalPtr, HostAbstractGlobalInstan
 use crate::instance::memory::abstr::{AbstractMemoryPtr, HostAbstractMemoryInstanceSet};
 use crate::instance::table::abstr::{AbstractTablePtr, HostAbstractTableInstanceSet};
 use crate::module::module_environ::{
-    ImportTypeRef, ModuleEnviron, ModuleExport, ParsedElementKind, ParsedModule, ParsedModuleUnit,
+    ImportTypeRef, ModuleEnviron, ModuleExport, ParsedElementKind, ParsedModuleUnit,
 };
 use crate::typed::{wasm_ty_bytes, FuncRef, Val};
-use crate::{Backend, Engine, Extern};
+use crate::{Backend, Engine};
 use anyhow::{anyhow, Context, Error};
 use itertools::Itertools;
 use std::borrow::Cow;
@@ -73,8 +73,13 @@ where
         return Ok(parsed);
     }
 
-    pub fn new(engine: &Engine<B>, bytes: Vec<u8>, name: &str) -> Result<Self, Error> {
-        let wasm: Cow<'_, [u8]> = wat::parse_bytes(bytes.as_slice())?;
+    pub fn new<'a>(
+        engine: &Engine<B>,
+        bytes: impl IntoIterator<Item = &'a u8>,
+        name: &str,
+    ) -> Result<Self, Error> {
+        let wasm: Vec<_> = bytes.into_iter().map(|v| *v).collect();
+        let wasm: Cow<'_, [u8]> = wat::parse_bytes(wasm.as_slice())?;
         let wasm = wasm.to_vec();
 
         let parsed = Self::parse(engine, wasm)?;
