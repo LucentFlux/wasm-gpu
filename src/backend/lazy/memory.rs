@@ -20,6 +20,7 @@ fn min_alignment_gt(size: usize, alignment: usize) -> usize {
     return x;
 }
 
+#[must_use]
 struct LazyBufferMemoryBlock<L: LazyBackend> {
     backend: Lazy<L>,
     pub buffer: L::DeviceOnlyBuffer, // Stored on the GPU
@@ -129,11 +130,7 @@ impl<L: LazyBackend> LazyChunk<L> {
         block
             .backend
             .upload_buffers
-            .write_slice(
-                &block.buffer,
-                self.data_offset,
-                src.try_into().unwrap(), // We took a slice of length SIZE, so this should never fail
-            )
+            .write_slice(&block.buffer, self.data_offset, src)
             .await;
 
         self.dirty.store(false, Ordering::Release);
@@ -415,7 +412,7 @@ impl<L: LazyBackend> MainMemoryBlock<Lazy<L>> for MappedLazyBuffer<L> {
 
     async fn unmap(self) -> UnmappedLazyBuffer<L> {
         UnmappedLazyBuffer {
-            data: self.data.backing,
+            data: self.data.unload().await,
         }
     }
 
@@ -508,6 +505,7 @@ mod tests {
             block_test!($value, test_get_unmapped_len);
             block_test!($value, test_get_mapped_len);
             block_test!($value, test_upload_download);
+            block_test!($value, test_write_read_mapped);
             block_test!($value, test_create_mapped_download);
         )*
         };
@@ -548,6 +546,25 @@ mod tests {
 
         // Read
         let memory = memory.map().await;
+        let slice = memory.as_slice(..).await;
+        let data_result = Vec::from(slice);
+
+        assert_eq!(data_result, expected_data);
+    }
+
+    #[inline(never)]
+    async fn test_write_read_mapped(size: usize) {
+        let backend = get_backend().await;
+
+        let memory = backend.create_device_memory_block(size, None);
+        let mut memory = memory.map().await;
+        let slice = memory.as_slice_mut(..).await;
+
+        // Write some data
+        let expected_data = gen_test_data(size, size as u32);
+        slice.copy_from_slice(expected_data.as_slice());
+
+        // Read it back
         let slice = memory.as_slice(..).await;
         let data_result = Vec::from(slice);
 

@@ -61,8 +61,8 @@ pub trait LazyBackend: Debug + Sized + Send + Sync + 'static {
     type Utils: crate::compute_utils::Utils<Lazy<Self>>;
     type DeviceToMainBufferMapped: DeviceToMainBufferMapped<Self> + Sized + Send + Sync;
     type MainToDeviceBufferMapped: MainToDeviceBufferMapped<Self> + Sized + Send + Sync;
-    type DeviceToMainBufferUnmapped: DeviceToMainBufferUnmapped<Self> + Sized + Send;
-    type MainToDeviceBufferUnmapped: MainToDeviceBufferUnmapped<Self> + Sized + Send;
+    type DeviceToMainBufferUnmapped: DeviceToMainBufferUnmapped<Self> + Sized + Send + Sync;
+    type MainToDeviceBufferUnmapped: MainToDeviceBufferUnmapped<Self> + Sized + Send + Sync;
     type DeviceOnlyBuffer: DeviceOnlyBuffer<Self> + Sized + Send + Sync;
 
     fn get_utils(&self) -> &Self::Utils;
