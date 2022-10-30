@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // wasm setup
-    let spirv_backend = wasp::VulkanoBackend::new(conf).await;
+    let spirv_backend = wasp::VulkanoBackend::new(conf, None).await;
 
     let engine = wasp::Engine::new(spirv_backend, Config::default());
     let wat = r#"

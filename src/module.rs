@@ -184,10 +184,10 @@ where
             .map(|g| (g.ty.mutable, wasm_ty_bytes(g.ty.content_type)))
             .partition(|(is_mutable, _)| *is_mutable);
 
-        let is_immutable = immutables.first().unwrap_or(&(false, 0)).0;
-        let is_mutable = mutables.first().unwrap_or(&(true, 0)).0;
-        assert!(is_immutable);
-        assert!(is_mutable);
+        let is_immutable_mutable = immutables.first().unwrap_or(&(false, 0)).0;
+        let is_mutable_mutable = mutables.first().unwrap_or(&(true, 0)).0;
+        assert!(!is_immutable_mutable);
+        assert!(is_mutable_mutable);
 
         let immutable_space: usize = immutables.into_iter().map(|(_, v)| v).sum();
         let mutable_space: usize = mutables.into_iter().map(|(_, v)| v).sum();

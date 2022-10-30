@@ -402,10 +402,15 @@ impl ModuleEnviron {
             }
 
             Payload::CustomSection(s) => {
-                return Err(WasmError::Unsupported(format!(
-                    "custom section not supported: {}",
-                    s.name()
-                )));
+                match s.name() {
+                    "name" => {} // Do nothing - not invalid but not used
+                    _ => {
+                        return Err(WasmError::Unsupported(format!(
+                            "custom section not supported: {}",
+                            s.name()
+                        )));
+                    }
+                };
             }
 
             // It's expected that validation will probably reject other
