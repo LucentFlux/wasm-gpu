@@ -6,13 +6,18 @@ use crate::backend::lazy::{Lazy, LazyBackend};
 use crate::vulkano::compute_utils::VulkanoComputeUtils;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
+use vulkano::buffer::CpuBufferPool;
 use vulkano::device::physical::PhysicalDevice;
 use vulkano::device::{Device, DeviceCreateInfo, Queue, QueueCreateInfo};
 use vulkano::instance::{Instance, InstanceCreateInfo};
 use vulkano::VulkanLibrary;
 
+const CHUNK_SIZE: usize = 1024;
+
 #[derive(Clone)]
 pub struct VulkanoBackendLazy {
+    upload_pool: CpuBufferPool<[u8; CHUNK_SIZE]>,
+    download_pool: CpuBufferPool<[u8; CHUNK_SIZE]>,
     device: Arc<Device>,
     queue: Arc<Queue>,
     queue_family_index: u32,
@@ -26,7 +31,7 @@ impl Debug for VulkanoBackendLazy {
 }
 
 impl LazyBackend for VulkanoBackendLazy {
-    const CHUNK_SIZE: usize = 1024;
+    const CHUNK_SIZE: usize = CHUNK_SIZE;
     type Utils = VulkanoComputeUtils;
     type DeviceToMainBufferMapped = memory::DeviceToMainBufferMapped;
     type MainToDeviceBufferMapped = memory::MainToDeviceBufferMapped;
@@ -50,8 +55,8 @@ impl LazyBackend for VulkanoBackendLazy {
         memory::DeviceToMainBufferUnmapped::new(self.clone())
     }
 
-    fn create_main_to_device_memory(&self) -> Self::MainToDeviceBufferUnmapped {
-        memory::MainToDeviceBufferUnmapped::new(self.clone())
+    fn create_main_to_device_memory(&self) -> Self::MainToDeviceBufferMapped {
+        memory::MainToDeviceBufferMapped::new(self.clone())
     }
 }
 
@@ -107,8 +112,13 @@ impl VulkanoBackend {
 
         let utils = Arc::new(VulkanoComputeUtils::new());
 
+        let upload_pool = CpuBufferPool::upload(device.clone());
+        let download_pool = CpuBufferPool::download(device.clone());
+
         Lazy::new_from(
             VulkanoBackendLazy {
+                upload_pool,
+                download_pool,
                 device,
                 queue,
                 queue_family_index,

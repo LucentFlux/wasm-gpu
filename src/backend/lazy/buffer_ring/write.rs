@@ -1,5 +1,7 @@
 use crate::backend::lazy::buffer_ring::{BufferRing, BufferRingConfig, BufferRingImpl};
-use crate::backend::lazy::{LazyBackend, MainToDeviceBufferMapped, MainToDeviceBufferUnmapped};
+use crate::backend::lazy::{
+    LazyBackend, MainToDeviceBufferDirty, MainToDeviceBufferMapped, MainToDeviceBufferUnmapped,
+};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -12,14 +14,14 @@ pub struct WriteImpl<L: LazyBackend> {
 #[async_trait]
 impl<L: LazyBackend> BufferRingImpl<L> for WriteImpl<L> {
     type InitialBuffer = L::MainToDeviceBufferMapped;
-    type FinalBuffer = L::MainToDeviceBufferUnmapped;
+    type FinalBuffer = <L::MainToDeviceBufferUnmapped as MainToDeviceBufferUnmapped<L>>::Dirty;
 
     async fn create_buffer(&self) -> Self::InitialBuffer {
-        self.backend.create_main_to_device_memory().map().await
+        self.backend.create_main_to_device_memory()
     }
 
     async fn clean(&self, buff: Self::FinalBuffer) -> Self::InitialBuffer {
-        buff.map().await
+        buff.clean().await
     }
 }
 
@@ -34,11 +36,9 @@ impl<L: LazyBackend> WriteBufferRing<L> {
 
         let mut upload_buffer: L::MainToDeviceBufferMapped = self.pop().await;
 
-        upload_buffer.write(slice);
+        let upload_buffer = upload_buffer.write_and_unmap(slice).await;
 
-        let upload_buffer = upload_buffer.unmap().await;
-
-        upload_buffer.copy_to(dst, offset).await;
+        let upload_buffer = upload_buffer.copy_to_and_finish(dst, offset);
 
         self.push(upload_buffer);
     }

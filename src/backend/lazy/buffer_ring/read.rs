@@ -1,5 +1,7 @@
 use crate::backend::lazy::buffer_ring::{BufferRing, BufferRingConfig, BufferRingImpl};
-use crate::backend::lazy::{DeviceToMainBufferMapped, DeviceToMainBufferUnmapped, LazyBackend};
+use crate::backend::lazy::{
+    DeviceToMainBufferDirty, DeviceToMainBufferMapped, DeviceToMainBufferUnmapped, LazyBackend,
+};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -12,14 +14,14 @@ pub struct ReadImpl<B: LazyBackend> {
 #[async_trait]
 impl<L: LazyBackend> BufferRingImpl<L> for ReadImpl<L> {
     type InitialBuffer = L::DeviceToMainBufferUnmapped;
-    type FinalBuffer = L::DeviceToMainBufferMapped;
+    type FinalBuffer = <L::DeviceToMainBufferMapped as DeviceToMainBufferMapped<L>>::Dirty;
 
     async fn create_buffer(&self) -> Self::InitialBuffer {
         self.backend.create_device_to_main_memory()
     }
 
     async fn clean(&self, buff: Self::FinalBuffer) -> Self::InitialBuffer {
-        buff.unmap().await
+        buff.clean().await
     }
 }
 
@@ -39,11 +41,9 @@ impl<L: LazyBackend> ReadBufferRing<L> {
     ) -> Res {
         let mut download_buffer: L::DeviceToMainBufferUnmapped = self.pop().await;
 
-        download_buffer.copy_from(src, offset).await;
+        let download_buffer = download_buffer.copy_from_and_map(src, offset).await;
 
-        let download_buffer = download_buffer.map().await;
-
-        let res = download_buffer.view(move |slice| {
+        let (res, download_buffer) = download_buffer.view_and_finish(move |slice| {
             assert_eq!(slice.len(), L::CHUNK_SIZE);
             cont(slice)
         });

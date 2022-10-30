@@ -20,28 +20,36 @@ pub mod memory;
 // The new lazy API
 #[async_trait]
 pub trait DeviceToMainBufferUnmapped<L: LazyBackend> {
-    async fn copy_from(&mut self, src: &L::DeviceOnlyBuffer, offset: usize);
-
-    async fn map(self) -> L::DeviceToMainBufferMapped;
+    async fn copy_from_and_map(
+        self,
+        src: &L::DeviceOnlyBuffer,
+        offset: usize,
+    ) -> L::DeviceToMainBufferMapped;
 }
 #[async_trait]
 pub trait DeviceToMainBufferMapped<L: LazyBackend> {
-    fn view<Res, F: FnOnce(&[u8]) -> Res>(&self, callback: F) -> Res;
+    type Dirty: DeviceToMainBufferDirty<L> + Send + Sync; // Allows for some cleaning to be done off-thread after a buffer has been used
 
-    async fn unmap(self) -> L::DeviceToMainBufferUnmapped;
+    fn view_and_finish<Res, F: FnOnce(&[u8]) -> Res>(self, callback: F) -> (Res, Self::Dirty);
+}
+#[async_trait]
+pub trait DeviceToMainBufferDirty<L: LazyBackend> {
+    async fn clean(self) -> L::DeviceToMainBufferUnmapped;
 }
 
 #[async_trait]
 pub trait MainToDeviceBufferUnmapped<L: LazyBackend> {
-    async fn copy_to(&self, dst: &L::DeviceOnlyBuffer, offset: usize);
+    type Dirty: MainToDeviceBufferDirty<L> + Send + Sync; // Allows for some cleaning to be done off-thread after a buffer has been used
 
-    async fn map(self) -> L::MainToDeviceBufferMapped;
+    fn copy_to_and_finish(self, dst: &L::DeviceOnlyBuffer, offset: usize) -> Self::Dirty;
 }
 #[async_trait]
 pub trait MainToDeviceBufferMapped<L: LazyBackend> {
-    fn write(&mut self, val: &[u8]);
-
-    async fn unmap(self) -> L::MainToDeviceBufferUnmapped;
+    async fn write_and_unmap(self, val: &[u8]) -> L::MainToDeviceBufferUnmapped;
+}
+#[async_trait]
+pub trait MainToDeviceBufferDirty<L: LazyBackend> {
+    async fn clean(self) -> L::MainToDeviceBufferMapped;
 }
 #[async_trait]
 pub trait DeviceOnlyBuffer<L: LazyBackend> {
@@ -73,7 +81,7 @@ pub trait LazyBackend: Debug + Sized + Send + Sync + 'static {
     ) -> Self::DeviceOnlyBuffer;
 
     fn create_device_to_main_memory(&self) -> Self::DeviceToMainBufferUnmapped;
-    fn create_main_to_device_memory(&self) -> Self::MainToDeviceBufferUnmapped;
+    fn create_main_to_device_memory(&self) -> Self::MainToDeviceBufferMapped;
 }
 
 /// Wrap a lazy backend to keep some more state.
