@@ -18,9 +18,10 @@ impl AsyncDevice {
         }
     }
 
-    pub async fn do_async<F, R>(&self, f: F) -> R
+    pub async fn do_async<Callback, F, R>(&self, f: F) -> R
     where
-        F: FnOnce(FutureCallback<R>) -> (),
+        Callback: FnOnce(R) -> (),
+        F: FnOnce(Callback) -> (),
         R: Send + 'static,
     {
         let future = WgpuFuture::new(self.device.clone());
@@ -45,27 +46,6 @@ struct WgpuFutureSharedState<T> {
     waker: Option<Waker>,
 }
 
-struct FutureCallback<T> {
-    shared_state: Arc<Mutex<WgpuFutureSharedState<T>>>,
-}
-
-impl<T> FnOnce<T> for FutureCallback<T> {
-    type Output = ();
-
-    extern "rust-call" fn call_once(self, res: T) -> Self::Output {
-        let mut lock = self
-            .shared_state
-            .lock()
-            .expect("wgpu future was poisoned on complete");
-        let shared_state = lock.deref_mut();
-        shared_state.result = Some(res);
-
-        if let Some(waker) = shared_state.waker.take() {
-            waker.wake()
-        }
-    }
-}
-
 struct WgpuFuture<T> {
     device: Arc<Device>,
     state: Arc<Mutex<WgpuFutureSharedState<T>>>,
@@ -83,9 +63,19 @@ impl<T: Send + 'static> WgpuFuture<T> {
     }
 
     /// Generates a callback function for this future that wakes the waker and sets the shared state
-    pub fn callback(&self) -> FutureCallback<T> {
+    pub fn callback(&self) -> impl FnOnce<T> {
         let shared_state = self.state.clone();
-        return FutureCallback { shared_state };
+        return move |res: T| {
+            let mut lock = shared_state
+                .lock()
+                .expect("wgpu future was poisoned on complete");
+            let shared_state = lock.deref_mut();
+            shared_state.result = Some(res);
+
+            if let Some(waker) = shared_state.waker.take() {
+                waker.wake()
+            }
+        };
     }
 }
 

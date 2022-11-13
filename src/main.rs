@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
         .request_device(&Default::default(), None)
         .await
         .unwrap();
-    let conf = wasp::VulkanoBackendConfig {
+    let conf = wasp::WgpuBackendConfig {
         buffer_ring: wasp::BufferRingConfig {
             // Minimal memory footprint for tests
             total_mem: 2 * 1024,
@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // wasm setup
-    let spirv_backend = wasp::VulkanoBackend::new(conf, None).await;
+    let spirv_backend = wasp::WgpuBackend::new(conf, None).await;
 
     let engine = wasp::Engine::new(spirv_backend, Config::default());
     let wat = r#"

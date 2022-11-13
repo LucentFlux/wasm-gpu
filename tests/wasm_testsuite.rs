@@ -12,14 +12,14 @@ fn gen_check(path: &str, test_index: usize) {
     check(path, test_index)
 }
 
-pub async fn get_backend() -> wasp::VulkanoBackend {
-    let conf = wasp::VulkanoBackendConfig {
+pub async fn get_backend() -> wasp::WgpuBackend {
+    let conf = wasp::WgpuBackendConfig {
         buffer_ring: BufferRingConfig {
             // Minimal memory footprint for tests
             total_mem: 2 * 1024,
         },
     };
-    return wasp::VulkanoBackend::new(conf, None).await;
+    return wasp::WgpuBackend::new(conf, None).await;
 }
 
 #[inline(never)] // Reduce code bloat to avoid OOM sigkill
@@ -67,7 +67,11 @@ async fn run_test(directive: WastDirective<'_>) {
             module,
             message,
         } => test_assert_malformed_or_invalid(span, module, message).await,
-        WastDirective::AssertTrap { .. } => {
+        WastDirective::AssertTrap {
+            span,
+            exec,
+            message,
+        } => {
             panic!("assertion not implemented")
         }
         WastDirective::AssertReturn { .. } => {
@@ -86,6 +90,26 @@ async fn run_test(directive: WastDirective<'_>) {
 }
 
 async fn test_assert_malformed_or_invalid(span: Span, mut module: QuoteWat<'_>, message: &str) {
+    let bytes = match module.encode() {
+        Ok(bs) => bs,
+        Err(_) => return, // Failure to encode is fine if malformed
+    };
+
+    let backend = get_backend().await;
+
+    let engine = wasp::Engine::new(backend, Config::default());
+
+    let module = wasp::Module::new(&engine, &bytes, "test");
+
+    assert!(
+        module.is_err(),
+        "assert malformed/invalid failed: {} at {:?}",
+        message,
+        span
+    );
+}
+
+async fn test_assert_trap(span: Span, mut module: QuoteWat<'_>, message: &str) {
     let bytes = match module.encode() {
         Ok(bs) => bs,
         Err(_) => return, // Failure to encode is fine if malformed

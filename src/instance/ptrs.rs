@@ -18,7 +18,7 @@ macro_rules! impl_immutable_ptr {
             $($e_vis:vis $e_ident:ident : $e_type:ty),* $(,)?
         }
     ) => {
-        #[derive(Debug)]
+        #[perfect_derive::perfect_derive(Clone, Hash, Eq, PartialEq, Debug)]
         #[doc="Since all stores in a concrete store_set set are instantiated from a builder, \
         this pointer actually points to a collection of locations, \
         i.e. all locations that correspond to the same logical WASM location \
@@ -52,42 +52,6 @@ macro_rules! impl_immutable_ptr {
             )*
         }
 
-        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Clone for $name $(<$($lt),*>)*
-        where $( $e_type : Clone,)*
-        {
-            fn clone(&self) -> Self {
-                Self {
-                    ptr: self.ptr.clone(),
-                    id: self.id.clone(),
-                    $($e_ident : self.$e_ident.clone() ,)*
-                    _phantom_data: Default::default(),
-                }
-            }
-        }
-
-        impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* std::hash::Hash for $name $(<$($lt),*>)*
-        where $( $e_type : std::hash::Hash,)*
-        {
-            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-                state.write_usize(self.id);
-                state.write_usize(self.ptr);
-                $(
-                    self.$e_ident.hash(state);
-                )*
-            }
-        }
-
-        impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* PartialEq<Self> for $name $(<$($lt),*>)*
-        where $( $e_type : PartialEq<$e_type>,)*
-        {
-            fn eq(&self, other: &Self) -> bool {
-                self.id == other.id && self.ptr == other.ptr
-                $( && self.$e_ident.eq(&other.$e_ident))*
-            }
-        }
-        impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Eq for $name$(<$($lt),*>)*
-        where $( $e_type : Eq,)* {}
-
         impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* PartialOrd<Self> for $name$(<$($lt),*>)*
         {
             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -102,31 +66,6 @@ macro_rules! impl_immutable_ptr {
                 return Some(success)
             }
         }
-
-        /*impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Ord for $name$(<$($lt),*>)*
-        where $( $e_type : Ord,)*
-        {
-            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-                let c = self.id.cmp(&other.id);
-                if c != std::cmp::Ordering::Equal {
-                    return c;
-                }
-
-                let c = self.ptr.cmp(&other.ptr);
-                if c != std::cmp::Ordering::Equal {
-                    return c;
-                }
-
-                $(
-                    let c = self.$e_ident.cmp(&other.$e_ident);
-                    if c != std::cmp::Ordering::Equal {
-                        return c;
-                    }
-                )*
-
-                return c;
-            }
-        }*/
     };
 }
 
@@ -172,7 +111,7 @@ macro_rules! impl_concrete_ptr {
             $($e_vis:vis $e_ident:ident : $e_type:ty),* $(,)?
         } with abstract $abst:ident $(<$($at:tt),* $(,)?>)?;
     ) => {
-        #[derive(Debug)]
+        #[perfect_derive::perfect_derive(Clone, Hash, Eq, PartialEq, Debug)]
         pub struct $name $(<$($lt $(: $clt $(+ $dlt)*)*),*>)*
         {
             #[doc="The abstract version of this pointer, pointing to the same place in every instance"]
@@ -195,43 +134,6 @@ macro_rules! impl_concrete_ptr {
             )*
         }
 
-        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Clone for $name $(<$($lt),*>)*
-        where <Self as crate::instance::ptrs::ConcretePtr>::AbstractPtr : Clone, $( $e_type : Clone,)*
-        {
-            fn clone(&self) -> Self {
-                Self {
-                    src: self.src.clone(),
-                    index: self.index.clone(),
-                    $($e_ident : self.$e_ident.clone() ,)*
-                    _phantom_data: Default::default(),
-                }
-            }
-        }
-
-        impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* std::hash::Hash for $name $(<$($lt),*>)*
-        where <Self as crate::instance::ptrs::ConcretePtr>::AbstractPtr : std::hash::Hash, $( $e_type : std::hash::Hash,)*
-        {
-            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-                self.src.hash(state);
-                state.write_usize(self.index);
-                $(
-                    self.$e_ident.hash(state);
-                )*
-            }
-        }
-
-        impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* PartialEq<Self> for $name $(<$($lt),*>)*
-        where <Self as crate::instance::ptrs::ConcretePtr>::AbstractPtr : PartialEq<<Self as crate::instance::ptrs::ConcretePtr>::AbstractPtr>,
-            $( $e_type : PartialEq<$e_type>,)*
-        {
-            fn eq(&self, other: &Self) -> bool {
-                self.src.eq(&other.src) && self.index == other.index
-                $( && self.$e_ident.eq(&other.$e_ident))*
-            }
-        }
-        impl $(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Eq for $name$(<$($lt),*>)*
-        where <Self as crate::instance::ptrs::ConcretePtr>::AbstractPtr : Eq, $( $e_type : Eq,)* {}
-
         impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* PartialOrd<Self> for $name$(<$($lt),*>)*
         {
             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -245,31 +147,6 @@ macro_rules! impl_concrete_ptr {
                 };
 
                 return Some(success)
-            }
-        }
-
-        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* Ord for $name$(<$($lt),*>)*
-        where <Self as crate::instance::ptrs::ConcretePtr>::AbstractPtr : Ord, $( $e_type : Ord,)*
-        {
-            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-                let c = self.src.cmp(&other.src);
-                if c != std::cmp::Ordering::Equal {
-                    return c;
-                }
-
-                let c = self.index.cmp(&other.index);
-                if c != std::cmp::Ordering::Equal {
-                    return c;
-                }
-
-                $(
-                    let c = self.$e_ident.cmp(&other.$e_ident);
-                    if c != std::cmp::Ordering::Equal {
-                        return c;
-                    }
-                )*
-
-                return c;
             }
         }
 

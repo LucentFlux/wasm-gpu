@@ -5,14 +5,15 @@ use crate::wasp;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
-pub async fn get_backend() -> wasp::VulkanoBackend {
-    let conf = wasp::VulkanoBackendConfig {
+pub async fn get_backend() -> wasp::WgpuBackend {
+    let conf = wasp::WgpuBackendConfig {
         buffer_ring: BufferRingConfig {
             // Minimal memory footprint for tests
             total_mem: 2 * 1024,
         },
+        backends: wgpu::Backends::all(),
     };
-    return wasp::VulkanoBackend::new(conf, None).await;
+    return wasp::WgpuBackend::new(conf, None).await;
 }
 
 #[macro_export]

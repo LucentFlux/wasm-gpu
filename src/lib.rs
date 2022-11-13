@@ -1,5 +1,7 @@
 #![feature(future_join)]
 #![feature(async_closure)]
+#![feature(associated_type_defaults)]
+#![feature(never_type)]
 
 mod atomic_counter;
 mod backend;
@@ -16,7 +18,7 @@ mod read_only;
 mod session;
 mod store_set;
 mod typed;
-mod vulkano;
+mod wgpu;
 
 #[cfg(test)]
 pub mod tests_lib;
@@ -29,8 +31,8 @@ pub mod wasp {
     pub use panic_on_any::PanicOnAny;
 
     // Backends
-    pub use crate::vulkano::VulkanoBackend;
-    pub use crate::vulkano::VulkanoBackendConfig;
+    pub use crate::wgpu::WgpuBackend;
+    pub use crate::wgpu::WgpuBackendConfig;
     pub use backend::lazy::buffer_ring::BufferRingConfig;
     pub use backend::Backend;
     // Memory

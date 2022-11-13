@@ -24,7 +24,7 @@ fn min_alignment_gt(size: usize, alignment: usize) -> usize {
 struct LazyBufferMemoryBlock<L: LazyBackend> {
     backend: Lazy<L>,
     pub buffer: L::DeviceOnlyBuffer, // Stored on the GPU
-    pub visible_len: usize,
+    visible_len: usize,
 }
 
 #[async_trait]
@@ -427,11 +427,15 @@ pub struct UnmappedLazyBuffer<L: LazyBackend>
 where
     Self: Send,
 {
-    data: LazyBufferMemoryBlock<L>,
+    pub data: LazyBufferMemoryBlock<L>,
 }
 
 impl<L: LazyBackend> UnmappedLazyBuffer<L> {
-    pub fn new(backend: Lazy<L>, size: usize, initial_data: Option<&[u8]>) -> Self {
+    pub fn new(
+        backend: Lazy<L>,
+        size: usize,
+        initial_data: Option<&[u8]>,
+    ) -> Result<UnmappedLazyBuffer<L>, L::BufferCreationError> {
         let real_size = min_alignment_gt(size, L::CHUNK_SIZE);
 
         // Pad initial data
@@ -455,14 +459,14 @@ impl<L: LazyBackend> UnmappedLazyBuffer<L> {
             &backend.lazy,
             real_size,
             initial_data,
-        );
-        Self {
+        )?;
+        Ok(Self {
             data: LazyBufferMemoryBlock {
                 backend,
                 buffer,
                 visible_len: size,
             },
-        }
+        })
     }
 }
 
@@ -479,13 +483,16 @@ impl<L: LazyBackend> MemoryBlock<Lazy<L>> for UnmappedLazyBuffer<L> {
 
 #[async_trait]
 impl<L: LazyBackend> DeviceMemoryBlock<Lazy<L>> for UnmappedLazyBuffer<L> {
-    async fn map(self) -> MappedLazyBuffer<L> {
-        MappedLazyBuffer {
+    type MapError = !;
+    type CopyError = <L::DeviceOnlyBuffer as DeviceOnlyBuffer<L>>::CopyError;
+
+    async fn map(self) -> Result<MappedLazyBuffer<L>, (Self::MapError, Self)> {
+        Ok(MappedLazyBuffer {
             data: LazyBuffer::new(self.data),
-        }
+        })
     }
 
-    async fn copy_from(&mut self, other: &UnmappedLazyBuffer<L>) {
+    async fn copy_from(&mut self, other: &UnmappedLazyBuffer<L>) -> Result<(), Self::CopyError> {
         self.data.buffer.copy_from(&other.data.buffer).await
     }
 }

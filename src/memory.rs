@@ -5,10 +5,12 @@
 pub mod interleaved;
 
 use crate::Backend;
-use std::ptr;
+use std::error::Error;
 
 use crate::typed::ToRange;
 use async_trait::async_trait;
+use futures::TryFutureExt;
+use thiserror::Error;
 
 #[async_trait]
 pub trait MemoryBlock<B>
@@ -20,46 +22,91 @@ where
     fn len(&self) -> usize;
 }
 
+#[derive(Error, Debug)]
+enum MainMemoryResizeError<B: Backend<MainMemoryBlock = Mem>, Mem: MainMemoryBlock<B>> {
+    /// Not unmapped, not resized
+    #[error("memory could not be unmapped for resizing")]
+    UnmapError(Mem::UnmapError, Mem),
+    /// Not resized, left unmapped
+    #[error("unmapped memory could not be resized")]
+    DeviceResizeError(
+        <<B as Backend>::DeviceMemoryBlock as DeviceMemoryBlock<B>>::ResizeError,
+        B::DeviceMemoryBlock,
+    ),
+    /// Resized but not remapped
+    #[error("memory could not be remapped once resized")]
+    MapError(
+        <<B as Backend>::DeviceMemoryBlock as DeviceMemoryBlock<B>>::MapError,
+        B::DeviceMemoryBlock,
+    ),
+}
+
 #[async_trait]
 pub trait MainMemoryBlock<B>: MemoryBlock<B> + Sized
 where
     B: Backend<MainMemoryBlock = Self>,
 {
-    async fn as_slice<S: ToRange<usize> + Send>(&self, bounds: S) -> &[u8];
-    async fn as_slice_mut<S: ToRange<usize> + Send>(&mut self, bounds: S) -> &mut [u8];
-    async fn unmap(self) -> B::DeviceMemoryBlock;
+    type UnmapError: Error;
+    type SliceError: Error;
+    type ResizeError: Error = MainMemoryResizeError<B, Self>;
+
+    async fn as_slice<S: ToRange<usize> + Send>(
+        &self,
+        bounds: S,
+    ) -> Result<&[u8], Self::SliceError>;
+    async fn as_slice_mut<S: ToRange<usize> + Send>(
+        &mut self,
+        bounds: S,
+    ) -> Result<&mut [u8], Self::SliceError>;
+    /// On failure to unmap, does nothing
+    async fn unmap(self) -> Result<B::DeviceMemoryBlock, (Self::UnmapError, Self)>;
 
     /// Convenience method for writing blocks of data
-    async fn write(&mut self, data: &[u8], offset: usize) {
+    ///
+    /// On error, no data was written.
+    async fn write(&mut self, data: &[u8], offset: usize) -> Result<(), Self::SliceError> {
         let start = offset;
         let end = start + data.len();
-        let slice = self.as_slice_mut(start..end).await;
+        let slice = self.as_slice_mut(start..end).await?;
         slice.copy_from_slice(data);
+        Ok(())
     }
 
     /// Resizes by moving off of main memory, reallocating and copying
     ///
-    /// The `flush` portion of this operation is optional, and may be optimised away
-    async fn flush_resize(&mut self, new_len: usize) {
-        // We want to perform mem::replace, but with a value that doesn't exist yet, and do do this
-        // async. This functionality doesn't yet exist in rust
-        unsafe {
-            let tmp_mapped = ptr::read(self);
+    /// The `flush` portion of this operation is optional, and may be optimised away.
+    async fn flush_resize(self, new_len: usize) -> Result<Self, Self::ResizeError> {
+        let unmapped = self
+            .unmap()
+            .await
+            .map_err(|(e, v)| MainMemoryResizeError::UnmapError(e, v))?;
+        let unmapped = unmapped
+            .resize(new_len)
+            .await
+            .map_err(|(e, v)| MainMemoryResizeError::DeviceResizeError(e, v))?;
+        let remapped = unmapped
+            .map()
+            .await
+            .map_err(|(e, v)| MainMemoryResizeError::MapError(e, v))?;
 
-            // Must not panic before we get to `ptr::write`
-            let mut tmp_unmapped = tmp_mapped.unmap().await;
-            tmp_unmapped.resize(new_len).await;
-            let tmp_mapped = tmp_unmapped.map().await;
-
-            ptr::write(self, tmp_mapped);
-        }
+        Ok(remapped)
     }
 
     /// Convenience wrapper around `flush_resize` that adds more space
-    async fn flush_extend(&mut self, extra: usize) {
+    async fn flush_extend(self, extra: usize) -> Result<Self, Self::ResizeError> {
         let len = self.len();
         self.flush_resize(len + extra).await
     }
+}
+
+#[derive(Error, Debug)]
+enum DeviceMemoryResizeError<B: Backend<DeviceMemoryBlock = Mem>, Mem: DeviceMemoryBlock<B>> {
+    /// Couldn't create a new, larger buffer
+    #[error("new memory block could not be allocated when resizing")]
+    BufferCreationError(B::BufferCreationError),
+    /// Could not copy to the new buffer. New buffer was deleted
+    #[error("memory could not be copied into the new resized buffer")]
+    CopyError(Mem::CopyError),
 }
 
 #[async_trait]
@@ -67,21 +114,30 @@ pub trait DeviceMemoryBlock<B>: MemoryBlock<B> + Sized
 where
     B: Backend<DeviceMemoryBlock = Self>,
 {
-    async fn map(self) -> B::MainMemoryBlock;
-    async fn copy_from(&mut self, other: &B::DeviceMemoryBlock);
+    type MapError: Error;
+    type CopyError: Error;
+    type ResizeError: Error = DeviceMemoryResizeError<B, Self>;
+
+    async fn map(self) -> Result<B::MainMemoryBlock, (Self::MapError, Self)>;
+    async fn copy_from(&mut self, other: &B::DeviceMemoryBlock) -> Result<(), Self::CopyError>;
 
     /// Resizes by reallocation and copying
-    async fn resize(&mut self, new_len: usize) {
+    async fn resize(self, new_len: usize) -> Result<Self, (Self::ResizeError, Self)> {
         let backend = self.backend();
-        let mut new_buffer = backend.create_device_memory_block(new_len, None);
-        new_buffer.copy_from(&self);
-        std::mem::swap(self, &mut new_buffer);
+        let mut new_buffer = backend
+            .create_device_memory_block(new_len, None)
+            .map_err(|e| (DeviceMemoryResizeError::BufferCreationError(e), self))?;
+        if let Err(e) = new_buffer.copy_from(&self) {
+            return Err((DeviceMemoryResizeError::CopyError(e), self));
+        }
+
+        Ok(new_buffer)
     }
 
     /// Convenience wrapper around `resize` that adds more space
-    async fn extend(&mut self, extra: usize) {
+    async fn extend(self, extra: usize) -> Result<Self, (Self::ResizeError, Self)> {
         let len = self.len();
-        self.resize(len + extra).await;
+        self.resize(len + extra).await
     }
 }
 
