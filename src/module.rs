@@ -174,7 +174,7 @@ where
         globals_instance: &mut HostAbstractGlobalInstance<B>,
         global_imports: impl Iterator<Item = AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
-    ) -> Vec<AbstractGlobalPtr<B, T>> {
+    ) -> anyhow::Result<Vec<AbstractGlobalPtr<B, T>>> {
         // Calculate space requirements
         let (immutables, mutables): (Vec<_>, Vec<_>) = self
             .parsed
@@ -201,11 +201,11 @@ where
         for global in self.parsed.borrow_sections().globals.iter() {
             let ptr: AbstractGlobalPtr<B, T> = globals_instance
                 .add_global(global.clone(), &results, &module_func_ptrs)
-                .await;
+                .await?;
             results.push(ptr);
         }
 
-        return results;
+        return Ok(results);
     }
 
     pub(crate) fn predict_functions<T>(
@@ -230,7 +230,7 @@ where
         module_globals: &mut HostAbstractGlobalInstance<B>,
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
-    ) -> Vec<ElementPtr<B, T>> {
+    ) -> anyhow::Result<Vec<ElementPtr<B, T>>> {
         // Reserve space first
         let size: usize = std::mem::size_of::<FuncRef>()
             * self
@@ -240,7 +240,7 @@ where
                 .iter()
                 .map(|e| e.items.len())
                 .sum::<usize>();
-        elements.reserve(size).await;
+        elements.reserve(size).await?;
 
         // Then add
         let mut ptrs = Vec::new();
@@ -250,7 +250,7 @@ where
             for expr in element.items.iter() {
                 let v = module_globals
                     .interpret_constexpr(expr, module_global_ptrs, module_func_ptrs)
-                    .await;
+                    .await?;
                 let v = match (v, &element.ty) {
                     (Val::FuncRef(fr), ValType::FuncRef) => fr.as_u32(),
                     (Val::ExternRef(er), ValType::ExternRef) => er.as_u32(),
@@ -259,11 +259,11 @@ where
                 vals.push(v);
             }
 
-            let ptr = elements.add_element(vals).await;
+            let ptr = elements.add_element(vals).await?;
             ptrs.push(ptr);
         }
 
-        return ptrs;
+        return Ok(ptrs);
     }
 
     pub(crate) async fn initialize_tables<T>(
@@ -276,13 +276,13 @@ where
         module_globals: &mut HostAbstractGlobalInstance<B>,
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
-    ) -> Vec<AbstractTablePtr<B, T>> {
+    ) -> anyhow::Result<Vec<AbstractTablePtr<B, T>>> {
         // Pointers starts with imports
         let mut ptrs = imported_tables.map(|tp| tp.clone()).collect_vec();
 
         // Create tables first
         for table_plan in self.parsed.borrow_sections().tables.iter() {
-            let ptr = tables.add_table(table_plan).await;
+            let ptr = tables.add_table(table_plan).await?;
             ptrs.push(ptr);
         }
 
@@ -304,14 +304,14 @@ where
                         .expect("table index out of range");
                     let v = module_globals
                         .interpret_constexpr(offset_expr, module_global_ptrs, module_func_ptrs)
-                        .await;
+                        .await?;
                     let offset = match v {
                         Val::I32(v) => v as usize,
                         Val::I64(v) => v as usize,
                         _ => unreachable!(),
                     };
 
-                    let data = elements.get(element_ptr).await;
+                    let data = elements.get(element_ptr).await?;
 
                     tables.initialize(table_ptr, data, offset).await
                 }
@@ -319,13 +319,13 @@ where
             }
         }
 
-        return ptrs;
+        return Ok(ptrs);
     }
 
     pub(crate) async fn initialize_datas<T>(
         &self,
         datas: &mut HostDataInstance<B>,
-    ) -> Vec<DataPtr<B, T>> {
+    ) -> anyhow::Result<Vec<DataPtr<B, T>>> {
         // Reserve space first
         let size: usize = self
             .parsed
@@ -334,16 +334,16 @@ where
             .iter()
             .map(|e| e.data.len())
             .sum();
-        datas.reserve(size).await;
+        datas.reserve(size).await?;
 
         // Then add
         let mut ptrs = Vec::new();
         for data in self.parsed.borrow_sections().datas.iter() {
-            let ptr = datas.add_data(data.data).await;
+            let ptr = datas.add_data(data.data).await?;
             ptrs.push(ptr);
         }
 
-        return ptrs;
+        return Ok(ptrs);
     }
 
     pub(crate) async fn initialize_memories<T>(

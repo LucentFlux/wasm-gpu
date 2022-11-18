@@ -4,13 +4,14 @@ pub mod write;
 use crate::backend::lazy::LazyBackend;
 use async_channel::{Receiver, Sender, TrySendError};
 use async_trait::async_trait;
+use perfect_derive::perfect_derive;
 use std::error::Error;
-use std::fmt::{Debug, Formatter};
+use std::fmt::Debug;
 use std::future::Future;
 use std::sync::Arc;
 use thiserror::Error;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct BufferRingConfig {
     /// A ring will allocate this amount of memory for moving data
     pub total_mem: usize,
@@ -24,6 +25,7 @@ impl Default for BufferRingConfig {
     }
 }
 
+#[perfect_derive(Debug)]
 pub struct BufferRing<L: LazyBackend, Impl: BufferRingImpl<L>> {
     config: BufferRingConfig,
 
@@ -50,20 +52,12 @@ pub trait BufferRingImpl<L: LazyBackend>: Send + Sync {
 }
 
 #[derive(Error)]
+#[perfect_derive(Debug)]
 pub enum NewBufferError<L: LazyBackend, Impl: BufferRingImpl<L> + 'static> {
     #[error("new buffer could not be allocated to be added to the pool")]
     CreationError(Impl::NewError),
     #[error("the pool was closed - this implies a panic somewhere else")]
     PoolClosed,
-}
-
-impl<L: LazyBackend, Impl: BufferRingImpl<L> + 'static> Debug for NewBufferError<L, Impl> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            NewBufferError::CreationError(e) => write!(f, "buffer creation error: {:?}", e),
-            NewBufferError::PoolClosed => write!(f, "pool closed"),
-        }
-    }
 }
 
 impl<L: LazyBackend, Impl: BufferRingImpl<L> + 'static> BufferRing<L, Impl> {
@@ -128,5 +122,42 @@ impl<L: LazyBackend, Impl: BufferRingImpl<L> + 'static> BufferRing<L, Impl> {
                 .await
                 .expect("buffer ring stream closed on sending");
         });
+    }
+
+    /// Tries to do something with a buffer in this. If the thing fails, tries to recover by dumping
+    /// the old buffer and creating a new one.
+    ///
+    /// Panics if the function errored and we were unable to create a new buffer for this pool
+    async fn try_with_buffer_async<Fut, Res, Err>(
+        &self,
+        f: impl FnOnce(Impl::InitialBuffer) -> Fut,
+    ) -> Result<Res, Err>
+    where
+        Fut: Future<Output = Result<(Res, Impl::FinalBuffer), Err>>,
+        Err: Error,
+    {
+        let buffer = self.pop().await;
+
+        // If something went wrong, dump the buffer and gen a new one to try to recover
+        let res = match f(buffer).await {
+            Ok((res, dirty)) => {
+                self.push(dirty);
+                Ok(res)
+            }
+            Err(e) => {
+                // Try to recover integrity of buffer pool
+                // panic on failure
+                self.add_buffer().await.expect(
+                    format!(
+                        "failed to create new buffer for pool integrity when recovering from: {}",
+                        e
+                    )
+                    .as_str(),
+                );
+                Err(e)
+            }
+        };
+
+        return res;
     }
 }

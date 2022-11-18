@@ -11,23 +11,35 @@ where
     B: Backend,
 {
     references: B::DeviceMemoryBlock,
-
     id: usize,
 }
 
 impl<B: Backend> DeviceElementInstance<B> {
-    pub fn new(backend: &B) -> Self {
-        Self {
-            references: backend.create_device_memory_block(0, None),
+    pub fn new(backend: &B) -> Result<Self, B::BufferCreationError> {
+        Ok(Self {
+            references: backend.try_create_device_memory_block(0, None)?,
             id: COUNTER.next(),
-        }
+        })
     }
 
-    pub async fn map(self) -> HostElementInstance<B> {
-        HostElementInstance {
-            head: self.references.len(),
-            references: self.references.map().await,
-            id: self.id,
+    pub async fn map(
+        self,
+    ) -> Result<
+        HostElementInstance<B>,
+        (
+            Self,
+            <B::DeviceMemoryBlock as DeviceMemoryBlock<B>>::MapError,
+        ),
+    > {
+        let len = self.references.len();
+
+        match self.references.map().await {
+            Err((err, references)) => Err((Self { references, ..self }, err)),
+            Ok(references) => Ok(HostElementInstance {
+                head: len,
+                references,
+                id: self.id,
+            }),
         }
     }
 }
@@ -46,11 +58,18 @@ impl<B: Backend> HostElementInstance<B> {
     /// Resizes the GPU buffers backing these elements by the specified amount.
     ///
     /// values_count is given in units of bytes, so an f64 is 8 bytes
-    pub async fn reserve(&mut self, values_size: usize) {
-        self.references.flush_extend(values_size).await;
+    pub async fn reserve(
+        self,
+        values_size: usize,
+    ) -> Result<Self, <B::MainMemoryBlock as MainMemoryBlock<B>>::ResizeError> {
+        let references = self.references.flush_extend(values_size).await?;
+        Ok(Self { references, ..self })
     }
 
-    pub async fn add_element<T>(&mut self, element: Vec<Option<u32>>) -> ElementPtr<B, T> {
+    pub async fn add_element<T>(
+        &mut self,
+        element: Vec<Option<u32>>,
+    ) -> Result<ElementPtr<B, T>, <B::MainMemoryBlock as MainMemoryBlock<B>>::SliceError> {
         let start = self.head;
         let end = start + (element.len() * FuncRef::byte_count());
         assert!(
@@ -58,7 +77,7 @@ impl<B: Backend> HostElementInstance<B> {
             "not enough space reserved to insert element to device buffer"
         );
 
-        let slice = self.references.as_slice_mut(start..end).await;
+        let slice = self.references.as_slice_mut(start..end).await?;
 
         slice.copy_from_slice(
             element
@@ -70,10 +89,13 @@ impl<B: Backend> HostElementInstance<B> {
 
         self.head = end;
 
-        return ElementPtr::new(start, self.id, element.len());
+        return Ok(ElementPtr::new(start, self.id, element.len()));
     }
 
-    pub async fn get<T>(&mut self, ptr: &ElementPtr<B, T>) -> &[u8] {
+    pub async fn get<T>(
+        &mut self,
+        ptr: &ElementPtr<B, T>,
+    ) -> Result<&[u8], <B::MainMemoryBlock as MainMemoryBlock<B>>::SliceError> {
         assert_eq!(ptr.id, self.id);
 
         let start = ptr.ptr;
@@ -81,16 +103,24 @@ impl<B: Backend> HostElementInstance<B> {
         return self.references.as_slice(start..end).await;
     }
 
-    pub async fn unmap(self) -> DeviceElementInstance<B> {
+    pub async fn unmap(
+        self,
+    ) -> Result<
+        DeviceElementInstance<B>,
+        (Self, <B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError),
+    > {
         assert_eq!(
             self.head,
             self.references.len(),
             "space reserved but not used"
         );
 
-        DeviceElementInstance {
-            references: self.references.unmap().await,
-            id: self.id,
+        match self.references.unmap().await {
+            Err((err, references)) => Err((Self { references, ..self }, err)),
+            Ok(references) => Ok(DeviceElementInstance {
+                references,
+                id: self.id,
+            }),
         }
     }
 }

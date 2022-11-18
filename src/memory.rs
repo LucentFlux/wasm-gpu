@@ -6,14 +6,16 @@ pub mod interleaved;
 
 use crate::Backend;
 use std::error::Error;
+use std::fmt::Debug;
 
 use crate::typed::ToRange;
 use async_trait::async_trait;
 use futures::TryFutureExt;
+use perfect_derive::perfect_derive;
 use thiserror::Error;
 
 #[async_trait]
-pub trait MemoryBlock<B>
+pub trait MemoryBlock<B>: Debug
 where
     B: Backend,
 {
@@ -22,8 +24,9 @@ where
     fn len(&self) -> usize;
 }
 
-#[derive(Error, Debug)]
-enum MainMemoryResizeError<B: Backend<MainMemoryBlock = Mem>, Mem: MainMemoryBlock<B>> {
+#[derive(Error)]
+#[perfect_derive(Debug)]
+pub enum MainMemoryResizeError<B: Backend<MainMemoryBlock = Mem>, Mem: MainMemoryBlock<B>> {
     /// Not unmapped, not resized
     #[error("memory could not be unmapped for resizing")]
     UnmapError(Mem::UnmapError, Mem),
@@ -42,13 +45,13 @@ enum MainMemoryResizeError<B: Backend<MainMemoryBlock = Mem>, Mem: MainMemoryBlo
 }
 
 #[async_trait]
-pub trait MainMemoryBlock<B>: MemoryBlock<B> + Sized
+pub trait MainMemoryBlock<B>: MemoryBlock<B> + Sized + Send
 where
     B: Backend<MainMemoryBlock = Self>,
 {
-    type UnmapError: Error;
-    type SliceError: Error;
-    type ResizeError: Error = MainMemoryResizeError<B, Self>;
+    type UnmapError: Error + Send;
+    type SliceError: Error + Send;
+    type ResizeError: Error + Send = MainMemoryResizeError<B, Self>;
 
     async fn as_slice<S: ToRange<usize> + Send>(
         &self,
@@ -99,7 +102,8 @@ where
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Error)]
+#[perfect_derive(Debug)]
 enum DeviceMemoryResizeError<B: Backend<DeviceMemoryBlock = Mem>, Mem: DeviceMemoryBlock<B>> {
     /// Couldn't create a new, larger buffer
     #[error("new memory block could not be allocated when resizing")]
@@ -114,9 +118,9 @@ pub trait DeviceMemoryBlock<B>: MemoryBlock<B> + Sized
 where
     B: Backend<DeviceMemoryBlock = Self>,
 {
-    type MapError: Error;
-    type CopyError: Error;
-    type ResizeError: Error = DeviceMemoryResizeError<B, Self>;
+    type MapError: Error + Send;
+    type CopyError: Error + Send;
+    type ResizeError: Error + Send = DeviceMemoryResizeError<B, Self>;
 
     async fn map(self) -> Result<B::MainMemoryBlock, (Self::MapError, Self)>;
     async fn copy_from(&mut self, other: &B::DeviceMemoryBlock) -> Result<(), Self::CopyError>;
@@ -125,7 +129,7 @@ where
     async fn resize(self, new_len: usize) -> Result<Self, (Self::ResizeError, Self)> {
         let backend = self.backend();
         let mut new_buffer = backend
-            .create_device_memory_block(new_len, None)
+            .try_create_device_memory_block(new_len, None)
             .map_err(|e| (DeviceMemoryResizeError::BufferCreationError(e), self))?;
         if let Err(e) = new_buffer.copy_from(&self) {
             return Err((DeviceMemoryResizeError::CopyError(e), self));

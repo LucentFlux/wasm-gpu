@@ -1,4 +1,5 @@
 use crate::atomic_counter::AtomicCounter;
+use crate::backend::AllocOrMapFailure;
 use crate::instance::func::UntypedFuncPtr;
 use crate::instance::global::concrete::DeviceMutableGlobalInstanceSet;
 use crate::instance::global::concrete::GlobalMutablePtr;
@@ -9,9 +10,11 @@ use crate::instance::global::immutable::{
 use crate::module::module_environ::Global;
 use crate::typed::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal};
 use crate::{impl_abstract_ptr, Backend, DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
+use perfect_derive::perfect_derive;
 use std::future::join;
 use std::mem::size_of;
 use std::sync::Arc;
+use thiserror::Error;
 use wasmparser::{GlobalType, Operator, ValType};
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
@@ -31,15 +34,18 @@ impl<B: Backend> DeviceAbstractGlobalInstance<B> {
         &self,
         backend: Arc<B>,
         count: usize,
-    ) -> (
-        DeviceMutableGlobalInstanceSet<B>,
-        Arc<DeviceImmutableGlobalsInstance<B>>,
-    ) {
+    ) -> Result<
+        (
+            DeviceMutableGlobalInstanceSet<B>,
+            Arc<DeviceImmutableGlobalsInstance<B>>,
+        ),
+        B::BufferCreationError,
+    > {
         let mutables =
             DeviceMutableGlobalInstanceSet::new(backend, &self.mutable_values, count, self.id)
                 .await;
 
-        return (mutables, self.immutable_values.clone());
+        return Ok((mutables?, self.immutable_values.clone()));
     }
 }
 
@@ -55,19 +61,33 @@ where
     id: usize,
 }
 
+#[derive(Error)]
+#[perfect_derive(Debug)]
+pub enum InterpretError<B: Backend> {
+    #[error("failed to read constant value")]
+    ValueReadError(<B::MainMemoryBlock as MainMemoryBlock<B>>::SliceError),
+    #[error("malformed constant expression")]
+    MalformedExpression(String),
+}
+
 impl<B: Backend> HostAbstractGlobalInstance<B> {
-    pub async fn new(backend: &B) -> Self {
+    pub async fn new(backend: &B) -> Result<Self, AllocOrMapFailure<B>> {
         let id = COUNTER.next();
-        let immutable_values_fut = DeviceImmutableGlobalsInstance::new(backend, id).map();
-        let mutable_values_fut = backend.create_device_memory_block(0, None).map();
+        let immutable_values_fut = DeviceImmutableGlobalsInstance::new(backend, id)
+            .map_err(AllocOrMapFailure::AllocError)?
+            .map();
+        let mutable_values_fut = backend
+            .try_create_device_memory_block(0, None)
+            .map_err(AllocOrMapFailure::AllocError)?
+            .map();
         let (immutable_values, mutable_values) =
             join!(immutable_values_fut, mutable_values_fut).await;
-        Self {
-            immutable_values,
-            mutable_values,
+        Ok(Self {
+            immutable_values: immutable_values.map_err(|(_, e)| AllocOrMapFailure::MapError(e))?,
+            mutable_values: mutable_values.map_err(|(e, _)| AllocOrMapFailure::MapError(e))?,
             mutable_values_head: 0,
             id,
-        }
+        })
     }
 
     /// Used during instantiation to evaluate an expression in a single pass. Only requires this
@@ -76,7 +96,7 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
         constr_expr: &Vec<Operator<'data>>,
         module_globals: &Vec<AbstractGlobalPtr<B, T>>,
         module_functions: &Vec<UntypedFuncPtr<B, T>>,
-    ) -> Val {
+    ) -> Result<Val, InterpretError<B>> {
         let mut stack = Vec::new();
 
         let mut iter = constr_expr.into_iter();
@@ -106,39 +126,67 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
                     let global_ptr = module_globals
                         .get(global_index)
                         .expect("global index out of range of module globals");
-                    let global_val = self.get(global_ptr).await;
+                    let global_val = self
+                        .get(global_ptr)
+                        .await
+                        .map_err(InterpretError::ValueReadError)?;
                     stack.push(global_val)
                 }
                 Operator::End => {
-                    assert!(iter.next().is_none()); // End at end
+                    if !iter.next().is_none() {
+                        // End at end
+                        return Err(InterpretError::MalformedExpression(
+                            "end expression was found before the end of the constexpr".to_string(),
+                        ));
+                    }
                     break;
                 }
                 _ => unreachable!(),
             }
         }
 
-        assert_eq!(stack.len(), 1); // We should only have one thing left
+        let res = stack.pop().ok_or(InterpretError::MalformedExpression(
+            "constexpr had no result".to_string(),
+        ))?;
 
-        return stack.pop().unwrap();
+        return Ok(res);
     }
 
     /// values_count is given in units of bytes, so an f64 is 8 bytes
-    pub async fn reserve_mutable(&mut self, values_size: usize) {
-        self.mutable_values.flush_extend(values_size).await;
+    pub async fn reserve_mutable(
+        self,
+        values_size: usize,
+    ) -> Result<Self, <B::MainMemoryBlock as MainMemoryBlock<B>>::ResizeError> {
+        let mutable_values = self.mutable_values.flush_extend(values_size).await?;
+        Ok(Self {
+            mutable_values,
+            ..self
+        })
     }
 
     /// values_count is given in units of bytes, so an f64 is 8 bytes
-    pub async fn reserve_immutable(&mut self, values_size: usize) {
-        self.immutable_values.reserve(values_size).await;
+    pub async fn reserve_immutable(
+        self,
+        values_size: usize,
+    ) -> Result<Self, <B::MainMemoryBlock as MainMemoryBlock<B>>::ResizeError> {
+        let immutable_values = self.immutable_values.reserve(values_size).await?;
+        Ok(Self {
+            immutable_values,
+            ..self
+        })
     }
 
-    async fn push_typed<V, T>(&mut self, v: V, mutable: bool) -> AbstractGlobalPtr<B, T>
+    async fn push_typed<V, T>(
+        &mut self,
+        v: V,
+        mutable: bool,
+    ) -> Result<AbstractGlobalPtr<B, T>, <B::MainMemoryBlock as MainMemoryBlock<B>>::SliceError>
     where
         V: WasmTyVal,
     {
         if !mutable {
-            let immutable_ptr = self.immutable_values.push_typed(v).await;
-            return AbstractGlobalPtr::Immutable(immutable_ptr);
+            let immutable_ptr = self.immutable_values.push_typed(v).await?;
+            return Ok(AbstractGlobalPtr::Immutable(immutable_ptr));
         }
 
         let bytes = v.to_bytes();
@@ -147,17 +195,22 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
         let end = start + bytes.len();
 
         assert!(end <= self.mutable_values.len(), "index out of bounds");
-        let slice = self.mutable_values.as_slice_mut(start..end).await;
+        let slice = self.mutable_values.as_slice_mut(start..end).await?;
 
         slice.copy_from_slice(bytes.as_slice());
 
         self.mutable_values_head = end;
 
         let mutable_ptr = AbstractGlobalMutablePtr::new(start, self.id, V::VAL_TYPE);
-        return AbstractGlobalPtr::Mutable(mutable_ptr);
+        return Ok(AbstractGlobalPtr::Mutable(mutable_ptr));
     }
 
-    pub async fn push<T>(&mut self, val: Val, mutable: bool) -> AbstractGlobalPtr<B, T> {
+    pub async fn push<T>(
+        &mut self,
+        val: Val,
+        mutable: bool,
+    ) -> Result<AbstractGlobalPtr<B, T>, <B::MainMemoryBlock as MainMemoryBlock<B>>::SliceError>
+    {
         match val {
             Val::I32(v) => self.push_typed(v, mutable).await,
             Val::I64(v) => self.push_typed(v, mutable).await,
@@ -170,7 +223,10 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
     }
 
     /// A typed version of `get`, panics if types mismatch
-    pub async fn get_typed<T, V: WasmTyVal>(&mut self, ptr: &AbstractGlobalPtr<B, T>) -> V {
+    pub async fn get_typed<T, V: WasmTyVal>(
+        &mut self,
+        ptr: &AbstractGlobalPtr<B, T>,
+    ) -> Result<V, <B::MainMemoryBlock as MainMemoryBlock<B>>::SliceError> {
         assert_eq!(self.id, ptr.id());
         assert!(ptr.content_type().eq(&V::VAL_TYPE));
 
@@ -183,25 +239,31 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
                 let end = start + size_of::<V>();
 
                 assert!(end <= self.mutable_values.len(), "index out of bounds");
-                let slice = self.mutable_values.as_slice(start..end).await;
+                let slice = self.mutable_values.as_slice(start..end).await?;
 
-                return V::try_from_bytes(slice).expect(
+                return Ok(V::try_from_bytes(slice).expect(
                     format!(
                         "could not parse memory - invalid state for {}: {:?}",
                         std::any::type_name::<V>(),
                         slice
                     )
                     .as_str(),
-                );
+                ));
             }
         }
     }
 
-    async fn get_val<T, V: WasmTyVal>(&mut self, ptr: &AbstractGlobalPtr<B, T>) -> Val {
-        self.get_typed::<T, V>(ptr).await.to_val()
+    async fn get_val<T, V: WasmTyVal>(
+        &mut self,
+        ptr: &AbstractGlobalPtr<B, T>,
+    ) -> Result<Val, <B::MainMemoryBlock as MainMemoryBlock<B>>::SliceError> {
+        Ok(self.get_typed::<T, V>(ptr).await?.to_val())
     }
 
-    pub async fn get<T>(&mut self, ptr: &AbstractGlobalPtr<B, T>) -> Val {
+    pub async fn get<T>(
+        &mut self,
+        ptr: &AbstractGlobalPtr<B, T>,
+    ) -> Result<Val, <B::MainMemoryBlock as MainMemoryBlock<B>>::SliceError> {
         assert_eq!(self.id, ptr.id());
 
         match &ptr.content_type() {
@@ -220,31 +282,42 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
         global: Global<'_>,
         module_globals: &Vec<AbstractGlobalPtr<B, T>>,
         module_functions: &Vec<UntypedFuncPtr<B, T>>,
-    ) -> AbstractGlobalPtr<B, T> {
+    ) -> Result<AbstractGlobalPtr<B, T>, InterpretError<B>> {
         // Initialise
         let val = self
             .interpret_constexpr(&global.initializer, module_globals, module_functions)
-            .await;
+            .await?;
         assert_eq!(
             val.get_type(),
             global.ty.content_type,
             "global evaluation had differing type to definition"
         );
-        return self.push(val, global.ty.mutable).await;
+        return Ok(self
+            .push(val, global.ty.mutable)
+            .await
+            .map_err(InterpretError::ValueReadError)?);
     }
 
-    pub async fn unmap(self) -> DeviceAbstractGlobalInstance<B> {
+    pub async fn unmap(
+        self,
+    ) -> Result<
+        DeviceAbstractGlobalInstance<B>,
+        <B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError,
+    > {
         assert_eq!(
             self.mutable_values_head,
             self.mutable_values.len(),
             "mutable space reserved but not used"
         );
 
-        DeviceAbstractGlobalInstance {
-            immutable_values: Arc::new(self.immutable_values.unmap().await),
-            mutable_values: self.mutable_values.unmap().await,
+        let immutable_values = self.immutable_values.unmap().await.map_err(|(_, e)| e)?;
+        let mutable_values = self.mutable_values.unmap().await.map_err(|(e, _)| e)?;
+
+        Ok(DeviceAbstractGlobalInstance {
+            immutable_values: Arc::new(immutable_values),
+            mutable_values,
             id: self.id,
-        }
+        })
     }
 }
 

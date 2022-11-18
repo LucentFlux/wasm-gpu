@@ -2,7 +2,11 @@ use crate::wgpu::async_device::AsyncDevice;
 use std::ops::RangeBounds;
 use wgpu::{Buffer, BufferAddress, BufferAsyncError, BufferSlice, MapMode};
 
-pub struct AsyncBuffer {
+#[derive(Debug)]
+pub struct AsyncBuffer
+where
+    Self: Send,
+{
     device: AsyncDevice,
     buffer: Buffer,
 }

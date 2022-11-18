@@ -63,7 +63,7 @@ impl<T: Send + 'static> WgpuFuture<T> {
     }
 
     /// Generates a callback function for this future that wakes the waker and sets the shared state
-    pub fn callback(&self) -> impl FnOnce<T> {
+    pub fn callback(&self) -> impl FnOnce(T) -> () {
         let shared_state = self.state.clone();
         return move |res: T| {
             let mut lock = shared_state

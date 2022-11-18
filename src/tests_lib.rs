@@ -12,8 +12,11 @@ pub async fn get_backend() -> wasp::WgpuBackend {
             total_mem: 2 * 1024,
         },
         backends: wgpu::Backends::all(),
+        allowed_features: Default::default(),
     };
-    return wasp::WgpuBackend::new(conf, None).await;
+    return wasp::WgpuBackend::new(conf, None)
+        .await
+        .expect("couldn't create default test backend");
 }
 
 #[macro_export]

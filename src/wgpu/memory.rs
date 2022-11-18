@@ -4,8 +4,10 @@ use crate::wgpu::async_buffer::AsyncBuffer;
 use crate::wgpu::async_device::AsyncDevice;
 use crate::wgpu::WgpuBackendLazy;
 use async_trait::async_trait;
+use futures::FutureExt;
 use ouroboros::self_referencing;
 use std::cmp::min;
+use std::fmt::Debug;
 use wgpu::{BufferAddress, BufferAsyncError, BufferSlice, MapMode};
 
 async fn copy_max(
@@ -20,9 +22,11 @@ async fn copy_max(
         .as_ref()
         .create_command_encoder(&Default::default());
 
+    let err =
+        "cannot handle more than 2^64 bytes of GPU RAM - this is probably a bug, unless you have more than 2^64 bytes of GPU RAM";
     let max_len = min(
-        source.size() - source_offset,
-        destination.size() - destination_offset,
+        u64::try_from(source.size() - source_offset).expect(err),
+        u64::try_from(destination.size() - destination_offset).expect(err),
     );
 
     copy_command_encoder.copy_buffer_to_buffer(
@@ -69,6 +73,7 @@ fn new_buffer(
     buffer
 }
 
+#[derive(Debug)]
 pub struct DeviceOnlyBuffer {
     backend: WgpuBackendLazy,
     buffer: AsyncBuffer,
@@ -102,7 +107,7 @@ impl lazy::DeviceOnlyBuffer<WgpuBackendLazy> for DeviceOnlyBuffer {
         self.buffer.as_ref().size() as usize
     }
 
-    async fn copy_from(&mut self, other: &Self) -> Result<(), Self::CopyError> {
+    async fn try_copy_from(&mut self, other: &Self) -> Result<(), Self::CopyError> {
         Ok(copy_max(
             &self.backend,
             other.buffer.as_ref(),
@@ -114,6 +119,7 @@ impl lazy::DeviceOnlyBuffer<WgpuBackendLazy> for DeviceOnlyBuffer {
     }
 }
 
+#[derive(Debug)]
 pub struct DeviceToMainBufferUnmapped {
     backend: WgpuBackendLazy,
     buffer: AsyncBuffer,
@@ -138,7 +144,7 @@ impl DeviceToMainBufferUnmapped {
 impl lazy::DeviceToMainBufferUnmapped<WgpuBackendLazy> for DeviceToMainBufferUnmapped {
     type Error = BufferAsyncError;
 
-    async fn copy_from_and_map(
+    async fn try_copy_from_and_map(
         self,
         src: &DeviceOnlyBuffer,
         offset: usize,
@@ -155,7 +161,7 @@ impl lazy::DeviceToMainBufferUnmapped<WgpuBackendLazy> for DeviceToMainBufferUnm
         DeviceToMainBufferMappedAsyncTryBuilder {
             buffer: self.buffer,
             backend: self.backend,
-            slice_builder: move |buffer| buffer.map_slice(.., MapMode::Read),
+            slice_builder: move |buffer| buffer.map_slice(.., MapMode::Read).boxed(),
         }
         .try_build()
         .await
@@ -163,6 +169,7 @@ impl lazy::DeviceToMainBufferUnmapped<WgpuBackendLazy> for DeviceToMainBufferUnm
 }
 
 #[self_referencing]
+#[derive(Debug)]
 pub struct DeviceToMainBufferMapped {
     backend: WgpuBackendLazy,
     buffer: AsyncBuffer,
@@ -176,7 +183,7 @@ impl lazy::DeviceToMainBufferMapped<WgpuBackendLazy> for DeviceToMainBufferMappe
     type Error = !;
     type Dirty = DeviceToMainBufferToUnmap;
 
-    fn view_and_finish<Res, F: FnOnce(&[u8]) -> Res>(
+    fn try_view_and_finish<Res, F: FnOnce(&[u8]) -> Res>(
         self,
         callback: F,
     ) -> Result<(Res, Self::Dirty), Self::Error> {
@@ -185,17 +192,18 @@ impl lazy::DeviceToMainBufferMapped<WgpuBackendLazy> for DeviceToMainBufferMappe
             callback(slice)
         });
 
-        return Ok((res, Self::Dirty(self)));
+        return Ok((res, DeviceToMainBufferToUnmap(self)));
     }
 }
 
+#[derive(Debug)]
 pub struct DeviceToMainBufferToUnmap(DeviceToMainBufferMapped);
 
 #[async_trait]
 impl lazy::DeviceToMainBufferDirty<WgpuBackendLazy> for DeviceToMainBufferToUnmap {
     type Error = !;
 
-    async fn clean(self) -> Result<DeviceToMainBufferUnmapped, Self::Error> {
+    async fn try_clean(self) -> Result<DeviceToMainBufferUnmapped, Self::Error> {
         let heads = self.0.into_heads();
 
         heads.buffer.as_ref().unmap();
@@ -208,6 +216,7 @@ impl lazy::DeviceToMainBufferDirty<WgpuBackendLazy> for DeviceToMainBufferToUnma
 }
 
 #[self_referencing]
+#[derive(Debug)]
 pub struct MainToDeviceBufferMapped {
     backend: WgpuBackendLazy,
     buffer: AsyncBuffer,
@@ -227,10 +236,11 @@ impl MainToDeviceBufferMapped {
             true,
         );
 
-        MainToDeviceBufferToMap(MainToDeviceBufferUnmapped { backend, buffer })
-            .clean()
-            .await
-            .unwrap()
+        let Ok(buffer) = MainToDeviceBufferToMap(MainToDeviceBufferUnmapped { backend, buffer })
+            .try_clean()
+            .await;
+
+        buffer
     }
 }
 
@@ -238,7 +248,7 @@ impl MainToDeviceBufferMapped {
 impl lazy::MainToDeviceBufferMapped<WgpuBackendLazy> for MainToDeviceBufferMapped {
     type Error = !;
 
-    fn write_and_unmap(self, val: &[u8]) -> Result<MainToDeviceBufferUnmapped, Self::Error> {
+    fn try_write_and_unmap(self, val: &[u8]) -> Result<MainToDeviceBufferUnmapped, Self::Error> {
         self.with_slice(|slice| slice.get_mapped_range_mut().copy_from_slice(val));
 
         let heads = self.into_heads();
@@ -251,6 +261,7 @@ impl lazy::MainToDeviceBufferMapped<WgpuBackendLazy> for MainToDeviceBufferMappe
     }
 }
 
+#[derive(Debug)]
 pub struct MainToDeviceBufferUnmapped {
     backend: WgpuBackendLazy,
     buffer: AsyncBuffer,
@@ -261,7 +272,7 @@ impl lazy::MainToDeviceBufferUnmapped<WgpuBackendLazy> for MainToDeviceBufferUnm
     type Error = !;
     type Dirty = MainToDeviceBufferToMap;
 
-    async fn copy_to_and_finish(
+    async fn try_copy_to_and_finish(
         self,
         dst: &DeviceOnlyBuffer,
         offset: usize,
@@ -275,17 +286,18 @@ impl lazy::MainToDeviceBufferUnmapped<WgpuBackendLazy> for MainToDeviceBufferUnm
         )
         .await;
 
-        Ok(Self::Dirty(self))
+        Ok(MainToDeviceBufferToMap(self))
     }
 }
 
+#[derive(Debug)]
 pub struct MainToDeviceBufferToMap(MainToDeviceBufferUnmapped);
 
 #[async_trait]
 impl MainToDeviceBufferDirty<WgpuBackendLazy> for MainToDeviceBufferToMap {
     type Error = !;
 
-    async fn clean(self) -> Result<MainToDeviceBufferMapped, Self::Error> {
+    async fn try_clean(self) -> Result<MainToDeviceBufferMapped, Self::Error> {
         MainToDeviceBufferMappedAsyncTryBuilder {
             buffer: self.0.buffer,
             backend: self.0.backend,

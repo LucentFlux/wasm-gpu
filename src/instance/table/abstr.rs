@@ -1,8 +1,10 @@
 use crate::atomic_counter::AtomicCounter;
+use crate::backend::AllocOrMapFailure;
 use crate::instance::table::concrete::{DeviceTableInstanceSet, TablePtr};
 use crate::memory::limits_match;
 use crate::memory::DeviceMemoryBlock;
 use crate::{impl_abstract_ptr, Backend, MainMemoryBlock};
+use futures::{StreamExt, TryFutureExt};
 use std::hash::Hasher;
 use std::sync::Arc;
 use wasmparser::TableType;
@@ -19,7 +21,10 @@ where
 }
 
 impl<B: Backend> DeviceAbstractTableInstanceSet<B> {
-    pub async fn build(&self, count: usize) -> DeviceTableInstanceSet<B> {
+    pub async fn build(
+        &self,
+        count: usize,
+    ) -> Result<DeviceTableInstanceSet<B>, B::BufferCreationError> {
         DeviceTableInstanceSet::new(self.backend.clone(), &self.tables, count, self.id).await
     }
 }
@@ -45,15 +50,20 @@ where
         }
     }
 
-    pub async fn add_table<T>(&mut self, plan: &TableType) -> AbstractTablePtr<B, T> {
+    pub async fn add_table<T>(
+        &mut self,
+        plan: &TableType,
+    ) -> Result<AbstractTablePtr<B, T>, AllocOrMapFailure<B>> {
         let ptr = self.tables.len();
         self.tables.push(
             self.backend
-                .create_device_memory_block(plan.initial as usize, None)
+                .try_create_device_memory_block(plan.initial as usize, None)
+                .map_err(AllocOrMapFailure::AllocError)?
                 .map()
-                .await,
+                .await
+                .map_err(|(e, _)| AllocOrMapFailure::MapError(e))?,
         );
-        return AbstractTablePtr::new(ptr, self.id, plan.clone());
+        return Ok(AbstractTablePtr::new(ptr, self.id, plan.clone()));
     }
 
     pub async fn initialize<T>(
@@ -61,7 +71,7 @@ where
         ptr: &AbstractTablePtr<B, T>,
         data: &[u8],
         offset: usize,
-    ) {
+    ) -> Result<(), <B::MainMemoryBlock as MainMemoryBlock<B>>::SliceError> {
         assert_eq!(ptr.id, self.id);
 
         self.tables
@@ -71,15 +81,23 @@ where
             .await
     }
 
-    pub async fn unmap(self) -> DeviceAbstractTableInstanceSet<B> {
+    pub async fn unmap(
+        self,
+    ) -> Result<
+        DeviceAbstractTableInstanceSet<B>,
+        <B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError,
+    > {
         let tables = self.tables.into_iter().map(|t| t.unmap());
-        let tables = futures::future::join_all(tables).await;
+        let tables: Result<Vec<_>, _> = futures::future::join_all(tables)
+            .await
+            .into_iter()
+            .collect();
 
-        DeviceAbstractTableInstanceSet {
+        Ok(DeviceAbstractTableInstanceSet {
             id: self.id,
             backend: self.backend,
-            tables,
-        }
+            tables: tables.map_err(|(e, _)| e)?,
+        })
     }
 }
 

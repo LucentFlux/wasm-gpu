@@ -2,6 +2,7 @@
 #![feature(async_closure)]
 #![feature(associated_type_defaults)]
 #![feature(never_type)]
+#![feature(unwrap_infallible)]
 
 mod atomic_counter;
 mod backend;

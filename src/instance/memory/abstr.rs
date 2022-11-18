@@ -1,7 +1,9 @@
 use crate::atomic_counter::AtomicCounter;
+use crate::backend::AllocOrMapFailure;
 use crate::instance::memory::concrete::{DeviceMemoryInstanceSet, MemoryPtr};
 use crate::memory::limits_match;
 use crate::{impl_abstract_ptr, Backend, DeviceMemoryBlock, MainMemoryBlock};
+use futures::TryFutureExt;
 use std::sync::Arc;
 use wasmparser::MemoryType;
 
@@ -17,7 +19,10 @@ where
 }
 
 impl<B: Backend> DeviceAbstractMemoryInstanceSet<B> {
-    pub async fn build(&self, count: usize) -> DeviceMemoryInstanceSet<B> {
+    pub async fn build(
+        &self,
+        count: usize,
+    ) -> Result<DeviceMemoryInstanceSet<B>, B::BufferCreationError> {
         DeviceMemoryInstanceSet::new(self.backend.clone(), &self.memories, count, self.id).await
     }
 }
@@ -40,15 +45,20 @@ impl<B: Backend> HostAbstractMemoryInstanceSet<B> {
         }
     }
 
-    pub async fn add_memory<T>(&mut self, plan: &MemoryType) -> AbstractMemoryPtr<B, T> {
+    pub async fn add_memory<T>(
+        &mut self,
+        plan: &MemoryType,
+    ) -> Result<AbstractMemoryPtr<B, T>, AllocOrMapFailure<B>> {
         let ptr = self.memories.len();
         self.memories.push(
             self.backend
-                .create_device_memory_block(plan.initial as usize, None)
+                .try_create_device_memory_block(plan.initial as usize, None)
+                .map_err(AllocOrMapFailure::AllocError)?
                 .map()
-                .await,
+                .await
+                .map_err(|(e, _)| AllocOrMapFailure::MapError(e))?,
         );
-        return AbstractMemoryPtr::new(ptr, self.id, plan.clone());
+        return Ok(AbstractMemoryPtr::new(ptr, self.id, plan.clone()));
     }
 
     /// # Panics
@@ -58,7 +68,7 @@ impl<B: Backend> HostAbstractMemoryInstanceSet<B> {
         ptr: &AbstractMemoryPtr<B, T>,
         data: &[u8],
         offset: usize,
-    ) {
+    ) -> Result<(), <B::MainMemoryBlock as MainMemoryBlock<B>>::SliceError> {
         assert_eq!(ptr.id, self.id);
 
         self.memories
@@ -68,15 +78,23 @@ impl<B: Backend> HostAbstractMemoryInstanceSet<B> {
             .await
     }
 
-    pub async fn unmap(self) -> DeviceAbstractMemoryInstanceSet<B> {
+    pub async fn unmap(
+        self,
+    ) -> Result<
+        DeviceAbstractMemoryInstanceSet<B>,
+        <B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError,
+    > {
         let memories = self.memories.into_iter().map(|t| t.unmap());
-        let memories = futures::future::join_all(memories).await;
+        let memories: Result<Vec<_>, _> = futures::future::join_all(memories)
+            .await
+            .into_iter()
+            .collect();
 
-        DeviceAbstractMemoryInstanceSet {
+        Ok(DeviceAbstractMemoryInstanceSet {
             id: self.id,
-            memories,
+            memories: memories.map_err(|(e, _)| e)?,
             backend: self.backend,
-        }
+        })
     }
 }
 

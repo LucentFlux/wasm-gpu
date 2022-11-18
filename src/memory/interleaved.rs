@@ -61,9 +61,9 @@ macro_rules! impl_get {
         let buffer_bounds = (bounds.start * period)..(bounds.end * period);
 
         if buffer_bounds.end > s_len {
-            None
+            Ok($ret(vec![]))
         } else {
-            let mut s = $self.buffer.$as_slice(buffer_bounds).await;
+            let mut s = $self.buffer.$as_slice(buffer_bounds).await?;
 
             assert_eq!(s.len() % period, 0);
 
@@ -81,7 +81,7 @@ macro_rules! impl_get {
                 }
             }
 
-            Some($ret(interpretations))
+            Ok($ret(interpretations))
         }
     }};
 }
@@ -102,7 +102,13 @@ where
     /// Takes a memory block and interprets it as an interleaved buffer.
     ///
     /// Bounds gives the bounds for each abstract interleaved buffer, in units of `STRIDE * 4` bytes
-    pub async fn get<S: ToRange<usize> + Send>(&self, bounds: S) -> Option<InterleavedBufferView> {
+    pub async fn get<S: ToRange<usize> + Send>(
+        &self,
+        bounds: S,
+    ) -> Result<
+        InterleavedBufferView,
+        <<B as Backend>::MainMemoryBlock as MainMemoryBlock<B>>::SliceError,
+    > {
         return impl_get!(InterleavedBufferView,
             with self on bounds
             using as_slice
@@ -116,7 +122,10 @@ where
     pub async fn get_mut<S: ToRange<usize> + Send>(
         &mut self,
         bounds: S,
-    ) -> Option<InterleavedBufferViewMut> {
+    ) -> Result<
+        InterleavedBufferViewMut,
+        <<B as Backend>::MainMemoryBlock as MainMemoryBlock<B>>::SliceError,
+    > {
         return impl_get!(InterleavedBufferViewMut,
             with self on bounds
             using as_slice_mut
@@ -145,18 +154,18 @@ where
         backend: Arc<B>,
         source: &B::DeviceMemoryBlock,
         count: usize,
-    ) -> Self {
+    ) -> Result<Self, B::BufferCreationError> {
         assert!(count > 0, "Count must be non-zero");
 
         let len = source.len() * count;
-        let mut buffer = backend.create_device_memory_block(len, None);
+        let mut buffer = backend.try_create_device_memory_block(len, None)?;
 
         backend
             .get_utils()
             .interleave::<STRIDE>(source, &mut buffer, count)
             .await;
 
-        Self { buffer, count }
+        Ok(Self { buffer, count })
     }
 
     /// Take this interleaved buffer and move it to main memory
