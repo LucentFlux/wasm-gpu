@@ -1,12 +1,12 @@
 use crate::atomic_counter::AtomicCounter;
-use crate::memory::DeviceMemoryBlock;
+use crate::backend::AllocOrMapFailure;
 use crate::typed::{FuncRef, WasmTyVal, WasmTyVec};
 use crate::{impl_immutable_ptr, Backend, MainMemoryBlock, MemoryBlock};
 use itertools::Itertools;
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
 
-pub struct DeviceElementInstance<B>
+pub struct UnmappedElementInstance<B>
 where
     B: Backend,
 {
@@ -14,47 +14,27 @@ where
     id: usize,
 }
 
-impl<B: Backend> DeviceElementInstance<B> {
-    pub fn new(backend: &B) -> Result<Self, B::BufferCreationError> {
-        Ok(Self {
-            references: backend.try_create_device_memory_block(0, None)?,
-            id: COUNTER.next(),
-        })
-    }
+impl<B: Backend> UnmappedElementInstance<B> {}
 
-    pub async fn map(
-        self,
-    ) -> Result<
-        HostElementInstance<B>,
-        (
-            Self,
-            <B::DeviceMemoryBlock as DeviceMemoryBlock<B>>::MapError,
-        ),
-    > {
-        let len = self.references.len();
-
-        match self.references.map().await {
-            Err((err, references)) => Err((Self { references, ..self }, err)),
-            Ok(references) => Ok(HostElementInstance {
-                head: len,
-                references,
-                id: self.id,
-            }),
-        }
-    }
-}
-
-pub struct HostElementInstance<B>
+pub struct MappedElementInstance<B>
 where
     B: Backend,
 {
     references: B::MainMemoryBlock,
     head: usize,
-
     id: usize,
 }
 
-impl<B: Backend> HostElementInstance<B> {
+impl<B: Backend> MappedElementInstance<B> {
+    pub async fn new(backend: &B) -> Result<Self, AllocOrMapFailure<B>> {
+        let references = backend.try_create_and_map_empty().await?;
+        Ok(Self {
+            references,
+            id: COUNTER.next(),
+            head: 0,
+        })
+    }
+
     /// Resizes the GPU buffers backing these elements by the specified amount.
     ///
     /// values_count is given in units of bytes, so an f64 is 8 bytes
@@ -106,8 +86,8 @@ impl<B: Backend> HostElementInstance<B> {
     pub async fn unmap(
         self,
     ) -> Result<
-        DeviceElementInstance<B>,
-        (Self, <B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError),
+        UnmappedElementInstance<B>,
+        (<B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError, Self),
     > {
         assert_eq!(
             self.head,
@@ -116,8 +96,8 @@ impl<B: Backend> HostElementInstance<B> {
         );
 
         match self.references.unmap().await {
-            Err((err, references)) => Err((Self { references, ..self }, err)),
-            Ok(references) => Ok(DeviceElementInstance {
+            Err((err, references)) => Err((err, Self { references, ..self })),
+            Ok(references) => Ok(UnmappedElementInstance {
                 references,
                 id: self.id,
             }),

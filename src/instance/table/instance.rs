@@ -1,5 +1,5 @@
 use crate::impl_concrete_ptr;
-use crate::instance::table::abstr::AbstractTablePtr;
+use crate::instance::table::builder::AbstractTablePtr;
 use crate::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
 use crate::Backend;
 use futures::future::join_all;
@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 const STRIDE: usize = 1; // FuncRef is 1 x u32
 
-pub struct DeviceTableInstanceSet<B>
+pub struct UnmappedTableInstanceSet<B>
 where
     B: Backend,
 {
@@ -15,11 +15,11 @@ where
     id: usize,
 }
 
-impl<B> DeviceTableInstanceSet<B>
+impl<B> UnmappedTableInstanceSet<B>
 where
     B: Backend,
 {
-    pub async fn new(
+    pub(crate) async fn new(
         backend: Arc<B>,
         sources: &Vec<B::DeviceMemoryBlock>,
         count: usize,
@@ -36,7 +36,7 @@ where
     }
 }
 
-pub struct HostTableInstanceSet<B>
+pub struct MappedTableInstanceSet<B>
 where
     B: Backend,
 {

@@ -8,6 +8,7 @@ use crate::Backend;
 use std::error::Error;
 use std::fmt::Debug;
 
+use crate::recoverable::Recoverable;
 use crate::typed::ToRange;
 use async_trait::async_trait;
 use futures::TryFutureExt;
@@ -26,22 +27,21 @@ where
 
 #[derive(Error)]
 #[perfect_derive(Debug)]
-pub enum MainMemoryResizeError<B: Backend<MainMemoryBlock = Mem>, Mem: MainMemoryBlock<B>> {
+pub enum SoftResizeError<B: Backend<MainMemoryBlock = Mem>, Mem: MainMemoryBlock<B>> {
     /// Not unmapped, not resized
     #[error("memory could not be unmapped for resizing")]
-    UnmapError(Mem::UnmapError, Mem),
+    UnmapError(Mem::UnmapError),
+}
+
+#[derive(Error)]
+#[perfect_derive(Debug)]
+pub enum HardResizeError<B: Backend<MainMemoryBlock = Mem>, Mem: MainMemoryBlock<B>> {
     /// Not resized, left unmapped
     #[error("unmapped memory could not be resized")]
-    DeviceResizeError(
-        <<B as Backend>::DeviceMemoryBlock as DeviceMemoryBlock<B>>::ResizeError,
-        B::DeviceMemoryBlock,
-    ),
+    DeviceResizeError(<<B as Backend>::DeviceMemoryBlock as DeviceMemoryBlock<B>>::ResizeError),
     /// Resized but not remapped
     #[error("memory could not be remapped once resized")]
-    MapError(
-        <<B as Backend>::DeviceMemoryBlock as DeviceMemoryBlock<B>>::MapError,
-        B::DeviceMemoryBlock,
-    ),
+    MapError(<<B as Backend>::DeviceMemoryBlock as DeviceMemoryBlock<B>>::MapError),
 }
 
 #[async_trait]
@@ -49,9 +49,10 @@ pub trait MainMemoryBlock<B>: MemoryBlock<B> + Sized + Send
 where
     B: Backend<MainMemoryBlock = Self>,
 {
-    type UnmapError: Error + Send;
-    type SliceError: Error + Send;
-    type ResizeError: Error + Send = MainMemoryResizeError<B, Self>;
+    type UnmapError: Error + Send + Sync;
+    type SliceError: Error + Send + Sync;
+    /// For a default implementation, use `Recoverable<SoftResizeError<B, M>, Self, HardResizeError<B, M>>`
+    type ResizeError: Error + Send + Sync;
 
     async fn as_slice<S: ToRange<usize> + Send>(
         &self,
@@ -78,22 +79,7 @@ where
     /// Resizes by moving off of main memory, reallocating and copying
     ///
     /// The `flush` portion of this operation is optional, and may be optimised away.
-    async fn flush_resize(self, new_len: usize) -> Result<Self, Self::ResizeError> {
-        let unmapped = self
-            .unmap()
-            .await
-            .map_err(|(e, v)| MainMemoryResizeError::UnmapError(e, v))?;
-        let unmapped = unmapped
-            .resize(new_len)
-            .await
-            .map_err(|(e, v)| MainMemoryResizeError::DeviceResizeError(e, v))?;
-        let remapped = unmapped
-            .map()
-            .await
-            .map_err(|(e, v)| MainMemoryResizeError::MapError(e, v))?;
-
-        Ok(remapped)
-    }
+    async fn flush_resize(self, new_len: usize) -> Result<Self, Self::ResizeError>;
 
     /// Convenience wrapper around `flush_resize` that adds more space
     async fn flush_extend(self, extra: usize) -> Result<Self, Self::ResizeError> {

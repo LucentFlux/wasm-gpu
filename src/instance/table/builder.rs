@@ -1,17 +1,14 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::backend::AllocOrMapFailure;
-use crate::instance::table::concrete::{DeviceTableInstanceSet, TablePtr};
+use crate::instance::table::instance::{TablePtr, UnmappedTableInstanceSet};
 use crate::memory::limits_match;
-use crate::memory::DeviceMemoryBlock;
 use crate::{impl_abstract_ptr, Backend, MainMemoryBlock};
-use futures::{StreamExt, TryFutureExt};
-use std::hash::Hasher;
 use std::sync::Arc;
 use wasmparser::TableType;
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
 
-pub struct DeviceAbstractTableInstanceSet<B>
+pub struct UnmappedTableInstanceSetBuilder<B>
 where
     B: Backend,
 {
@@ -20,16 +17,16 @@ where
     tables: Vec<B::DeviceMemoryBlock>,
 }
 
-impl<B: Backend> DeviceAbstractTableInstanceSet<B> {
+impl<B: Backend> UnmappedTableInstanceSetBuilder<B> {
     pub async fn build(
         &self,
         count: usize,
-    ) -> Result<DeviceTableInstanceSet<B>, B::BufferCreationError> {
-        DeviceTableInstanceSet::new(self.backend.clone(), &self.tables, count, self.id).await
+    ) -> Result<UnmappedTableInstanceSet<B>, B::BufferCreationError> {
+        UnmappedTableInstanceSet::new(self.backend.clone(), &self.tables, count, self.id).await
     }
 }
 
-pub struct HostAbstractTableInstanceSet<B>
+pub struct MappedTableInstanceSetBuilder<B>
 where
     B: Backend,
 {
@@ -38,7 +35,7 @@ where
     tables: Vec<B::MainMemoryBlock>,
 }
 
-impl<B> HostAbstractTableInstanceSet<B>
+impl<B> MappedTableInstanceSetBuilder<B>
 where
     B: Backend,
 {
@@ -55,14 +52,8 @@ where
         plan: &TableType,
     ) -> Result<AbstractTablePtr<B, T>, AllocOrMapFailure<B>> {
         let ptr = self.tables.len();
-        self.tables.push(
-            self.backend
-                .try_create_device_memory_block(plan.initial as usize, None)
-                .map_err(AllocOrMapFailure::AllocError)?
-                .map()
-                .await
-                .map_err(|(e, _)| AllocOrMapFailure::MapError(e))?,
-        );
+        self.tables
+            .push(self.backend.try_create_and_map_empty().await?);
         return Ok(AbstractTablePtr::new(ptr, self.id, plan.clone()));
     }
 
@@ -84,7 +75,7 @@ where
     pub async fn unmap(
         self,
     ) -> Result<
-        DeviceAbstractTableInstanceSet<B>,
+        UnmappedTableInstanceSetBuilder<B>,
         <B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError,
     > {
         let tables = self.tables.into_iter().map(|t| t.unmap());
@@ -93,7 +84,7 @@ where
             .into_iter()
             .collect();
 
-        Ok(DeviceAbstractTableInstanceSet {
+        Ok(UnmappedTableInstanceSetBuilder {
             id: self.id,
             backend: self.backend,
             tables: tables.map_err(|(e, _)| e)?,

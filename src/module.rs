@@ -2,12 +2,12 @@ pub mod error;
 pub mod module_environ;
 
 use crate::externs::{Extern, NamedExtern};
-use crate::instance::data::{DataPtr, HostDataInstance};
-use crate::instance::element::{ElementPtr, HostElementInstance};
+use crate::instance::data::{DataPtr, MappedDataInstance};
+use crate::instance::element::{ElementPtr, MappedElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
-use crate::instance::global::abstr::{AbstractGlobalPtr, HostAbstractGlobalInstance};
-use crate::instance::memory::abstr::{AbstractMemoryPtr, HostAbstractMemoryInstanceSet};
-use crate::instance::table::abstr::{AbstractTablePtr, HostAbstractTableInstanceSet};
+use crate::instance::global::builder::{AbstractGlobalPtr, MappedGlobalInstanceBuilder};
+use crate::instance::memory::builder::{AbstractMemoryPtr, MappedMemoryInstanceSetBuilder};
+use crate::instance::table::builder::{AbstractTablePtr, MappedTableInstanceSetBuilder};
 use crate::module::module_environ::{
     ImportTypeRef, ModuleEnviron, ModuleExport, ParsedElementKind, ParsedModuleUnit,
 };
@@ -171,7 +171,7 @@ where
     /// module, then writes the initial values
     pub(crate) async fn initialize_globals<T>(
         &self,
-        globals_instance: &mut HostAbstractGlobalInstance<B>,
+        globals_instance: &mut MappedGlobalInstanceBuilder<B>,
         global_imports: impl Iterator<Item = AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> anyhow::Result<Vec<AbstractGlobalPtr<B, T>>> {
@@ -225,9 +225,9 @@ where
     /// Extends elements buffers to be shared by all stores of a set, as passive elements are immutable
     pub(crate) async fn initialize_elements<T>(
         &self,
-        elements: &mut HostElementInstance<B>,
+        elements: &mut MappedElementInstance<B>,
         // Needed for const expr evaluation
-        module_globals: &mut HostAbstractGlobalInstance<B>,
+        module_globals: &mut MappedGlobalInstanceBuilder<B>,
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> anyhow::Result<Vec<ElementPtr<B, T>>> {
@@ -268,12 +268,12 @@ where
 
     pub(crate) async fn initialize_tables<T>(
         &self,
-        tables: &mut HostAbstractTableInstanceSet<B>,
+        tables: &mut MappedTableInstanceSetBuilder<B>,
         imported_tables: Iter<'_, AbstractTablePtr<B, T>>,
-        elements: &mut HostElementInstance<B>,
+        elements: &mut MappedElementInstance<B>,
         module_element_ptrs: &Vec<ElementPtr<B, T>>,
         // Needed for const expr evaluation
-        module_globals: &mut HostAbstractGlobalInstance<B>,
+        module_globals: &mut MappedGlobalInstanceBuilder<B>,
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> anyhow::Result<Vec<AbstractTablePtr<B, T>>> {
@@ -324,7 +324,7 @@ where
 
     pub(crate) async fn initialize_datas<T>(
         &self,
-        datas: &mut HostDataInstance<B>,
+        datas: &mut MappedDataInstance<B>,
     ) -> anyhow::Result<Vec<DataPtr<B, T>>> {
         // Reserve space first
         let size: usize = self
@@ -348,12 +348,12 @@ where
 
     pub(crate) async fn initialize_memories<T>(
         &self,
-        memory_set: &mut HostAbstractMemoryInstanceSet<B>,
+        memory_set: &mut MappedMemoryInstanceSetBuilder<B>,
         imported_memories: Iter<'_, AbstractMemoryPtr<B, T>>,
-        datas: &mut HostDataInstance<B>,
+        datas: &mut MappedDataInstance<B>,
         module_data_ptrs: &Vec<DataPtr<B, T>>,
         // Needed for const expr evaluation
-        module_globals: &mut HostAbstractGlobalInstance<B>,
+        module_globals: &mut MappedGlobalInstanceBuilder<B>,
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<AbstractMemoryPtr<B, T>> {

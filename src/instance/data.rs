@@ -3,7 +3,7 @@ use crate::{impl_immutable_ptr, Backend, DeviceMemoryBlock, MainMemoryBlock, Mem
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
 
-pub struct DeviceDataInstance<B>
+pub struct UnmappedDataInstance<B>
 where
     B: Backend,
 {
@@ -11,7 +11,7 @@ where
     id: usize,
 }
 
-impl<B: Backend> DeviceDataInstance<B> {
+impl<B: Backend> UnmappedDataInstance<B> {
     pub fn new(backend: &B) -> Result<Self, B::BufferCreationError> {
         Ok(Self {
             datas: backend.try_create_device_memory_block(0, None)?,
@@ -22,17 +22,17 @@ impl<B: Backend> DeviceDataInstance<B> {
     pub async fn map(
         self,
     ) -> Result<
-        HostDataInstance<B>,
+        MappedDataInstance<B>,
         (
-            Self,
             <B::DeviceMemoryBlock as DeviceMemoryBlock<B>>::MapError,
+            Self,
         ),
     > {
         let len = self.datas.len();
         // Try and if we can't, don't
         match self.datas.map().await {
-            Err((err, datas)) => Err((Self { datas, ..self }, err)),
-            Ok(datas) => Ok(HostDataInstance {
+            Err((err, datas)) => Err((err, Self { datas, ..self })),
+            Ok(datas) => Ok(MappedDataInstance {
                 head: len,
                 datas,
                 id: self.id,
@@ -41,7 +41,7 @@ impl<B: Backend> DeviceDataInstance<B> {
     }
 }
 
-pub struct HostDataInstance<B>
+pub struct MappedDataInstance<B>
 where
     B: Backend,
 {
@@ -50,7 +50,7 @@ where
     head: usize,
 }
 
-impl<B: Backend> HostDataInstance<B> {
+impl<B: Backend> MappedDataInstance<B> {
     /// Resizes the GPU buffers backing these elements by the specified amount.
     ///
     /// values_size is given in units of bytes, so an f64 is 8 bytes
@@ -95,14 +95,16 @@ impl<B: Backend> HostDataInstance<B> {
 
     pub async fn unmap(
         self,
-    ) -> Result<DeviceDataInstance<B>, (Self, <B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError)>
-    {
+    ) -> Result<
+        UnmappedDataInstance<B>,
+        (<B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError, Self),
+    > {
         assert_eq!(self.head, self.datas.len(), "space reserved but not used");
 
         // Try and if we can't, don't
         match self.datas.unmap().await {
-            Err((err, datas)) => Err((Self { datas, ..self }, err)),
-            Ok(datas) => Ok(DeviceDataInstance { datas, id: self.id }),
+            Err((err, datas)) => Err((err, Self { datas, ..self })),
+            Ok(datas) => Ok(UnmappedDataInstance { datas, id: self.id }),
         }
     }
 }

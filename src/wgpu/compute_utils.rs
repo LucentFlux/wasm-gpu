@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use std::borrow::Cow;
 use wgpu::{BindGroupLayout, Label, ShaderModule};
 
+#[derive(Debug)]
 struct ModuleInfo {
     pub module: ShaderModule,
     pub bind_group_layout: BindGroupLayout,
@@ -21,7 +22,7 @@ impl ModuleInfo {
         let pipeline = device
             .as_ref()
             .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Label::from(&format!("{} Pipeline", name)),
+                label: Some(&format!("{} Pipeline", name)),
                 layout: None,
                 module: &module,
                 entry_point: "main",
@@ -35,6 +36,7 @@ impl ModuleInfo {
     }
 }
 
+#[derive(Debug)]
 pub struct WgpuComputeUtils {
     device: AsyncDevice,
 
@@ -55,17 +57,20 @@ impl WgpuComputeUtils {
 impl Utils<WgpuBackend> for WgpuComputeUtils {
     async fn interleave<const STRIDE: usize>(
         &self,
-        src: &mut <WgpuBackend as Backend>::DeviceMemoryBlock,
+        src: &<WgpuBackend as Backend>::DeviceMemoryBlock,
         dst: &mut <WgpuBackend as Backend>::DeviceMemoryBlock,
         count: usize,
     ) {
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &self.interleave.bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: src.data.buffer.raw_buffer().as_ref().as_entire_binding(),
-            }],
-        });
+        let bind_group = self
+            .device
+            .as_ref()
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &self.interleave.bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: src.data.buffer.raw_buffer().as_ref().as_entire_binding(),
+                }],
+            });
     }
 }

@@ -91,11 +91,18 @@ where
     B: Backend,
 {
     /// Take this interleaved buffer and move it to device memory
-    pub async fn unmap(self) -> DeviceInterleavedBuffer<B, STRIDE> {
-        let buffer = self.buffer.unmap().await;
-        DeviceInterleavedBuffer {
-            buffer,
-            count: self.count,
+    pub async fn unmap(
+        self,
+    ) -> Result<
+        DeviceInterleavedBuffer<B, STRIDE>,
+        (<B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError, Self),
+    > {
+        match self.buffer.unmap().await {
+            Err((err, buffer)) => Err((err, Self { buffer, ..self })),
+            Ok(buffer) => Ok(DeviceInterleavedBuffer {
+                buffer,
+                count: self.count,
+            }),
         }
     }
 
@@ -169,11 +176,21 @@ where
     }
 
     /// Take this interleaved buffer and move it to main memory
-    pub async fn map(self) -> HostInterleavedBuffer<B, STRIDE> {
-        let buffer = self.buffer.map().await;
-        HostInterleavedBuffer {
-            buffer,
-            count: self.count,
+    pub async fn map(
+        self,
+    ) -> Result<
+        HostInterleavedBuffer<B, STRIDE>,
+        (
+            <B::DeviceMemoryBlock as DeviceMemoryBlock<B>>::MapError,
+            Self,
+        ),
+    > {
+        match self.buffer.map().await {
+            Err((err, buffer)) => Err((err, Self { buffer, ..self })),
+            Ok(buffer) => Ok(HostInterleavedBuffer {
+                buffer,
+                count: self.count,
+            }),
         }
     }
 }

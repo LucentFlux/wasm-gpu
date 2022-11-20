@@ -1,13 +1,17 @@
 use crate::backend::AllocOrMapFailure;
 use crate::externs::NamedExtern;
-use crate::instance::data::{DeviceDataInstance, HostDataInstance};
-use crate::instance::element::{DeviceElementInstance, HostElementInstance};
+use crate::instance::data::{MappedDataInstance, UnmappedDataInstance};
+use crate::instance::element::{MappedElementInstance, UnmappedElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
-use crate::instance::global::abstr::{DeviceAbstractGlobalInstance, HostAbstractGlobalInstance};
-use crate::instance::memory::abstr::{
-    DeviceAbstractMemoryInstanceSet, HostAbstractMemoryInstanceSet,
+use crate::instance::global::builder::{
+    MappedGlobalInstanceBuilder, UnmappedGlobalInstanceBuilder,
 };
-use crate::instance::table::abstr::{DeviceAbstractTableInstanceSet, HostAbstractTableInstanceSet};
+use crate::instance::memory::builder::{
+    MappedMemoryInstanceSetBuilder, UnmappedMemoryInstanceSetBuilder,
+};
+use crate::instance::table::builder::{
+    MappedTableInstanceSetBuilder, UnmappedTableInstanceSetBuilder,
+};
 use crate::instance::ModuleInstanceSet;
 use crate::store_set::DeviceStoreSetData;
 use crate::{Backend, DeviceMemoryBlock, DeviceStoreSet, Engine, Func, MainMemoryBlock, Module};
@@ -22,12 +26,12 @@ where
 {
     backend: Arc<B>,
 
-    tables: HostAbstractTableInstanceSet<B>,
-    memories: HostAbstractMemoryInstanceSet<B>,
-    globals: HostAbstractGlobalInstance<B>,
+    tables: MappedTableInstanceSetBuilder<B>,
+    memories: MappedMemoryInstanceSetBuilder<B>,
+    globals: MappedGlobalInstanceBuilder<B>,
     // Immutable so don't need to be abstr
-    elements: HostElementInstance<B>,
-    datas: HostDataInstance<B>,
+    elements: MappedElementInstance<B>,
+    datas: MappedDataInstance<B>,
     functions: FuncsInstance<B, T>,
 }
 
@@ -38,11 +42,9 @@ where
     pub async fn new(engine: &Engine<B>) -> Result<Self, AllocOrMapFailure<B>> {
         let backend = engine.backend();
 
-        let globals_fut = HostAbstractGlobalInstance::new(backend.as_ref());
-        let elements_fut = DeviceElementInstance::new(backend.as_ref())
-            .map_err(AllocOrMapFailure::AllocError)?
-            .map();
-        let datas_fut = DeviceDataInstance::new(backend.as_ref())
+        let globals_fut = MappedGlobalInstanceBuilder::new(backend.as_ref());
+        let elements_fut = MappedElementInstance::new(backend.as_ref()).await?;
+        let datas_fut = UnmappedDataInstance::new(backend.as_ref())
             .map_err(AllocOrMapFailure::AllocError)?
             .map();
 
@@ -50,8 +52,8 @@ where
 
         Ok(Self {
             functions: FuncsInstance::new(),
-            tables: HostAbstractTableInstanceSet::new(engine.backend()),
-            memories: HostAbstractMemoryInstanceSet::new(engine.backend()),
+            tables: MappedTableInstanceSetBuilder::new(engine.backend()),
+            memories: MappedMemoryInstanceSetBuilder::new(engine.backend()),
             globals: globals?,
             elements: elements.map_err(|(e, _)| AllocOrMapFailure::MapError(e))?,
             datas: datas.map_err(|(e, _)| AllocOrMapFailure::MapError(e))?,
@@ -204,11 +206,11 @@ pub struct CompletedBuilder<B: Backend, T> {
     backend: Arc<B>,
 
     // Move host things to GPU
-    tables: DeviceAbstractTableInstanceSet<B>,
-    memories: DeviceAbstractMemoryInstanceSet<B>,
-    globals: DeviceAbstractGlobalInstance<B>,
-    elements: Arc<DeviceElementInstance<B>>,
-    datas: Arc<DeviceDataInstance<B>>,
+    tables: UnmappedTableInstanceSetBuilder<B>,
+    memories: UnmappedMemoryInstanceSetBuilder<B>,
+    globals: UnmappedGlobalInstanceBuilder<B>,
+    elements: Arc<UnmappedElementInstance<B>>,
+    datas: Arc<UnmappedDataInstance<B>>,
     functions: Arc<FuncsInstance<B, T>>,
 }
 

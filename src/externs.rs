@@ -1,7 +1,7 @@
 use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
-use crate::instance::global::abstr::AbstractGlobalPtr;
-use crate::instance::memory::abstr::AbstractMemoryPtr;
-use crate::instance::table::abstr::AbstractTablePtr;
+use crate::instance::global::builder::AbstractGlobalPtr;
+use crate::instance::memory::builder::AbstractMemoryPtr;
+use crate::instance::table::builder::AbstractTablePtr;
 use crate::typed::WasmTyVec;
 use crate::Backend;
 use itertools::Itertools;

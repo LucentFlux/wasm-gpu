@@ -1,15 +1,15 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::backend::AllocOrMapFailure;
 use crate::instance::func::UntypedFuncPtr;
-use crate::instance::global::concrete::DeviceMutableGlobalInstanceSet;
-use crate::instance::global::concrete::GlobalMutablePtr;
 use crate::instance::global::immutable::GlobalImmutablePtr;
 use crate::instance::global::immutable::{
     DeviceImmutableGlobalsInstance, HostImmutableGlobalsInstance,
 };
+use crate::instance::global::instance::GlobalMutablePtr;
+use crate::instance::global::instance::UnmappedMutableGlobalInstanceSet;
 use crate::module::module_environ::Global;
 use crate::typed::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal};
-use crate::{impl_abstract_ptr, Backend, DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
+use crate::{impl_abstract_ptr, Backend, MainMemoryBlock, MemoryBlock};
 use perfect_derive::perfect_derive;
 use std::future::join;
 use std::mem::size_of;
@@ -19,7 +19,7 @@ use wasmparser::{GlobalType, Operator, ValType};
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
 
-pub struct DeviceAbstractGlobalInstance<B>
+pub struct UnmappedGlobalInstanceBuilder<B>
 where
     B: Backend,
 {
@@ -29,27 +29,27 @@ where
     id: usize,
 }
 
-impl<B: Backend> DeviceAbstractGlobalInstance<B> {
+impl<B: Backend> UnmappedGlobalInstanceBuilder<B> {
     pub async fn build(
         &self,
         backend: Arc<B>,
         count: usize,
     ) -> Result<
         (
-            DeviceMutableGlobalInstanceSet<B>,
+            UnmappedMutableGlobalInstanceSet<B>,
             Arc<DeviceImmutableGlobalsInstance<B>>,
         ),
         B::BufferCreationError,
     > {
         let mutables =
-            DeviceMutableGlobalInstanceSet::new(backend, &self.mutable_values, count, self.id)
+            UnmappedMutableGlobalInstanceSet::new(backend, &self.mutable_values, count, self.id)
                 .await;
 
         return Ok((mutables?, self.immutable_values.clone()));
     }
 }
 
-pub struct HostAbstractGlobalInstance<B>
+pub struct MappedGlobalInstanceBuilder<B>
 where
     B: Backend,
 {
@@ -70,27 +70,22 @@ pub enum InterpretError<B: Backend> {
     MalformedExpression(String),
 }
 
-impl<B: Backend> HostAbstractGlobalInstance<B> {
+impl<B: Backend> MappedGlobalInstanceBuilder<B> {
     pub async fn new(backend: &B) -> Result<Self, AllocOrMapFailure<B>> {
         let id = COUNTER.next();
-        let immutable_values_fut = DeviceImmutableGlobalsInstance::new(backend, id)
-            .map_err(AllocOrMapFailure::AllocError)?
-            .map();
-        let mutable_values_fut = backend
-            .try_create_device_memory_block(0, None)
-            .map_err(AllocOrMapFailure::AllocError)?
-            .map();
+        let immutable_values_fut = HostImmutableGlobalsInstance::new(backend, id);
+        let mutable_values_fut = backend.try_create_and_map_empty();
         let (immutable_values, mutable_values) =
             join!(immutable_values_fut, mutable_values_fut).await;
         Ok(Self {
-            immutable_values: immutable_values.map_err(|(_, e)| AllocOrMapFailure::MapError(e))?,
-            mutable_values: mutable_values.map_err(|(e, _)| AllocOrMapFailure::MapError(e))?,
+            immutable_values: immutable_values?,
+            mutable_values: mutable_values?,
             mutable_values_head: 0,
             id,
         })
     }
 
-    /// Used during instantiation to evaluate an expression in a single pass. Only requires this
+    /// Used during instantiation to evaluate an expression in a single pass
     pub async fn interpret_constexpr<'data, T>(
         &mut self,
         constr_expr: &Vec<Operator<'data>>,
@@ -301,7 +296,7 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
     pub async fn unmap(
         self,
     ) -> Result<
-        DeviceAbstractGlobalInstance<B>,
+        UnmappedGlobalInstanceBuilder<B>,
         <B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError,
     > {
         assert_eq!(
@@ -310,10 +305,10 @@ impl<B: Backend> HostAbstractGlobalInstance<B> {
             "mutable space reserved but not used"
         );
 
-        let immutable_values = self.immutable_values.unmap().await.map_err(|(_, e)| e)?;
+        let immutable_values = self.immutable_values.unmap().await.map_err(|(e, _)| e)?;
         let mutable_values = self.mutable_values.unmap().await.map_err(|(e, _)| e)?;
 
-        Ok(DeviceAbstractGlobalInstance {
+        Ok(UnmappedGlobalInstanceBuilder {
             immutable_values: Arc::new(immutable_values),
             mutable_values,
             id: self.id,

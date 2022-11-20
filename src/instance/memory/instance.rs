@@ -1,5 +1,5 @@
 use crate::fenwick::FenwickTree;
-use crate::instance::memory::abstr::AbstractMemoryPtr;
+use crate::instance::memory::builder::AbstractMemoryPtr;
 use crate::memory::interleaved::{
     DeviceInterleavedBuffer, HostInterleavedBuffer, InterleavedBufferView, InterleavedBufferViewMut,
 };
@@ -17,7 +17,7 @@ struct Meta {
     id: usize,
 }
 
-pub struct DeviceMemoryInstanceSet<B>
+pub struct UnmappedMemoryInstanceSet<B>
 where
     B: Backend,
 {
@@ -25,11 +25,11 @@ where
     meta: Meta,
 }
 
-impl<B> DeviceMemoryInstanceSet<B>
+impl<B> UnmappedMemoryInstanceSet<B>
 where
     B: Backend,
 {
-    pub async fn new(
+    pub(crate) async fn new(
         backend: Arc<B>,
         sources: &Vec<B::DeviceMemoryBlock>,
         count: usize,
@@ -55,7 +55,7 @@ where
     }
 }
 
-pub struct HostMemoryInstanceSet<B>
+pub struct MappedMemoryInstanceSet<B>
 where
     B: Backend,
 {
@@ -138,7 +138,7 @@ macro_rules! impl_get {
     }};
 }
 
-impl<B: Backend> HostMemoryInstanceSet<B> {
+impl<B: Backend> MappedMemoryInstanceSet<B> {
     pub fn get<T>(&self, ptr: MemoryPtr<B, T>) -> MemoryView<B> {
         return impl_get!(
             with self, ptr

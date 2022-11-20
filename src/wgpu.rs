@@ -11,18 +11,20 @@ use crate::wgpu::compute_utils::WgpuComputeUtils;
 use crate::BufferRingConfig;
 use itertools::Itertools;
 use std::fmt::Debug;
+use std::sync::Arc;
 use thiserror::Error;
 
 const CHUNK_SIZE: usize = 1024;
 
 /// Things that we *can* use if supported, but don't need
+#[derive(Copy, Clone, Debug)]
 pub struct WgpuUsefulFeatures {
     pub supports_f64: bool,
 }
 
 impl WgpuUsefulFeatures {
     fn intersect(self, adapter: &wgpu::Adapter) -> Self {
-        let new_features = adapter.features().intersect(self.as_features());
+        let new_features = adapter.features().intersection(self.as_features());
 
         let supports_f64 = new_features.contains(wgpu::Features::SHADER_FLOAT64);
 
@@ -50,7 +52,7 @@ impl Default for WgpuUsefulFeatures {
 pub struct WgpuBackendLazy {
     device: AsyncDevice,
     queue: AsyncQueue,
-    utils: WgpuComputeUtils,
+    utils: Arc<WgpuComputeUtils>,
     features: WgpuUsefulFeatures,
 }
 
@@ -65,7 +67,7 @@ impl LazyBackend for WgpuBackendLazy {
     type DeviceOnlyBuffer = memory::DeviceOnlyBuffer;
 
     fn get_utils(&self) -> &Self::Utils {
-        &self.utils
+        self.utils.as_ref()
     }
 
     fn try_create_device_only_memory_block(
@@ -147,7 +149,7 @@ impl WgpuBackend {
         let device = AsyncDevice::new(device);
         let queue = AsyncQueue::new(device.clone(), queue);
 
-        let utils = WgpuComputeUtils::new(device.clone());
+        let utils = Arc::new(WgpuComputeUtils::new(device.clone()));
 
         let res = Lazy::try_new_from(
             WgpuBackendLazy {

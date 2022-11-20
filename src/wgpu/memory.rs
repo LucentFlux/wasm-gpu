@@ -25,8 +25,8 @@ async fn copy_max(
     let err =
         "cannot handle more than 2^64 bytes of GPU RAM - this is probably a bug, unless you have more than 2^64 bytes of GPU RAM";
     let max_len = min(
-        u64::try_from(source.size() - source_offset).expect(err),
-        u64::try_from(destination.size() - destination_offset).expect(err),
+        source.size() - u64::try_from(source_offset).expect(err),
+        destination.size() - u64::try_from(destination_offset).expect(err),
     );
 
     copy_command_encoder.copy_buffer_to_buffer(
@@ -226,7 +226,7 @@ pub struct MainToDeviceBufferMapped {
 }
 
 impl MainToDeviceBufferMapped {
-    pub async fn make_new(backend: WgpuBackendLazy) -> Self {
+    pub fn make_new(backend: WgpuBackendLazy) -> Self {
         let usage = wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE;
         let buffer = new_buffer(
             &backend.device,
@@ -236,11 +236,13 @@ impl MainToDeviceBufferMapped {
             true,
         );
 
-        let Ok(buffer) = MainToDeviceBufferToMap(MainToDeviceBufferUnmapped { backend, buffer })
-            .try_clean()
-            .await;
-
-        buffer
+        // We dig in to the internals a bit because we know we initialized the buffer as mappable
+        MainToDeviceBufferMappedBuilder {
+            buffer,
+            backend,
+            slice_builder: move |buffer: &AsyncBuffer| buffer.as_ref().slice(..),
+        }
+        .build()
     }
 }
 

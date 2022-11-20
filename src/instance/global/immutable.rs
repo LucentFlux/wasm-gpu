@@ -1,4 +1,4 @@
-use crate::memory::DeviceMemoryBlock;
+use crate::backend::AllocOrMapFailure;
 use crate::typed::WasmTyVal;
 use crate::{impl_immutable_ptr, Backend, MainMemoryBlock, MemoryBlock};
 use std::mem::size_of;
@@ -12,35 +12,7 @@ where
     id: usize, // Shared with mutable counterpart
 }
 
-impl<B: Backend> DeviceImmutableGlobalsInstance<B> {
-    pub fn new(backend: &B, id: usize) -> Result<Self, B::BufferCreationError> {
-        Ok(Self {
-            immutables: backend.try_create_device_memory_block(0, None)?,
-            id,
-        })
-    }
-
-    pub async fn map(
-        self,
-    ) -> Result<
-        HostImmutableGlobalsInstance<B>,
-        (
-            Self,
-            <B::DeviceMemoryBlock as DeviceMemoryBlock<B>>::MapError,
-        ),
-    > {
-        let len = self.immutables.len();
-
-        match self.immutables.map().await {
-            Err((err, immutables)) => Err((Self { immutables, ..self }, err)),
-            Ok(immutables) => Ok(HostImmutableGlobalsInstance {
-                head: len,
-                immutables,
-                id: self.id,
-            }),
-        }
-    }
-}
+impl<B: Backend> DeviceImmutableGlobalsInstance<B> {}
 
 pub struct HostImmutableGlobalsInstance<B>
 where
@@ -52,6 +24,15 @@ where
 }
 
 impl<B: Backend> HostImmutableGlobalsInstance<B> {
+    pub async fn new(backend: &B, id: usize) -> Result<Self, AllocOrMapFailure<B>> {
+        let immutables = backend.try_create_and_map_empty().await?;
+        Ok(Self {
+            immutables,
+            id,
+            head: 0,
+        })
+    }
+
     /// Resizes the GPU buffers backing these elements by the specified amount.
     ///
     /// values_size is given in units of bytes, so an f64 is 8 bytes
@@ -110,7 +91,7 @@ impl<B: Backend> HostImmutableGlobalsInstance<B> {
         self,
     ) -> Result<
         DeviceImmutableGlobalsInstance<B>,
-        (Self, <B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError),
+        (<B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError, Self),
     > {
         assert_eq!(
             self.head,
@@ -119,7 +100,7 @@ impl<B: Backend> HostImmutableGlobalsInstance<B> {
         );
 
         match self.immutables.unmap().await {
-            Err((err, immutables)) => Err((Self { immutables, ..self }, err)),
+            Err((err, immutables)) => Err((err, Self { immutables, ..self })),
             Ok(immutables) => Ok(DeviceImmutableGlobalsInstance {
                 immutables,
                 id: self.id,

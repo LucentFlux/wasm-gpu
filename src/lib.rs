@@ -16,6 +16,7 @@ mod memory;
 mod module;
 mod panic_on_any;
 mod read_only;
+mod recoverable;
 mod session;
 mod store_set;
 mod typed;

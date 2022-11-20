@@ -1,11 +1,11 @@
-use crate::instance::global::abstr::AbstractGlobalMutablePtr;
+use crate::instance::global::builder::AbstractGlobalMutablePtr;
 use crate::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
 use crate::{impl_concrete_ptr, Backend};
 use std::sync::Arc;
 
 const STRIDE: usize = 1; // 1 * u32
 
-pub struct DeviceMutableGlobalInstanceSet<B>
+pub struct UnmappedMutableGlobalInstanceSet<B>
 where
     B: Backend,
 {
@@ -14,11 +14,11 @@ where
     id: usize,
 }
 
-impl<B> DeviceMutableGlobalInstanceSet<B>
+impl<B> UnmappedMutableGlobalInstanceSet<B>
 where
     B: Backend,
 {
-    pub async fn new(
+    pub(crate) async fn new(
         backend: Arc<B>,
         mutables_source: &B::DeviceMemoryBlock,
         count: usize,
@@ -36,7 +36,7 @@ where
     }
 }
 
-pub struct HostMutableGlobalInstanceSet<B>
+pub struct MappedMutableGlobalInstanceSet<B>
 where
     B: Backend,
 {

@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use wasmparser::{FuncType, ValType};
 
 use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
-use crate::instance::memory::concrete::{HostMemoryInstanceSet, MemoryView, MemoryViewMut};
+use crate::instance::memory::instance::{MappedMemoryInstanceSet, MemoryView, MemoryViewMut};
 use crate::instance::ptrs::AbstractPtr;
 use crate::instance::ModuleInstanceSet;
 use crate::store_set::HostStoreSet;
@@ -152,7 +152,7 @@ where
 {
     // Decomposed store
     data: &'a mut Vec<T>,
-    memory: &'a mut HostMemoryInstanceSet<B>,
+    memory: &'a mut MappedMemoryInstanceSet<B>,
 
     // Info into store data
     index: usize,

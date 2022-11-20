@@ -1,15 +1,14 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::backend::AllocOrMapFailure;
-use crate::instance::memory::concrete::{DeviceMemoryInstanceSet, MemoryPtr};
+use crate::instance::memory::instance::{MemoryPtr, UnmappedMemoryInstanceSet};
 use crate::memory::limits_match;
-use crate::{impl_abstract_ptr, Backend, DeviceMemoryBlock, MainMemoryBlock};
-use futures::TryFutureExt;
+use crate::{impl_abstract_ptr, Backend, MainMemoryBlock};
 use std::sync::Arc;
 use wasmparser::MemoryType;
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
 
-pub struct DeviceAbstractMemoryInstanceSet<B>
+pub struct UnmappedMemoryInstanceSetBuilder<B>
 where
     B: Backend,
 {
@@ -18,16 +17,16 @@ where
     id: usize,
 }
 
-impl<B: Backend> DeviceAbstractMemoryInstanceSet<B> {
+impl<B: Backend> UnmappedMemoryInstanceSetBuilder<B> {
     pub async fn build(
         &self,
         count: usize,
-    ) -> Result<DeviceMemoryInstanceSet<B>, B::BufferCreationError> {
-        DeviceMemoryInstanceSet::new(self.backend.clone(), &self.memories, count, self.id).await
+    ) -> Result<UnmappedMemoryInstanceSet<B>, B::BufferCreationError> {
+        UnmappedMemoryInstanceSet::new(self.backend.clone(), &self.memories, count, self.id).await
     }
 }
 
-pub struct HostAbstractMemoryInstanceSet<B>
+pub struct MappedMemoryInstanceSetBuilder<B>
 where
     B: Backend,
 {
@@ -36,7 +35,7 @@ where
     id: usize,
 }
 
-impl<B: Backend> HostAbstractMemoryInstanceSet<B> {
+impl<B: Backend> MappedMemoryInstanceSetBuilder<B> {
     pub fn new(backend: Arc<B>) -> Self {
         Self {
             id: COUNTER.next(),
@@ -50,14 +49,8 @@ impl<B: Backend> HostAbstractMemoryInstanceSet<B> {
         plan: &MemoryType,
     ) -> Result<AbstractMemoryPtr<B, T>, AllocOrMapFailure<B>> {
         let ptr = self.memories.len();
-        self.memories.push(
-            self.backend
-                .try_create_device_memory_block(plan.initial as usize, None)
-                .map_err(AllocOrMapFailure::AllocError)?
-                .map()
-                .await
-                .map_err(|(e, _)| AllocOrMapFailure::MapError(e))?,
-        );
+        self.memories
+            .push(self.backend.try_create_and_map_empty().await?);
         return Ok(AbstractMemoryPtr::new(ptr, self.id, plan.clone()));
     }
 
@@ -81,7 +74,7 @@ impl<B: Backend> HostAbstractMemoryInstanceSet<B> {
     pub async fn unmap(
         self,
     ) -> Result<
-        DeviceAbstractMemoryInstanceSet<B>,
+        UnmappedMemoryInstanceSetBuilder<B>,
         <B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError,
     > {
         let memories = self.memories.into_iter().map(|t| t.unmap());
@@ -90,7 +83,7 @@ impl<B: Backend> HostAbstractMemoryInstanceSet<B> {
             .into_iter()
             .collect();
 
-        Ok(DeviceAbstractMemoryInstanceSet {
+        Ok(UnmappedMemoryInstanceSetBuilder {
             id: self.id,
             memories: memories.map_err(|(e, _)| e)?,
             backend: self.backend,
