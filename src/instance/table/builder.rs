@@ -1,5 +1,4 @@
 use crate::atomic_counter::AtomicCounter;
-use crate::backend::AllocOrMapFailure;
 use crate::instance::table::instance::{TablePtr, UnmappedTableInstanceSet};
 use crate::memory::limits_match;
 use crate::{impl_abstract_ptr, Backend, MainMemoryBlock};

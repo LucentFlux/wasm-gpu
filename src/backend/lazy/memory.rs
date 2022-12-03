@@ -10,7 +10,6 @@ use std::alloc::Layout;
 use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
-use thiserror::Error;
 
 /// Calculates the minimum x s.t. x is a multiple of alignment and x >= size
 fn min_alignment_gt(size: usize, alignment: usize) -> usize {
@@ -253,15 +252,6 @@ struct LazyBuffer<L: LazyBackend> {
     chunks: Vec<LazyChunk<L>>,
 }
 
-#[derive(Error)]
-#[perfect_derive(Debug)]
-enum LazyBufferResizeError<L: LazyBackend> {
-    #[error("new memory could not be created")]
-    AllocationError(L::BufferCreationError),
-    #[error("data could not be copied into new larger buffer")]
-    DataCopyError(<L::DeviceOnlyBuffer as DeviceOnlyBuffer<L>>::CopyError),
-}
-
 impl<L: LazyBackend> LazyBuffer<L> {
     fn new_chunk(i: usize) -> LazyChunk<L> {
         LazyChunk::new(i * L::CHUNK_SIZE)
@@ -366,9 +356,9 @@ impl<L: LazyBackend> LazyBuffer<L> {
         self.backing
     }
 
-    async fn try_resize_inplace(&mut self, new_len: usize) -> Result<(), LazyBufferResizeError<L>> {
+    async fn resize_inplace(&mut self, new_len: usize) {
         if new_len == self.backing.visible_len {
-            return Ok(());
+            return;
         }
 
         // Calculate chunks
@@ -382,12 +372,8 @@ impl<L: LazyBackend> LazyBuffer<L> {
                 .backing
                 .backend
                 .lazy
-                .try_create_device_only_memory_block(new_len, None)
-                .map_err(LazyBufferResizeError::AllocationError)?;
-            new_buffer
-                .try_copy_from(&self.backing.buffer)
-                .await
-                .map_err(LazyBufferResizeError::DataCopyError)?;
+                .create_device_only_memory_block(new_len, None);
+            new_buffer.copy_from(&self.backing.buffer).await;
         }
 
         let chunks_count = self.chunks.len();
@@ -409,8 +395,6 @@ impl<L: LazyBackend> LazyBuffer<L> {
             // Resize blob
             self.data.resize(new_real_size);
         }
-
-        return Ok(());
     }
 }
 
@@ -430,47 +414,26 @@ impl<L: LazyBackend> MemoryBlock<Lazy<L>> for MappedLazyBuffer<L> {
     }
 }
 
-#[derive(Error)]
-#[perfect_derive(Debug)]
-enum MainMemoryBlockResizeError<L: LazyBackend> {
-    #[error("error when resizing")]
-    Err(MappedLazyBuffer<L>, LazyBufferResizeError<L>),
-}
-
 #[async_trait]
 impl<L: LazyBackend> MainMemoryBlock<Lazy<L>> for MappedLazyBuffer<L> {
-    type UnmapError = !;
-    type SliceError = !;
-    type ResizeError = MainMemoryBlockResizeError<L>;
-
-    async fn as_slice<S: ToRange<usize> + Send>(
-        &self,
-        bounds: S,
-    ) -> Result<&[u8], Self::SliceError> {
-        Ok(self.data.as_slice(bounds).await)
+    async fn as_slice<S: ToRange<usize> + Send>(&self, bounds: S) -> &[u8] {
+        self.data.as_slice(bounds).await
     }
 
-    async fn as_slice_mut<S: ToRange<usize> + Send>(
-        &mut self,
-        bounds: S,
-    ) -> Result<&mut [u8], Self::SliceError> {
-        Ok(self.data.as_slice_mut(bounds).await)
+    async fn as_slice_mut<S: ToRange<usize> + Send>(&mut self, bounds: S) -> &mut [u8] {
+        self.data.as_slice_mut(bounds).await
     }
 
-    async fn unmap(self) -> Result<UnmappedLazyBuffer<L>, (Self::UnmapError, Self)> {
-        Ok(UnmappedLazyBuffer {
+    async fn unmap(self) -> UnmappedLazyBuffer<L> {
+        UnmappedLazyBuffer {
             data: self.data.unload().await,
-        })
+        }
     }
 
-    /// The `flush_resize` method from this trait can be more efficiently re-implemented here to avoid
+    /// The `resize` method from this trait can be more efficiently re-implemented here to avoid
     /// flushing
-    async fn flush_resize(mut self, new_len: usize) -> Result<Self, Self::ResizeError> {
-        let res = self.data.try_resize_inplace(new_len).await;
-        return match res {
-            Ok(_) => Ok(self),
-            Err(e) => Err(MainMemoryBlockResizeError::Err(self, e)),
-        };
+    async fn resize(&mut self, new_len: usize) {
+        self.data.resize_inplace(new_len).await;
     }
 }
 
@@ -487,7 +450,7 @@ impl<L: LazyBackend> UnmappedLazyBuffer<L> {
         backend: Lazy<L>,
         size: usize,
         initial_data: Option<&[u8]>,
-    ) -> Result<UnmappedLazyBuffer<L>, L::BufferCreationError> {
+    ) -> UnmappedLazyBuffer<L> {
         let real_size = min_alignment_gt(size, L::CHUNK_SIZE);
 
         // Pad initial data
@@ -507,18 +470,18 @@ impl<L: LazyBackend> UnmappedLazyBuffer<L> {
             initial_data = initial_data.map(|_| padded.as_slice());
         }
 
-        let buffer = <L as LazyBackend>::try_create_device_only_memory_block(
+        let buffer = <L as LazyBackend>::create_device_only_memory_block(
             &backend.lazy,
             real_size,
             initial_data,
-        )?;
-        Ok(Self {
+        );
+        Self {
             data: LazyBufferMemoryBlock {
                 backend,
                 buffer,
                 visible_len: size,
             },
-        })
+        }
     }
 }
 
@@ -535,17 +498,14 @@ impl<L: LazyBackend> MemoryBlock<Lazy<L>> for UnmappedLazyBuffer<L> {
 
 #[async_trait]
 impl<L: LazyBackend> DeviceMemoryBlock<Lazy<L>> for UnmappedLazyBuffer<L> {
-    type MapError = !;
-    type CopyError = <L::DeviceOnlyBuffer as DeviceOnlyBuffer<L>>::CopyError;
-
-    async fn map(self) -> Result<MappedLazyBuffer<L>, (Self::MapError, Self)> {
-        Ok(MappedLazyBuffer {
+    async fn map(self) -> MappedLazyBuffer<L> {
+        MappedLazyBuffer {
             data: LazyBuffer::new(self.data),
-        })
+        }
     }
 
-    async fn copy_from(&mut self, other: &UnmappedLazyBuffer<L>) -> Result<(), Self::CopyError> {
-        self.data.buffer.try_copy_from(&other.data.buffer).await
+    async fn copy_from(&mut self, other: &UnmappedLazyBuffer<L>) {
+        self.data.buffer.copy_from(&other.data.buffer).await
     }
 }
 
@@ -580,7 +540,7 @@ mod tests {
     async fn test_get_unmapped_len(size: usize) {
         let backend = get_backend().await;
 
-        let memory = backend.try_create_device_memory_block(size, None).unwrap();
+        let memory = backend.create_device_memory_block(size, None);
 
         assert_eq!(memory.len(), size);
     }
@@ -589,8 +549,8 @@ mod tests {
     async fn test_get_mapped_len(size: usize) {
         let backend = get_backend().await;
 
-        let memory = backend.try_create_device_memory_block(size, None).unwrap();
-        let memory = memory.map().await.unwrap();
+        let memory = backend.create_device_memory_block(size, None);
+        let memory = memory.map().await;
 
         assert_eq!(memory.len(), size);
     }
@@ -601,13 +561,11 @@ mod tests {
 
         let expected_data = gen_test_data(size, (size * 33) as u32);
 
-        let memory = backend
-            .try_create_device_memory_block(size, Some(expected_data.as_slice()))
-            .unwrap();
+        let memory = backend.create_device_memory_block(size, Some(expected_data.as_slice()));
 
         // Read
-        let memory = memory.map().await.unwrap();
-        let slice = memory.as_slice(..).await.unwrap();
+        let memory = memory.map().await;
+        let slice = memory.as_slice(..).await;
         let data_result = Vec::from(slice);
 
         assert_eq!(data_result, expected_data);
@@ -617,16 +575,16 @@ mod tests {
     async fn test_write_read_mapped(size: usize) {
         let backend = get_backend().await;
 
-        let memory = backend.try_create_device_memory_block(size, None).unwrap();
-        let mut memory = memory.map().await.unwrap();
-        let slice = memory.as_slice_mut(..).await.unwrap();
+        let memory = backend.create_device_memory_block(size, None);
+        let mut memory = memory.map().await;
+        let slice = memory.as_slice_mut(..).await;
 
         // Write some data
         let expected_data = gen_test_data(size, size as u32);
         slice.copy_from_slice(expected_data.as_slice());
 
         // Read it back
-        let slice = memory.as_slice(..).await.unwrap();
+        let slice = memory.as_slice(..).await;
         let data_result = Vec::from(slice);
 
         assert_eq!(data_result, expected_data);
@@ -636,18 +594,18 @@ mod tests {
     async fn test_upload_download(size: usize) {
         let backend = get_backend().await;
 
-        let memory = backend.try_create_device_memory_block(size, None).unwrap();
-        let mut memory = memory.map().await.unwrap();
-        let slice = memory.as_slice_mut(..).await.unwrap();
+        let memory = backend.create_device_memory_block(size, None);
+        let mut memory = memory.map().await;
+        let slice = memory.as_slice_mut(..).await;
 
         // Write some data
         let expected_data = gen_test_data(size, size as u32);
         slice.copy_from_slice(expected_data.as_slice());
 
         // Unmap and Remap
-        let memory = memory.unmap().await.unwrap();
-        let memory = memory.map().await.unwrap();
-        let slice = memory.as_slice(..).await.unwrap();
+        let memory = memory.unmap().await;
+        let memory = memory.map().await;
+        let slice = memory.as_slice(..).await;
         let data_result = Vec::from(slice);
 
         assert_eq!(data_result, expected_data);

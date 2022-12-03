@@ -1,5 +1,4 @@
 use crate::atomic_counter::AtomicCounter;
-use crate::backend::AllocOrMapFailure;
 use crate::instance::memory::instance::{MemoryPtr, UnmappedMemoryInstanceSet};
 use crate::memory::limits_match;
 use crate::{impl_abstract_ptr, Backend, MainMemoryBlock};
@@ -18,10 +17,7 @@ where
 }
 
 impl<B: Backend> UnmappedMemoryInstanceSetBuilder<B> {
-    pub async fn build(
-        &self,
-        count: usize,
-    ) -> Result<UnmappedMemoryInstanceSet<B>, B::BufferCreationError> {
+    pub async fn build(&self, count: usize) -> UnmappedMemoryInstanceSet<B> {
         UnmappedMemoryInstanceSet::new(self.backend.clone(), &self.memories, count, self.id).await
     }
 }
@@ -44,14 +40,11 @@ impl<B: Backend> MappedMemoryInstanceSetBuilder<B> {
         }
     }
 
-    pub async fn add_memory<T>(
-        &mut self,
-        plan: &MemoryType,
-    ) -> Result<AbstractMemoryPtr<B, T>, AllocOrMapFailure<B>> {
+    pub async fn add_memory<T>(&mut self, plan: &MemoryType) -> AbstractMemoryPtr<B, T> {
         let ptr = self.memories.len();
         self.memories
-            .push(self.backend.try_create_and_map_empty().await?);
-        return Ok(AbstractMemoryPtr::new(ptr, self.id, plan.clone()));
+            .push(self.backend.create_and_map_empty().await);
+        return AbstractMemoryPtr::new(ptr, self.id, plan.clone());
     }
 
     /// # Panics
@@ -61,7 +54,7 @@ impl<B: Backend> MappedMemoryInstanceSetBuilder<B> {
         ptr: &AbstractMemoryPtr<B, T>,
         data: &[u8],
         offset: usize,
-    ) -> Result<(), <B::MainMemoryBlock as MainMemoryBlock<B>>::SliceError> {
+    ) {
         assert_eq!(ptr.id, self.id);
 
         self.memories
@@ -71,23 +64,18 @@ impl<B: Backend> MappedMemoryInstanceSetBuilder<B> {
             .await
     }
 
-    pub async fn unmap(
-        self,
-    ) -> Result<
-        UnmappedMemoryInstanceSetBuilder<B>,
-        <B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError,
-    > {
+    pub async fn unmap(self) -> UnmappedMemoryInstanceSetBuilder<B> {
         let memories = self.memories.into_iter().map(|t| t.unmap());
-        let memories: Result<Vec<_>, _> = futures::future::join_all(memories)
+        let memories = futures::future::join_all(memories)
             .await
             .into_iter()
             .collect();
 
-        Ok(UnmappedMemoryInstanceSetBuilder {
+        UnmappedMemoryInstanceSetBuilder {
             id: self.id,
-            memories: memories.map_err(|(e, _)| e)?,
+            memories,
             backend: self.backend,
-        })
+        }
     }
 }
 

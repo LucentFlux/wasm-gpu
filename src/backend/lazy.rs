@@ -5,9 +5,9 @@
 //! and that GPU memory can be mapped to main memory, and that this mapping is slower than
 //! unmappable buffers.
 
-use crate::backend::lazy::buffer_ring::read::{ReadBufferRing, ReadImpl};
-use crate::backend::lazy::buffer_ring::write::{WriteBufferRing, WriteImpl};
-use crate::backend::lazy::buffer_ring::{BufferRingConfig, NewBufferError};
+use crate::backend::lazy::buffer_ring::read::ReadBufferRing;
+use crate::backend::lazy::buffer_ring::write::WriteBufferRing;
+use crate::backend::lazy::buffer_ring::BufferRingConfig;
 use crate::backend::lazy::memory::{MappedLazyBuffer, UnmappedLazyBuffer};
 use crate::Backend;
 use async_trait::async_trait;
@@ -15,7 +15,6 @@ use perfect_derive::perfect_derive;
 use std::error::Error;
 use std::fmt::Debug;
 use std::sync::Arc;
-use thiserror::Error;
 
 pub mod buffer_ring;
 pub mod memory;
@@ -23,60 +22,39 @@ pub mod memory;
 // The new lazy API
 #[async_trait]
 pub trait DeviceToMainBufferUnmapped<L: LazyBackend>: Debug {
-    type Error: Error + Send;
-
-    async fn try_copy_from_and_map(
+    async fn copy_from_and_map(
         self,
         src: &L::DeviceOnlyBuffer,
         offset: usize,
-    ) -> Result<L::DeviceToMainBufferMapped, Self::Error>;
+    ) -> L::DeviceToMainBufferMapped;
 }
 #[async_trait]
 pub trait DeviceToMainBufferMapped<L: LazyBackend>: Debug {
-    type Error: Error + Send;
-
     type Dirty: DeviceToMainBufferDirty<L> + Send + Sync; // Allows for some cleaning to be done off-thread after a buffer has been used
 
-    fn try_view_and_finish<Res, F: FnOnce(&[u8]) -> Res>(
-        self,
-        callback: F,
-    ) -> Result<(Res, Self::Dirty), Self::Error>;
+    fn view_and_finish<Res, F: FnOnce(&[u8]) -> Res>(self, callback: F) -> (Res, Self::Dirty);
 }
 #[async_trait]
 pub trait DeviceToMainBufferDirty<L: LazyBackend>: Debug {
-    type Error: Error + Send;
-
-    async fn try_clean(self) -> Result<L::DeviceToMainBufferUnmapped, Self::Error>;
+    async fn clean(self) -> L::DeviceToMainBufferUnmapped;
 }
 
 #[async_trait]
 pub trait MainToDeviceBufferUnmapped<L: LazyBackend>: Debug {
-    type Error: Error + Send;
-
     type Dirty: MainToDeviceBufferDirty<L> + Send + Sync; // Allows for some cleaning to be done off-thread after a buffer has been used
 
-    async fn try_copy_to_and_finish(
-        self,
-        dst: &L::DeviceOnlyBuffer,
-        offset: usize,
-    ) -> Result<Self::Dirty, Self::Error>;
+    async fn copy_to_and_finish(self, dst: &L::DeviceOnlyBuffer, offset: usize) -> Self::Dirty;
 }
 #[async_trait]
 pub trait MainToDeviceBufferMapped<L: LazyBackend>: Debug {
-    type Error: Error + Send;
-
-    fn try_write_and_unmap(self, val: &[u8]) -> Result<L::MainToDeviceBufferUnmapped, Self::Error>;
+    fn write_and_unmap(self, val: &[u8]) -> L::MainToDeviceBufferUnmapped;
 }
 #[async_trait]
 pub trait MainToDeviceBufferDirty<L: LazyBackend>: Debug {
-    type Error: Error + Send;
-
-    async fn try_clean(self) -> Result<L::MainToDeviceBufferMapped, Self::Error>;
+    async fn clean(self) -> L::MainToDeviceBufferMapped;
 }
 #[async_trait]
 pub trait DeviceOnlyBuffer<L: LazyBackend>: Debug {
-    type CopyError: Error + Send;
-
     fn backend(&self) -> &L;
     fn len(&self) -> usize;
 
@@ -84,12 +62,10 @@ pub trait DeviceOnlyBuffer<L: LazyBackend>: Debug {
     /// If this buffer is smaller than the other then the other is truncated.
     /// If the other is smaller than this buffer then the data stored in the remaining space is
     /// implementation dependent, and should be treated as uninitialized.
-    async fn try_copy_from(&mut self, other: &Self) -> Result<(), Self::CopyError>;
+    async fn copy_from(&mut self, other: &Self);
 }
 
 pub trait LazyBackend: Debug + Sized + Send + Sync + 'static {
-    type BufferCreationError: Error + Send;
-
     const CHUNK_SIZE: usize;
 
     type Utils: crate::compute_utils::Utils<Lazy<Self>>;
@@ -100,18 +76,14 @@ pub trait LazyBackend: Debug + Sized + Send + Sync + 'static {
     type DeviceOnlyBuffer: DeviceOnlyBuffer<Self> + Sized + Send + Sync;
 
     fn get_utils(&self) -> &Self::Utils;
-    fn try_create_device_only_memory_block(
+    fn create_device_only_memory_block(
         &self,
         size: usize,
         initial_data: Option<&[u8]>,
-    ) -> Result<Self::DeviceOnlyBuffer, Self::BufferCreationError>;
+    ) -> Self::DeviceOnlyBuffer;
 
-    fn try_create_device_to_main_memory(
-        &self,
-    ) -> Result<Self::DeviceToMainBufferUnmapped, Self::BufferCreationError>;
-    fn try_create_main_to_device_memory(
-        &self,
-    ) -> Result<Self::MainToDeviceBufferMapped, Self::BufferCreationError>;
+    fn create_device_to_main_memory(&self) -> Self::DeviceToMainBufferUnmapped;
+    fn create_main_to_device_memory(&self) -> Self::MainToDeviceBufferMapped;
 }
 
 /// Wrap a lazy backend to keep some more state.
@@ -133,47 +105,29 @@ impl<L: LazyBackend> Clone for Lazy<L> {
     }
 }
 
-#[derive(Error)]
-#[perfect_derive(Debug)]
-pub enum NewBuffersError<L: LazyBackend> {
-    #[error("failed to allocate upload buffers")]
-    UploadBuffersErr(NewBufferError<L, WriteImpl<L>>),
-    #[error("failed to allocate download buffers")]
-    DownloadBuffersErr(NewBufferError<L, ReadImpl<L>>),
-}
-
 impl<L: LazyBackend> Lazy<L> {
-    pub async fn try_new_from(lazy: L, cfg: BufferRingConfig) -> Result<Self, NewBuffersError<L>> {
+    pub async fn new_from(lazy: L, cfg: BufferRingConfig) -> Self {
         let backend = Arc::new(lazy);
 
-        Ok(Self {
-            upload_buffers: Arc::new(
-                WriteBufferRing::try_new(backend.clone(), cfg)
-                    .await
-                    .map_err(|e| NewBuffersError::UploadBuffersErr(e))?,
-            ),
-            download_buffers: Arc::new(
-                ReadBufferRing::try_new(backend.clone(), cfg)
-                    .await
-                    .map_err(|e| NewBuffersError::DownloadBuffersErr(e))?,
-            ),
+        Self {
+            upload_buffers: Arc::new(WriteBufferRing::new(backend.clone(), cfg)),
+            download_buffers: Arc::new(ReadBufferRing::new(backend.clone(), cfg)),
             lazy: backend,
-        })
+        }
     }
 }
 
 // Map the lazy backend API on to the generic backend API
 impl<L: LazyBackend> Backend for Lazy<L> {
-    type BufferCreationError = L::BufferCreationError;
     type DeviceMemoryBlock = UnmappedLazyBuffer<L>;
     type MainMemoryBlock = MappedLazyBuffer<L>;
     type Utils = L::Utils;
 
-    fn try_create_device_memory_block(
+    fn create_device_memory_block(
         &self,
         size: usize,
         initial_data: Option<&[u8]>,
-    ) -> Result<Self::DeviceMemoryBlock, Self::BufferCreationError> {
+    ) -> Self::DeviceMemoryBlock {
         UnmappedLazyBuffer::new(self.clone(), size, initial_data)
     }
 

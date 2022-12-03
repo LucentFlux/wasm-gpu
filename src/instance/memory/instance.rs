@@ -34,7 +34,7 @@ where
         sources: &Vec<B::DeviceMemoryBlock>,
         count: usize,
         id: usize,
-    ) -> Result<Self, B::BufferCreationError> {
+    ) -> Self {
         let memories = sources.iter().map(|source: &B::DeviceMemoryBlock| async {
             (
                 source.len(),
@@ -44,14 +44,14 @@ where
         let memory_and_infos = join_all(memories).await;
         let lengths = memory_and_infos.iter().map(|(len, _)| *len);
         let lengths = FenwickTree::new(lengths);
-        let memories: Result<Vec<_>, B::BufferCreationError> = memory_and_infos
+        let memories: Vec<_> = memory_and_infos
             .into_iter()
             .map(|(_, memory)| memory)
             .collect();
-        Ok(Self {
+        Self {
             data: memories?,
             meta: Meta { lengths, id },
-        })
+        }
     }
 }
 

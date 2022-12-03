@@ -1,8 +1,7 @@
-use crate::backend::AllocOrMapFailure;
 use crate::typed::WasmTyVal;
 use crate::{impl_immutable_ptr, Backend, MainMemoryBlock, MemoryBlock};
 use std::mem::size_of;
-use wasmparser::{GlobalType, ValType};
+use wasmparser::GlobalType;
 
 pub struct DeviceImmutableGlobalsInstance<B>
 where
@@ -24,31 +23,24 @@ where
 }
 
 impl<B: Backend> HostImmutableGlobalsInstance<B> {
-    pub async fn new(backend: &B, id: usize) -> Result<Self, AllocOrMapFailure<B>> {
-        let immutables = backend.try_create_and_map_empty().await?;
-        Ok(Self {
+    pub async fn new(backend: &B, id: usize) -> Self {
+        let immutables = backend.create_and_map_empty().await?;
+        Self {
             immutables,
             id,
             head: 0,
-        })
+        }
     }
 
     /// Resizes the GPU buffers backing these elements by the specified amount.
     ///
     /// values_size is given in units of bytes, so an f64 is 8 bytes
-    pub async fn reserve(
-        self,
-        values_size: usize,
-    ) -> Result<Self, <B::MainMemoryBlock as MainMemoryBlock<B>>::ResizeError> {
-        let immutables = self.immutables.flush_extend(values_size).await?;
-        Ok(Self { immutables, ..self })
+    pub async fn reserve(&mut self, values_size: usize) {
+        self.immutables.extend(values_size).await
     }
 
     // Called through joint collection of mutables and immutables
-    pub(crate) async fn push_typed<V, T>(
-        &mut self,
-        v: V,
-    ) -> Result<GlobalImmutablePtr<B, T>, <B::MainMemoryBlock as MainMemoryBlock<B>>::SliceError>
+    pub(crate) async fn push_typed<V, T>(&mut self, v: V) -> GlobalImmutablePtr<B, T>
     where
         V: WasmTyVal,
     {
@@ -58,24 +50,21 @@ impl<B: Backend> HostImmutableGlobalsInstance<B> {
         let end = start + bytes.len();
 
         assert!(end <= self.immutables.len(), "index out of bounds");
-        let slice = self.immutables.as_slice_mut(start..end).await?;
+        let slice = self.immutables.as_slice_mut(start..end).await;
 
         slice.copy_from_slice(bytes.as_slice());
 
         self.head = end;
 
-        return Ok(GlobalImmutablePtr::new(start, self.id, V::VAL_TYPE));
+        return GlobalImmutablePtr::new(start, self.id, V::VAL_TYPE);
     }
 
-    pub async fn get_typed<T, V: WasmTyVal>(
-        &mut self,
-        ptr: &GlobalImmutablePtr<B, T>,
-    ) -> Result<V, <B::MainMemoryBlock as MainMemoryBlock<B>>::SliceError> {
+    pub async fn get_typed<T, V: WasmTyVal>(&mut self, ptr: &GlobalImmutablePtr<B, T>) -> V {
         let start = ptr.ptr;
         let end = start + size_of::<V>();
 
         assert!(end <= self.immutables.len(), "index out of bounds");
-        let slice = self.immutables.as_slice(start..end).await?;
+        let slice = self.immutables.as_slice(start..end).await;
 
         return Ok(V::try_from_bytes(slice).expect(
             format!(
@@ -87,24 +76,18 @@ impl<B: Backend> HostImmutableGlobalsInstance<B> {
         ));
     }
 
-    pub async fn unmap(
-        self,
-    ) -> Result<
-        DeviceImmutableGlobalsInstance<B>,
-        (<B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError, Self),
-    > {
+    pub async fn unmap(self) -> DeviceImmutableGlobalsInstance<B> {
         assert_eq!(
             self.head,
             self.immutables.len(),
             "space reserved but not used"
         );
 
-        match self.immutables.unmap().await {
-            Err((err, immutables)) => Err((err, Self { immutables, ..self })),
-            Ok(immutables) => Ok(DeviceImmutableGlobalsInstance {
-                immutables,
-                id: self.id,
-            }),
+        let immutables = self.immutables.unmap().await;
+
+        DeviceImmutableGlobalsInstance {
+            immutables,
+            id: self.id,
         }
     }
 }

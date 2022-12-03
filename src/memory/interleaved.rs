@@ -161,18 +161,18 @@ where
         backend: Arc<B>,
         source: &B::DeviceMemoryBlock,
         count: usize,
-    ) -> Result<Self, B::BufferCreationError> {
+    ) -> Self {
         assert!(count > 0, "Count must be non-zero");
 
         let len = source.len() * count;
-        let mut buffer = backend.try_create_device_memory_block(len, None)?;
+        let mut buffer = backend.create_device_memory_block(len, None);
 
         backend
             .get_utils()
             .interleave::<STRIDE>(source, &mut buffer, count)
             .await;
 
-        Ok(Self { buffer, count })
+        Self { buffer, count }
     }
 
     /// Take this interleaved buffer and move it to main memory

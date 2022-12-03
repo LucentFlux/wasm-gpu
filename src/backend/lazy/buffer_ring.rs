@@ -9,7 +9,6 @@ use std::error::Error;
 use std::fmt::Debug;
 use std::future::Future;
 use std::sync::Arc;
-use thiserror::Error;
 
 #[derive(Copy, Clone, Debug)]
 pub struct BufferRingConfig {
@@ -40,50 +39,31 @@ pub struct BufferRing<L: LazyBackend, Impl: BufferRingImpl<L>> {
 pub trait BufferRingImpl<L: LazyBackend>: Send + Sync {
     type InitialBuffer: Send;
     type FinalBuffer: Send;
-    type NewError: Error;
-    type CleanError: Error;
 
     /// Create a new buffer to be put in the pool
-    async fn create_buffer(&self) -> Result<Self::InitialBuffer, Self::NewError>;
+    async fn create_buffer(&self) -> Self::InitialBuffer;
     /// Perform whatever actions need to be done after a buffer has been used,
     /// before it is ready to be used again
-    async fn clean(&self, buff: Self::FinalBuffer)
-        -> Result<Self::InitialBuffer, Self::CleanError>;
-}
-
-#[derive(Error)]
-#[perfect_derive(Debug)]
-pub enum NewBufferError<L: LazyBackend, Impl: BufferRingImpl<L> + 'static> {
-    #[error("new buffer could not be allocated to be added to the pool")]
-    CreationError(Impl::NewError),
-    #[error("the pool was closed - this implies a panic somewhere else")]
-    PoolClosed,
+    async fn clean(&self, buff: Self::FinalBuffer) -> Self::InitialBuffer;
 }
 
 impl<L: LazyBackend, Impl: BufferRingImpl<L> + 'static> BufferRing<L, Impl> {
     /// Adds a new buffer directly to our pool of buffers
     /// Panics on failure to send or if the future doesn't resolve immediately
-    async fn add_buffer(&self) -> Result<(), NewBufferError<L, Impl>> {
-        let new_buffer = self
-            .implementation
-            .create_buffer()
-            .await
-            .map_err(|e| NewBufferError::CreationError(e))?;
+    async fn add_buffer(&self) {
+        let new_buffer = self.implementation.create_buffer().await;
 
         // Future should immediately resolve since we reserved space
         match self.buffer_return.try_send(new_buffer) {
-            Ok(()) => return Ok(()),
+            Ok(()) => return,
             Err(e) => match e {
                 TrySendError::Full(_) => panic!("the pool was full - this is a bug"),
-                TrySendError::Closed(_) => return Err(NewBufferError::PoolClosed),
+                TrySendError::Closed(_) => panic!("the pool was closed - this is probably a bug but probably also a hard one to fix"),
             },
         }
     }
 
-    pub async fn new_from(
-        implementation: Impl,
-        config: BufferRingConfig,
-    ) -> Result<Self, NewBufferError<L, Impl>> {
+    pub async fn new_from(implementation: Impl, config: BufferRingConfig) -> Self {
         let buffer_count = config.total_mem / L::CHUNK_SIZE;
         let (buffer_return, unused_buffers) = async_channel::bounded(buffer_count);
 
@@ -95,10 +75,10 @@ impl<L: LazyBackend, Impl: BufferRingImpl<L> + 'static> BufferRing<L, Impl> {
         };
 
         for _ in 0..buffer_count {
-            Self::add_buffer(&new_self).await?
+            Self::add_buffer(&new_self).await
         }
 
-        return Ok(new_self);
+        return new_self;
     }
 
     /// Gets a new buffer of size STAGING_BUFFER_SIZE. If map_mode is MapMode::Write, then the whole
@@ -139,21 +119,14 @@ impl<L: LazyBackend, Impl: BufferRingImpl<L> + 'static> BufferRing<L, Impl> {
         let buffer = self.pop().await;
 
         // If something went wrong, dump the buffer and gen a new one to try to recover
-        let res = match f(buffer).await {
+        let res: Result<(Res, Impl::FinalBuffer), Err> = match f(buffer).await {
             Ok((res, dirty)) => {
                 self.push(dirty);
                 Ok(res)
             }
             Err(e) => {
-                // Try to recover integrity of buffer pool
-                // panic on failure
-                self.add_buffer().await.expect(
-                    format!(
-                        "failed to create new buffer for pool integrity when recovering from: {}",
-                        e
-                    )
-                    .as_str(),
-                );
+                // Recover integrity of buffer pool
+                self.add_buffer().await;
                 Err(e)
             }
         };
