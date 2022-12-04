@@ -5,12 +5,10 @@
 pub mod interleaved;
 
 use crate::Backend;
-use std::error::Error;
 use std::fmt::Debug;
 
 use crate::typed::ToRange;
 use async_trait::async_trait;
-use futures::TryFutureExt;
 
 #[async_trait]
 pub trait MemoryBlock<B>: Debug
@@ -37,7 +35,7 @@ where
     async fn write(&mut self, data: &[u8], offset: usize) {
         let start = offset;
         let end = start + data.len();
-        let slice = self.as_slice_mut(start..end).await?;
+        let slice = self.as_slice_mut(start..end).await;
         slice.copy_from_slice(data);
     }
 

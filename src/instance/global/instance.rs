@@ -23,16 +23,16 @@ where
         mutables_source: &B::DeviceMemoryBlock,
         count: usize,
         id: usize, // Same as abstract
-    ) -> Result<Self, B::BufferCreationError> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             mutables: DeviceInterleavedBuffer::new_interleaved_from(
                 backend,
                 mutables_source,
                 count,
             )
-            .await?,
+            .await,
             id,
-        })
+        }
     }
 }
 

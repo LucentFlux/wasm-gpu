@@ -24,15 +24,14 @@ where
         sources: &Vec<B::DeviceMemoryBlock>,
         count: usize,
         id: usize,
-    ) -> Result<Self, B::BufferCreationError> {
+    ) -> Self {
         let tables = sources.iter().map(|source| {
             DeviceInterleavedBuffer::new_interleaved_from(backend.clone(), source, count)
         });
 
-        let tables: Result<Vec<_>, B::BufferCreationError> =
-            join_all(tables).await.into_iter().collect();
+        let data: Vec<_> = join_all(tables).await.into_iter().collect();
 
-        Ok(Self { data: tables?, id })
+        Self { data, id }
     }
 }
 

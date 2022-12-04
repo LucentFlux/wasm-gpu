@@ -8,7 +8,7 @@ use futures::FutureExt;
 use ouroboros::self_referencing;
 use std::cmp::min;
 use std::fmt::Debug;
-use wgpu::{BufferAddress, BufferAsyncError, BufferSlice, MapMode};
+use wgpu::{BufferAddress, BufferSlice, MapMode};
 
 async fn copy_max(
     backend: &WgpuBackendLazy,
@@ -97,8 +97,6 @@ impl DeviceOnlyBuffer {
 
 #[async_trait]
 impl lazy::DeviceOnlyBuffer<WgpuBackendLazy> for DeviceOnlyBuffer {
-    type CopyError = !;
-
     fn backend(&self) -> &WgpuBackendLazy {
         &self.backend
     }
@@ -107,15 +105,15 @@ impl lazy::DeviceOnlyBuffer<WgpuBackendLazy> for DeviceOnlyBuffer {
         self.buffer.as_ref().size() as usize
     }
 
-    async fn try_copy_from(&mut self, other: &Self) -> Result<(), Self::CopyError> {
-        Ok(copy_max(
+    async fn copy_from(&mut self, other: &Self) {
+        copy_max(
             &self.backend,
             other.buffer.as_ref(),
             0,
             self.buffer.as_ref(),
             0,
         )
-        .await)
+        .await
     }
 }
 
@@ -142,13 +140,11 @@ impl DeviceToMainBufferUnmapped {
 
 #[async_trait]
 impl lazy::DeviceToMainBufferUnmapped<WgpuBackendLazy> for DeviceToMainBufferUnmapped {
-    type Error = BufferAsyncError;
-
-    async fn try_copy_from_and_map(
+    async fn copy_from_and_map(
         self,
         src: &DeviceOnlyBuffer,
         offset: usize,
-    ) -> Result<DeviceToMainBufferMapped, Self::Error> {
+    ) -> DeviceToMainBufferMapped {
         copy_max(
             &self.backend,
             src.buffer.as_ref(),
@@ -158,12 +154,12 @@ impl lazy::DeviceToMainBufferUnmapped<WgpuBackendLazy> for DeviceToMainBufferUnm
         )
         .await;
 
-        DeviceToMainBufferMappedAsyncTryBuilder {
+        DeviceToMainBufferMappedAsyncSendBuilder {
             buffer: self.buffer,
             backend: self.backend,
             slice_builder: move |buffer| buffer.map_slice(.., MapMode::Read).boxed(),
         }
-        .try_build()
+        .build()
         .await
     }
 }
@@ -180,19 +176,16 @@ pub struct DeviceToMainBufferMapped {
 
 #[async_trait]
 impl lazy::DeviceToMainBufferMapped<WgpuBackendLazy> for DeviceToMainBufferMapped {
-    type Error = !;
     type Dirty = DeviceToMainBufferToUnmap;
 
-    fn try_view_and_finish<Res, F: FnOnce(&[u8]) -> Res>(
-        self,
-        callback: F,
-    ) -> Result<(Res, Self::Dirty), Self::Error> {
-        let res = self.with_slice(move |slice| {
-            let slice = slice.get_mapped_range().as_ref();
+    fn view_and_finish<Res, F: FnOnce(&[u8]) -> Res>(self, callback: F) -> (Res, Self::Dirty) {
+        let res = self.with_slice(move |slice: &BufferSlice| {
+            let mapped = slice.get_mapped_range();
+            let slice = mapped.as_ref();
             callback(slice)
         });
 
-        return Ok((res, DeviceToMainBufferToUnmap(self)));
+        return (res, DeviceToMainBufferToUnmap(self));
     }
 }
 
@@ -201,17 +194,15 @@ pub struct DeviceToMainBufferToUnmap(DeviceToMainBufferMapped);
 
 #[async_trait]
 impl lazy::DeviceToMainBufferDirty<WgpuBackendLazy> for DeviceToMainBufferToUnmap {
-    type Error = !;
-
-    async fn try_clean(self) -> Result<DeviceToMainBufferUnmapped, Self::Error> {
+    async fn clean(self) -> DeviceToMainBufferUnmapped {
         let heads = self.0.into_heads();
 
         heads.buffer.as_ref().unmap();
 
-        Ok(DeviceToMainBufferUnmapped {
+        DeviceToMainBufferUnmapped {
             buffer: heads.buffer,
             backend: heads.backend,
-        })
+        }
     }
 }
 
@@ -248,18 +239,16 @@ impl MainToDeviceBufferMapped {
 
 #[async_trait]
 impl lazy::MainToDeviceBufferMapped<WgpuBackendLazy> for MainToDeviceBufferMapped {
-    type Error = !;
-
-    fn try_write_and_unmap(self, val: &[u8]) -> Result<MainToDeviceBufferUnmapped, Self::Error> {
+    fn write_and_unmap(self, val: &[u8]) -> MainToDeviceBufferUnmapped {
         self.with_slice(|slice| slice.get_mapped_range_mut().copy_from_slice(val));
 
         let heads = self.into_heads();
         heads.buffer.as_ref().unmap();
 
-        Ok(MainToDeviceBufferUnmapped {
+        MainToDeviceBufferUnmapped {
             backend: heads.backend,
             buffer: heads.buffer,
-        })
+        }
     }
 }
 
@@ -271,14 +260,9 @@ pub struct MainToDeviceBufferUnmapped {
 
 #[async_trait]
 impl lazy::MainToDeviceBufferUnmapped<WgpuBackendLazy> for MainToDeviceBufferUnmapped {
-    type Error = !;
     type Dirty = MainToDeviceBufferToMap;
 
-    async fn try_copy_to_and_finish(
-        self,
-        dst: &DeviceOnlyBuffer,
-        offset: usize,
-    ) -> Result<Self::Dirty, Self::Error> {
+    async fn copy_to_and_finish(self, dst: &DeviceOnlyBuffer, offset: usize) -> Self::Dirty {
         copy_max(
             &self.backend,
             self.buffer.as_ref(),
@@ -288,7 +272,7 @@ impl lazy::MainToDeviceBufferUnmapped<WgpuBackendLazy> for MainToDeviceBufferUnm
         )
         .await;
 
-        Ok(MainToDeviceBufferToMap(self))
+        MainToDeviceBufferToMap(self)
     }
 }
 
@@ -297,15 +281,13 @@ pub struct MainToDeviceBufferToMap(MainToDeviceBufferUnmapped);
 
 #[async_trait]
 impl MainToDeviceBufferDirty<WgpuBackendLazy> for MainToDeviceBufferToMap {
-    type Error = !;
-
-    async fn try_clean(self) -> Result<MainToDeviceBufferMapped, Self::Error> {
-        MainToDeviceBufferMappedAsyncTryBuilder {
+    async fn clean(self) -> MainToDeviceBufferMapped {
+        MainToDeviceBufferMappedAsyncSendBuilder {
             buffer: self.0.buffer,
             backend: self.0.backend,
-            slice_builder: move |buffer| buffer.map_slice(.., MapMode::Write),
+            slice_builder: move |buffer| buffer.map_slice(.., MapMode::Write).boxed(),
         }
-        .try_build()
+        .build()
         .await
     }
 }

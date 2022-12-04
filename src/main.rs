@@ -7,28 +7,18 @@ async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     // vulkano setup
-    let instance = wgpu::Instance::new(wgpu::Backends::all());
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        })
-        .await
-        .unwrap();
-    let (device, queue) = adapter
-        .request_device(&Default::default(), None)
-        .await
-        .unwrap();
     let conf = wasp::WgpuBackendConfig {
         buffer_ring: wasp::BufferRingConfig {
             // Minimal memory footprint for tests
             total_mem: 2 * 1024,
         },
+        ..Default::default()
     };
 
     // wasm setup
-    let spirv_backend = wasp::WgpuBackend::new(conf, None).await;
+    let spirv_backend = wasp::WgpuBackend::new(conf, None)
+        .await
+        .expect("failed to get wgpu instance");
 
     let engine = wasp::Engine::new(spirv_backend, Config::default());
     let wat = r#"

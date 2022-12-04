@@ -61,9 +61,9 @@ macro_rules! impl_get {
         let buffer_bounds = (bounds.start * period)..(bounds.end * period);
 
         if buffer_bounds.end > s_len {
-            Ok($ret(vec![]))
+            $ret(vec![])
         } else {
-            let mut s = $self.buffer.$as_slice(buffer_bounds).await?;
+            let mut s = $self.buffer.$as_slice(buffer_bounds).await;
 
             assert_eq!(s.len() % period, 0);
 
@@ -81,7 +81,7 @@ macro_rules! impl_get {
                 }
             }
 
-            Ok($ret(interpretations))
+            $ret(interpretations)
         }
     }};
 }
@@ -91,31 +91,19 @@ where
     B: Backend,
 {
     /// Take this interleaved buffer and move it to device memory
-    pub async fn unmap(
-        self,
-    ) -> Result<
-        DeviceInterleavedBuffer<B, STRIDE>,
-        (<B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError, Self),
-    > {
-        match self.buffer.unmap().await {
-            Err((err, buffer)) => Err((err, Self { buffer, ..self })),
-            Ok(buffer) => Ok(DeviceInterleavedBuffer {
-                buffer,
-                count: self.count,
-            }),
+    pub async fn unmap(self) -> DeviceInterleavedBuffer<B, STRIDE> {
+        let buffer = self.buffer.unmap().await;
+
+        DeviceInterleavedBuffer {
+            buffer,
+            count: self.count,
         }
     }
 
     /// Takes a memory block and interprets it as an interleaved buffer.
     ///
     /// Bounds gives the bounds for each abstract interleaved buffer, in units of `STRIDE * 4` bytes
-    pub async fn get<S: ToRange<usize> + Send>(
-        &self,
-        bounds: S,
-    ) -> Result<
-        InterleavedBufferView,
-        <<B as Backend>::MainMemoryBlock as MainMemoryBlock<B>>::SliceError,
-    > {
+    pub async fn get<S: ToRange<usize> + Send>(&self, bounds: S) -> InterleavedBufferView {
         return impl_get!(InterleavedBufferView,
             with self on bounds
             using as_slice
@@ -129,10 +117,7 @@ where
     pub async fn get_mut<S: ToRange<usize> + Send>(
         &mut self,
         bounds: S,
-    ) -> Result<
-        InterleavedBufferViewMut,
-        <<B as Backend>::MainMemoryBlock as MainMemoryBlock<B>>::SliceError,
-    > {
+    ) -> InterleavedBufferViewMut {
         return impl_get!(InterleavedBufferViewMut,
             with self on bounds
             using as_slice_mut
@@ -176,21 +161,12 @@ where
     }
 
     /// Take this interleaved buffer and move it to main memory
-    pub async fn map(
-        self,
-    ) -> Result<
-        HostInterleavedBuffer<B, STRIDE>,
-        (
-            <B::DeviceMemoryBlock as DeviceMemoryBlock<B>>::MapError,
-            Self,
-        ),
-    > {
-        match self.buffer.map().await {
-            Err((err, buffer)) => Err((err, Self { buffer, ..self })),
-            Ok(buffer) => Ok(HostInterleavedBuffer {
-                buffer,
-                count: self.count,
-            }),
+    pub async fn map(self) -> HostInterleavedBuffer<B, STRIDE> {
+        let buffer = self.buffer.map().await;
+
+        HostInterleavedBuffer {
+            buffer,
+            count: self.count,
         }
     }
 }

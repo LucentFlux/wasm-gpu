@@ -4,7 +4,7 @@ mod async_queue;
 mod compute_utils;
 mod memory;
 
-use crate::backend::lazy::{Lazy, LazyBackend, NewBuffersError};
+use crate::backend::lazy::{Lazy, LazyBackend};
 use crate::wgpu::async_device::AsyncDevice;
 use crate::wgpu::async_queue::AsyncQueue;
 use crate::wgpu::compute_utils::WgpuComputeUtils;
@@ -57,7 +57,6 @@ pub struct WgpuBackendLazy {
 }
 
 impl LazyBackend for WgpuBackendLazy {
-    type BufferCreationError = !;
     const CHUNK_SIZE: usize = CHUNK_SIZE;
     type Utils = WgpuComputeUtils;
     type DeviceToMainBufferMapped = memory::DeviceToMainBufferMapped;
@@ -70,28 +69,24 @@ impl LazyBackend for WgpuBackendLazy {
         self.utils.as_ref()
     }
 
-    fn try_create_device_only_memory_block(
+    fn create_device_only_memory_block(
         &self,
         size: usize,
         initial_data: Option<&[u8]>,
-    ) -> Result<Self::DeviceOnlyBuffer, Self::BufferCreationError> {
-        Ok(memory::DeviceOnlyBuffer::make_new(
-            self.clone(),
-            size,
-            initial_data,
-        ))
+    ) -> Self::DeviceOnlyBuffer {
+        if let Some(data) = initial_data {
+            assert_eq!(data.len(), size, "supplied initial data must match size")
+        }
+
+        memory::DeviceOnlyBuffer::make_new(self.clone(), size, initial_data)
     }
 
-    fn try_create_device_to_main_memory(
-        &self,
-    ) -> Result<Self::DeviceToMainBufferUnmapped, Self::BufferCreationError> {
-        Ok(memory::DeviceToMainBufferUnmapped::make_new(self.clone()))
+    fn create_device_to_main_memory(&self) -> Self::DeviceToMainBufferUnmapped {
+        memory::DeviceToMainBufferUnmapped::make_new(self.clone())
     }
 
-    fn try_create_main_to_device_memory(
-        &self,
-    ) -> Result<Self::MainToDeviceBufferMapped, Self::BufferCreationError> {
-        Ok(memory::MainToDeviceBufferMapped::make_new(self.clone()))
+    fn create_main_to_device_memory(&self) -> Self::MainToDeviceBufferMapped {
+        memory::MainToDeviceBufferMapped::make_new(self.clone())
     }
 }
 
@@ -101,14 +96,22 @@ pub struct WgpuBackendConfig {
     pub allowed_features: WgpuUsefulFeatures,
 }
 
+impl Default for WgpuBackendConfig {
+    fn default() -> Self {
+        Self {
+            buffer_ring: Default::default(),
+            backends: wgpu::Backends::all(),
+            allowed_features: Default::default(),
+        }
+    }
+}
+
 pub type WgpuBackend = Lazy<WgpuBackendLazy>;
 
 #[derive(Error, Debug)]
 pub enum WgpuBackendError {
     #[error("no suitable device could be found")]
     SuitableDeviceNotFound,
-    #[error("no suitable device could be found")]
-    RingBufferError(NewBuffersError<WgpuBackendLazy>),
 }
 
 impl WgpuBackend {
@@ -151,7 +154,7 @@ impl WgpuBackend {
 
         let utils = Arc::new(WgpuComputeUtils::new(device.clone()));
 
-        let res = Lazy::try_new_from(
+        let res = Lazy::new_from(
             WgpuBackendLazy {
                 features,
                 device,
@@ -160,8 +163,7 @@ impl WgpuBackend {
             },
             cfg.buffer_ring,
         )
-        .await
-        .map_err(WgpuBackendError::RingBufferError)?;
+        .await;
 
         return Ok(res);
     }

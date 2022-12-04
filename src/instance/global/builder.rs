@@ -9,11 +9,9 @@ use crate::instance::global::instance::UnmappedMutableGlobalInstanceSet;
 use crate::module::module_environ::Global;
 use crate::typed::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal};
 use crate::{impl_abstract_ptr, Backend, MainMemoryBlock, MemoryBlock};
-use perfect_derive::perfect_derive;
 use std::future::join;
 use std::mem::size_of;
 use std::sync::Arc;
-use thiserror::Error;
 use wasmparser::{GlobalType, Operator, ValType};
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
@@ -33,18 +31,15 @@ impl<B: Backend> UnmappedGlobalInstanceBuilder<B> {
         &self,
         backend: Arc<B>,
         count: usize,
-    ) -> Result<
-        (
-            UnmappedMutableGlobalInstanceSet<B>,
-            Arc<DeviceImmutableGlobalsInstance<B>>,
-        ),
-        B::BufferCreationError,
-    > {
+    ) -> (
+        UnmappedMutableGlobalInstanceSet<B>,
+        Arc<DeviceImmutableGlobalsInstance<B>>,
+    ) {
         let mutables =
             UnmappedMutableGlobalInstanceSet::new(backend, &self.mutable_values, count, self.id)
                 .await;
 
-        return Ok((mutables?, self.immutable_values.clone()));
+        return (mutables, self.immutable_values.clone());
     }
 }
 
@@ -68,8 +63,8 @@ impl<B: Backend> MappedGlobalInstanceBuilder<B> {
         let (immutable_values, mutable_values) =
             join!(immutable_values_fut, mutable_values_fut).await;
         Self {
-            immutable_values: immutable_values?,
-            mutable_values: mutable_values?,
+            immutable_values,
+            mutable_values,
             mutable_values_head: 0,
             id,
         }
@@ -125,9 +120,7 @@ impl<B: Backend> MappedGlobalInstanceBuilder<B> {
             }
         }
 
-        let res = stack.pop().ok_or(InterpretError::MalformedExpression(
-            "constexpr had no result".to_string(),
-        ))?;
+        let res = stack.pop().expect("expression did not result in a value");
 
         return res;
     }
@@ -243,12 +236,7 @@ impl<B: Backend> MappedGlobalInstanceBuilder<B> {
         return self.push(val, global.ty.mutable).await;
     }
 
-    pub async fn unmap(
-        self,
-    ) -> Result<
-        UnmappedGlobalInstanceBuilder<B>,
-        <B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError,
-    > {
+    pub async fn unmap(self) -> UnmappedGlobalInstanceBuilder<B> {
         assert_eq!(
             self.mutable_values_head,
             self.mutable_values.len(),
@@ -258,11 +246,11 @@ impl<B: Backend> MappedGlobalInstanceBuilder<B> {
         let immutable_values = self.immutable_values.unmap().await;
         let mutable_values = self.mutable_values.unmap().await;
 
-        Ok(UnmappedGlobalInstanceBuilder {
+        UnmappedGlobalInstanceBuilder {
             immutable_values: Arc::new(immutable_values),
             mutable_values,
             id: self.id,
-        })
+        }
     }
 }
 

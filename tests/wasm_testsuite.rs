@@ -18,8 +18,11 @@ pub async fn get_backend() -> wasp::WgpuBackend {
             // Minimal memory footprint for tests
             total_mem: 2 * 1024,
         },
+        ..Default::default()
     };
-    return wasp::WgpuBackend::new(conf, None).await;
+    return wasp::WgpuBackend::new(conf, None)
+        .await
+        .expect("failed to get backend");
 }
 
 #[inline(never)] // Reduce code bloat to avoid OOM sigkill

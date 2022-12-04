@@ -24,7 +24,7 @@ fn min_alignment_gt(size: usize, alignment: usize) -> usize {
 
 #[must_use]
 #[perfect_derive(Debug)]
-struct LazyBufferMemoryBlock<L: LazyBackend> {
+pub struct LazyBufferMemoryBlock<L: LazyBackend> {
     backend: Lazy<L>,
     pub buffer: L::DeviceOnlyBuffer, // Stored on the GPU
     visible_len: usize,

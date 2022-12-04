@@ -2,6 +2,7 @@ use crate::typed::WasmTyVal;
 use crate::{impl_immutable_ptr, Backend, MainMemoryBlock, MemoryBlock};
 use std::mem::size_of;
 use wasmparser::GlobalType;
+use wasmparser::ValType;
 
 pub struct DeviceImmutableGlobalsInstance<B>
 where
@@ -24,7 +25,7 @@ where
 
 impl<B: Backend> HostImmutableGlobalsInstance<B> {
     pub async fn new(backend: &B, id: usize) -> Self {
-        let immutables = backend.create_and_map_empty().await?;
+        let immutables = backend.create_and_map_empty().await;
         Self {
             immutables,
             id,
@@ -66,14 +67,14 @@ impl<B: Backend> HostImmutableGlobalsInstance<B> {
         assert!(end <= self.immutables.len(), "index out of bounds");
         let slice = self.immutables.as_slice(start..end).await;
 
-        return Ok(V::try_from_bytes(slice).expect(
+        return V::try_from_bytes(slice).expect(
             format!(
                 "could not parse memory - invalid state for {}: {:?}",
                 std::any::type_name::<V>(),
                 slice
             )
             .as_str(),
-        ));
+        );
     }
 
     pub async fn unmap(self) -> DeviceImmutableGlobalsInstance<B> {

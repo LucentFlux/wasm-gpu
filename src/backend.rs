@@ -1,12 +1,12 @@
 pub mod lazy;
 
+use crate::memory::DeviceMemoryBlock;
 use async_trait::async_trait;
-use std::error::Error;
 use std::fmt::Debug;
 
 #[async_trait]
 pub trait Backend: Sized + Debug + Sync {
-    type DeviceMemoryBlock: crate::memory::DeviceMemoryBlock<Self> + Send;
+    type DeviceMemoryBlock: DeviceMemoryBlock<Self> + Send;
     type MainMemoryBlock: crate::memory::MainMemoryBlock<Self> + Send;
     type Utils: crate::compute_utils::Utils<Self>;
 

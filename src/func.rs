@@ -231,7 +231,7 @@ mod tests {
 
         let engine = wasp::Engine::new(backend, Config::default());
 
-        let mut stores_builder = StoreSetBuilder::new(&engine).await.unwrap();
+        let mut stores_builder = StoreSetBuilder::new(&engine).await;
         let mut data_string = "".to_owned();
         for byte in expected_data.iter() {
             data_string += format!("\\{:02x?}", byte).as_str();
@@ -285,7 +285,7 @@ mod tests {
             .get_typed_func::<(), ()>("read")
             .expect("could not get hello function from all instances");
 
-        let stores_builder = stores_builder.complete().await.unwrap();
+        let stores_builder = stores_builder.complete().await;
 
         let mut stores = stores_builder.build(0..10).await;
 

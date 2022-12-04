@@ -5,9 +5,7 @@ use crate::backend::lazy::LazyBackend;
 use async_channel::{Receiver, Sender, TrySendError};
 use async_trait::async_trait;
 use perfect_derive::perfect_derive;
-use std::error::Error;
 use std::fmt::Debug;
-use std::future::Future;
 use std::sync::Arc;
 
 #[derive(Copy, Clone, Debug)]
@@ -102,35 +100,5 @@ impl<L: LazyBackend, Impl: BufferRingImpl<L> + 'static> BufferRing<L, Impl> {
                 .await
                 .expect("buffer ring stream closed on sending");
         });
-    }
-
-    /// Tries to do something with a buffer in this. If the thing fails, tries to recover by dumping
-    /// the old buffer and creating a new one.
-    ///
-    /// Panics if the function errored and we were unable to create a new buffer for this pool
-    async fn try_with_buffer_async<Fut, Res, Err>(
-        &self,
-        f: impl FnOnce(Impl::InitialBuffer) -> Fut,
-    ) -> Result<Res, Err>
-    where
-        Fut: Future<Output = Result<(Res, Impl::FinalBuffer), Err>>,
-        Err: Error,
-    {
-        let buffer = self.pop().await;
-
-        // If something went wrong, dump the buffer and gen a new one to try to recover
-        let res: Result<(Res, Impl::FinalBuffer), Err> = match f(buffer).await {
-            Ok((res, dirty)) => {
-                self.push(dirty);
-                Ok(res)
-            }
-            Err(e) => {
-                // Recover integrity of buffer pool
-                self.add_buffer().await;
-                Err(e)
-            }
-        };
-
-        return res;
     }
 }

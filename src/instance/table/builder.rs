@@ -17,10 +17,7 @@ where
 }
 
 impl<B: Backend> UnmappedTableInstanceSetBuilder<B> {
-    pub async fn build(
-        &self,
-        count: usize,
-    ) -> Result<UnmappedTableInstanceSet<B>, B::BufferCreationError> {
+    pub async fn build(&self, count: usize) -> UnmappedTableInstanceSet<B> {
         UnmappedTableInstanceSet::new(self.backend.clone(), &self.tables, count, self.id).await
     }
 }
@@ -46,14 +43,10 @@ where
         }
     }
 
-    pub async fn add_table<T>(
-        &mut self,
-        plan: &TableType,
-    ) -> Result<AbstractTablePtr<B, T>, AllocOrMapFailure<B>> {
+    pub async fn add_table<T>(&mut self, plan: &TableType) -> AbstractTablePtr<B, T> {
         let ptr = self.tables.len();
-        self.tables
-            .push(self.backend.try_create_and_map_empty().await?);
-        return Ok(AbstractTablePtr::new(ptr, self.id, plan.clone()));
+        self.tables.push(self.backend.create_and_map_empty().await);
+        return AbstractTablePtr::new(ptr, self.id, plan.clone());
     }
 
     pub async fn initialize<T>(
@@ -61,7 +54,7 @@ where
         ptr: &AbstractTablePtr<B, T>,
         data: &[u8],
         offset: usize,
-    ) -> Result<(), <B::MainMemoryBlock as MainMemoryBlock<B>>::SliceError> {
+    ) {
         assert_eq!(ptr.id, self.id);
 
         self.tables
@@ -71,23 +64,18 @@ where
             .await
     }
 
-    pub async fn unmap(
-        self,
-    ) -> Result<
-        UnmappedTableInstanceSetBuilder<B>,
-        <B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError,
-    > {
+    pub async fn unmap(self) -> UnmappedTableInstanceSetBuilder<B> {
         let tables = self.tables.into_iter().map(|t| t.unmap());
-        let tables: Result<Vec<_>, _> = futures::future::join_all(tables)
+        let tables = futures::future::join_all(tables)
             .await
             .into_iter()
             .collect();
 
-        Ok(UnmappedTableInstanceSetBuilder {
+        UnmappedTableInstanceSetBuilder {
             id: self.id,
             backend: self.backend,
-            tables: tables.map_err(|(e, _)| e)?,
-        })
+            tables,
+        }
     }
 }
 

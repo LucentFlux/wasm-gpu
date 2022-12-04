@@ -12,7 +12,6 @@ use crate::backend::lazy::memory::{MappedLazyBuffer, UnmappedLazyBuffer};
 use crate::Backend;
 use async_trait::async_trait;
 use perfect_derive::perfect_derive;
-use std::error::Error;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -110,14 +109,15 @@ impl<L: LazyBackend> Lazy<L> {
         let backend = Arc::new(lazy);
 
         Self {
-            upload_buffers: Arc::new(WriteBufferRing::new(backend.clone(), cfg)),
-            download_buffers: Arc::new(ReadBufferRing::new(backend.clone(), cfg)),
+            upload_buffers: Arc::new(WriteBufferRing::new(backend.clone(), cfg).await),
+            download_buffers: Arc::new(ReadBufferRing::new(backend.clone(), cfg).await),
             lazy: backend,
         }
     }
 }
 
 // Map the lazy backend API on to the generic backend API
+#[async_trait]
 impl<L: LazyBackend> Backend for Lazy<L> {
     type DeviceMemoryBlock = UnmappedLazyBuffer<L>;
     type MainMemoryBlock = MappedLazyBuffer<L>;

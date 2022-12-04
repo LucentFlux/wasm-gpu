@@ -44,12 +44,12 @@ where
         let memory_and_infos = join_all(memories).await;
         let lengths = memory_and_infos.iter().map(|(len, _)| *len);
         let lengths = FenwickTree::new(lengths);
-        let memories: Vec<_> = memory_and_infos
+        let data: Vec<_> = memory_and_infos
             .into_iter()
             .map(|(_, memory)| memory)
             .collect();
         Self {
-            data: memories?,
+            data,
             meta: Meta { lengths, id },
         }
     }
@@ -73,11 +73,7 @@ impl<'a, B: Backend> MemoryView<'a, B> {
     pub async fn get(&self, index: usize) -> u8 {
         let chunk = index / STRIDE;
         let offset = index % STRIDE;
-        let view: InterleavedBufferView = self
-            .buf
-            .get(chunk..=chunk)
-            .await
-            .expect("memory index chunk out of bounds");
+        let view: InterleavedBufferView = self.buf.get(chunk..=chunk).await;
 
         let vec = view
             .get(self.index)
@@ -100,11 +96,7 @@ impl<'a, B: Backend> MemoryViewMut<'a, B> {
     pub async fn get_mut(&'a mut self, index: usize) -> &'a mut u8 {
         let chunk = index / STRIDE;
         let offset = index % STRIDE;
-        let view: InterleavedBufferViewMut = self
-            .buf
-            .get_mut(chunk..=chunk)
-            .await
-            .expect("memory index chunk out of bounds");
+        let view: InterleavedBufferViewMut = self.buf.get_mut(chunk..=chunk).await;
 
         return view
             .take(self.index)

@@ -19,7 +19,7 @@ impl<L: LazyBackend> BufferRingImpl<L> for WriteImpl<L> {
     type FinalBuffer = <L::MainToDeviceBufferUnmapped as MainToDeviceBufferUnmapped<L>>::Dirty;
 
     async fn create_buffer(&self) -> Self::InitialBuffer {
-        self.backend.try_create_main_to_device_memory()
+        self.backend.create_main_to_device_memory()
     }
 
     async fn clean(&self, buff: Self::FinalBuffer) -> Self::InitialBuffer {

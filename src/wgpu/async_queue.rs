@@ -16,12 +16,12 @@ impl AsyncQueue {
         }
     }
 
-    pub async fn submit<I: IntoIterator<Item = CommandBuffer>>(&self, command_buffers: I) {
+    pub async fn submit<I: IntoIterator<Item = CommandBuffer> + Send>(&self, command_buffers: I) {
         let queue_ref = self.queue.clone();
         self.device
             .do_async(move |callback| {
                 queue_ref.submit(command_buffers);
-                queue_ref.on_submitted_work_done(callback);
+                queue_ref.on_submitted_work_done(|| callback(()));
             })
             .await
     }

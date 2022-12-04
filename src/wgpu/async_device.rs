@@ -18,10 +18,9 @@ impl AsyncDevice {
         }
     }
 
-    pub async fn do_async<Callback, F, R>(&self, f: F) -> R
+    pub async fn do_async<F, R>(&self, f: F) -> R
     where
-        Callback: FnOnce(R) -> (),
-        F: FnOnce(Callback) -> (),
+        F: FnOnce(Box<dyn FnOnce(R) + Send>),
         R: Send + 'static,
     {
         let future = WgpuFuture::new(self.device.clone());
@@ -63,9 +62,9 @@ impl<T: Send + 'static> WgpuFuture<T> {
     }
 
     /// Generates a callback function for this future that wakes the waker and sets the shared state
-    pub fn callback(&self) -> impl FnOnce(T) -> () {
+    pub fn callback(&self) -> Box<dyn FnOnce(T) + Send> {
         let shared_state = self.state.clone();
-        return move |res: T| {
+        return Box::new(move |res: T| {
             let mut lock = shared_state
                 .lock()
                 .expect("wgpu future was poisoned on complete");
@@ -75,7 +74,7 @@ impl<T: Send + 'static> WgpuFuture<T> {
             if let Some(waker) = shared_state.waker.take() {
                 waker.wake()
             }
-        };
+        });
     }
 }
 

@@ -1,4 +1,3 @@
-use crate::backend::AllocOrMapFailure;
 use crate::externs::NamedExtern;
 use crate::instance::data::{MappedDataInstance, UnmappedDataInstance};
 use crate::instance::element::{MappedElementInstance, UnmappedElementInstance};
@@ -14,7 +13,7 @@ use crate::instance::table::builder::{
 };
 use crate::instance::ModuleInstanceSet;
 use crate::store_set::DeviceStoreSetData;
-use crate::{Backend, DeviceMemoryBlock, DeviceStoreSet, Engine, Func, MainMemoryBlock, Module};
+use crate::{Backend, DeviceStoreSet, Engine, Func, Module};
 use std::future::join;
 use std::sync::Arc;
 
@@ -39,26 +38,24 @@ impl<B, T> StoreSetBuilder<B, T>
 where
     B: Backend,
 {
-    pub async fn new(engine: &Engine<B>) -> Result<Self, AllocOrMapFailure<B>> {
+    pub async fn new(engine: &Engine<B>) -> Self {
         let backend = engine.backend();
 
         let globals_fut = MappedGlobalInstanceBuilder::new(backend.as_ref());
-        let elements_fut = MappedElementInstance::new(backend.as_ref()).await?;
-        let datas_fut = UnmappedDataInstance::new(backend.as_ref())
-            .map_err(AllocOrMapFailure::AllocError)?
-            .map();
+        let elements_fut = MappedElementInstance::new(backend.as_ref());
+        let datas_fut = MappedDataInstance::new(backend.as_ref());
 
         let (globals, elements, datas) = join!(globals_fut, elements_fut, datas_fut).await;
 
-        Ok(Self {
+        Self {
             functions: FuncsInstance::new(),
             tables: MappedTableInstanceSetBuilder::new(engine.backend()),
             memories: MappedMemoryInstanceSetBuilder::new(engine.backend()),
-            globals: globals?,
-            elements: elements.map_err(|(e, _)| AllocOrMapFailure::MapError(e))?,
-            datas: datas.map_err(|(e, _)| AllocOrMapFailure::MapError(e))?,
+            globals,
+            elements,
+            datas,
             backend,
-        })
+        }
     }
 
     pub fn backend(&self) -> Arc<B> {
@@ -111,7 +108,7 @@ where
             .await;
 
         // Datas
-        let data_ptrs = module.initialize_datas(&mut self.datas).await?;
+        let data_ptrs = module.initialize_datas(&mut self.datas).await;
 
         // Memories
         let memory_ptrs = module
@@ -171,10 +168,7 @@ where
     }
 
     /// Takes this builder and makes it immutable, allowing instances to be created from it
-    pub async fn complete(
-        self,
-    ) -> Result<CompletedBuilder<B, T>, <B::MainMemoryBlock as MainMemoryBlock<B>>::UnmapError>
-    {
+    pub async fn complete(self) -> CompletedBuilder<B, T> {
         let Self {
             backend,
             tables,
@@ -186,11 +180,11 @@ where
         } = self;
 
         let globals = globals.unmap().await;
-        let elements = elements.unmap().await?;
-        let datas = datas.unmap().await?;
+        let elements = elements.unmap().await;
+        let datas = datas.unmap().await;
         let tables = tables.unmap().await;
         let memories = memories.unmap().await;
-        Ok(CompletedBuilder {
+        CompletedBuilder {
             backend,
             tables,
             memories,
@@ -198,7 +192,7 @@ where
             elements: Arc::new(elements),
             datas: Arc::new(datas),
             functions: Arc::new(functions),
-        })
+        }
     }
 }
 
