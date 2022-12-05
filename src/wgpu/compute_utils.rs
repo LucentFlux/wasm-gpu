@@ -1,4 +1,5 @@
 use crate::compute_utils::{Utils, WGSLSources};
+use crate::lazy_small_map::LazySmallMap;
 use crate::wgpu::async_device::AsyncDevice;
 use crate::{Backend, WgpuBackend};
 use async_trait::async_trait;
@@ -17,7 +18,11 @@ impl ModuleInfo {
             .as_ref()
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Label::from(name),
-                source: wgpu::ShaderSource::Wgsl(Cow::from(source)),
+                source: wgpu::ShaderSource::Glsl {
+                    shader: Cow::from(source),
+                    stage: naga::ShaderStage::Compute,
+                    defines: Default::default(),
+                },
             });
         let pipeline = device
             .as_ref()
@@ -38,18 +43,16 @@ impl ModuleInfo {
 
 #[derive(Debug)]
 pub struct WgpuComputeUtils {
+    interleave_modules: LazySmallMap<usize, ModuleInfo>,
     device: AsyncDevice,
-
-    interleave: ModuleInfo,
 }
 
 impl WgpuComputeUtils {
     pub fn new(device: AsyncDevice) -> Self {
-        let sources = WGSLSources::get();
-
-        let interleave = ModuleInfo::new(sources.interleave.as_ref(), &device, "Interleave");
-
-        Self { device, interleave }
+        Self {
+            device,
+            interleave_modules: LazySmallMap::empty(),
+        }
     }
 }
 
@@ -61,12 +64,17 @@ impl Utils<WgpuBackend> for WgpuComputeUtils {
         dst: &mut <WgpuBackend as Backend>::DeviceMemoryBlock,
         count: usize,
     ) {
+        let module = self.interleave_modules.get_or_create(STRIDE, || {
+            let source = WGSLSources::get_interleave_source::<{ STRIDE }>();
+            ModuleInfo::new(source.as_str(), &self.device, "Interleave")
+        });
+
         let bind_group = self
             .device
             .as_ref()
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
-                layout: &self.interleave.bind_group_layout,
+                layout: &module.bind_group_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: src.data.buffer.raw_buffer().as_ref().as_entire_binding(),

@@ -21,6 +21,7 @@ mod store_set;
 mod typed;
 mod wgpu;
 
+mod lazy_small_map;
 #[cfg(test)]
 pub mod tests_lib;
 

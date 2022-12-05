@@ -1,28 +1,51 @@
 use crate::Backend;
 use async_trait::async_trait;
 use std::borrow::Cow;
+use std::collections::HashMap;
+
+/// Crudely pre-processed GLSL. Please make sure this doesn't become turing complete! If it does,
+/// please spend some time making a nice preprocessor language for GLSL and not just a bodged mess
+/// - Joe O'C :)
+struct PreGLSL {
+    source: Cow<'static, str>,
+}
+
+impl PreGLSL {
+    fn process(&self, replacements: Vec<(String, String)>) -> String {
+        // Just plain string to string replacement
+        let mut res = self.source.to_string();
+
+        for (from, to) in replacements {
+            res = res.replace(from.as_str(), to.as_str());
+        }
+
+        res
+    }
+}
 
 macro_rules! impl_sources {
-    ($( ($path:expr, $name:ident), )*) => {
+    ($( ($path:expr, $name:ident, { $($const_name:ident : $const_type:ty),* }), )*) => {
         $(
             #[allow(non_upper_case_globals)]
             const $name: &'static str = include_str!($path);
         )*
 
-        pub struct WGSLSources {
-            $(
-                pub $name: Cow<'static, str>,
-            )*
-        }
+        pub struct WGSLSources;
 
         impl WGSLSources {
-            pub fn get() -> Self {
-                Self {
-                    $(
-                        $name: Cow::Borrowed($name),
-                    )*
+            $(
+            paste::paste! {
+                pub fn [< get_ $name _source >] <$(const $const_name : $const_type),*>() -> String {
+                    let unprocessed = PreGLSL { source: Cow::Borrowed($name) };
+
+                    unprocessed.process(vec![
+                        $(
+                            (concat!("CONST_", stringify!($const_name)).to_string(), $const_name .to_string())
+                        ),*
+                    ])
                 }
             }
+            )*
         }
     };
 }
@@ -30,7 +53,9 @@ macro_rules! impl_sources {
 #[macro_export]
 macro_rules! enum_sources {
     ($callback:ident) => {
-        $callback!(("compute_utils/interleave.glsl", interleave),);
+        $callback!(("compute_utils/interleave.preglsl", interleave, {
+            STRIDE: usize
+        }),);
     };
 }
 
