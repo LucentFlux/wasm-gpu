@@ -6,7 +6,11 @@
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/test_gen/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/lib-hal/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/lib-wasm-spirv/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
+      <excludeFolder url="file://$MODULE_DIR$/lib-hal/target" />
+      <excludeFolder url="file://$MODULE_DIR$/lib-wasm-spirv/target" />
       <excludeFolder url="file://$MODULE_DIR$/test_gen/target" />
     </content>
     <orderEntry type="inheritedJdk" />

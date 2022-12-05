@@ -1,6 +1,7 @@
+use crate::impl_concrete_ptr;
 use crate::instance::global::builder::AbstractGlobalMutablePtr;
-use crate::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
-use crate::{impl_concrete_ptr, Backend};
+use lib_hal::backend::Backend;
+use lib_hal::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
 use std::sync::Arc;
 
 const STRIDE: usize = 1; // 1 * u32

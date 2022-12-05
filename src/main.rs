@@ -1,14 +1,14 @@
-#![feature(async_closure)]
-
-use wasm_spirv::{imports, wasp, Caller, Config, PanicOnAny};
+use lib_hal::backend::lazy::buffer_ring::BufferRingConfig;
+use lib_hal::wgpu::{WgpuBackend, WgpuBackendConfig};
+use lib_wasm_spirv::{imports, wasp, Caller, Config, PanicOnAny};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     // vulkano setup
-    let conf = wasp::WgpuBackendConfig {
-        buffer_ring: wasp::BufferRingConfig {
+    let conf = WgpuBackendConfig {
+        buffer_ring: BufferRingConfig {
             // Minimal memory footprint for tests
             total_mem: 2 * 1024,
         },
@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // wasm setup
-    let spirv_backend = wasp::WgpuBackend::new(conf, None)
+    let spirv_backend = WgpuBackend::new(conf, None)
         .await
         .expect("failed to get wgpu instance");
 

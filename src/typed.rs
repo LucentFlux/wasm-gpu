@@ -1,10 +1,6 @@
 use crate::for_each_function_signature;
 use anyhow::Error;
 use std::fmt::{Display, Formatter};
-use std::ops::RangeInclusive;
-use std::ops::RangeTo;
-use std::ops::RangeToInclusive;
-use std::ops::{Add, Bound, Range, RangeBounds, RangeFrom, RangeFull};
 use wasmparser::ValType;
 
 pub const fn wasm_ty_bytes(ty: ValType) -> usize {
@@ -346,48 +342,3 @@ macro_rules! impl_vec_rec {
 }
 
 for_each_function_signature!(impl_vec_rec);
-
-pub trait ToRange<Value>: RangeBounds<Value> {
-    fn half_open(&self, max: Value) -> Range<Value>;
-}
-
-macro_rules! impl_to_range {
-    ($ty:ty => $ty2:ty) => {
-        impl ToRange<$ty> for $ty2 {
-            fn half_open(&self, max: $ty) -> Range<$ty> {
-                let start = match <Self as RangeBounds<$ty>>::start_bound(self) {
-                    Bound::Included(b) => b.clone(),
-                    Bound::Excluded(b) => b.clone().add(1),
-                    Bound::Unbounded => 0,
-                };
-
-                let end = match <Self as RangeBounds<$ty>>::end_bound(self) {
-                    Bound::Included(b) => b.clone().add(1),
-                    Bound::Excluded(b) => b.clone(),
-                    Bound::Unbounded => max,
-                };
-
-                return Range { start, end };
-            }
-        }
-    };
-
-    ($($ty:ty);*) => {
-        $(
-            impl_to_range!($ty => RangeFull);
-            impl_to_range!($ty => (Bound<$ty>, Bound<$ty>));
-            impl_to_range!($ty => Range<&$ty>);
-            impl_to_range!($ty => Range<$ty>);
-            impl_to_range!($ty => RangeFrom<&$ty>);
-            impl_to_range!($ty => RangeFrom<$ty>);
-            impl_to_range!($ty => RangeInclusive<&$ty>);
-            impl_to_range!($ty => RangeInclusive<$ty>);
-            impl_to_range!($ty => RangeTo<&$ty>);
-            impl_to_range!($ty => RangeTo<$ty>);
-            impl_to_range!($ty => RangeToInclusive<&$ty>);
-            impl_to_range!($ty => RangeToInclusive<$ty>);
-        )*
-    }
-}
-
-impl_to_range!(u8; u16; u32; u64; u128; i8; i16; i32; i64; i128; usize; isize);

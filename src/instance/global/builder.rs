@@ -1,4 +1,5 @@
 use crate::atomic_counter::AtomicCounter;
+use crate::impl_abstract_ptr;
 use crate::instance::func::UntypedFuncPtr;
 use crate::instance::global::immutable::GlobalImmutablePtr;
 use crate::instance::global::immutable::{
@@ -8,7 +9,8 @@ use crate::instance::global::instance::GlobalMutablePtr;
 use crate::instance::global::instance::UnmappedMutableGlobalInstanceSet;
 use crate::module::module_environ::Global;
 use crate::typed::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal};
-use crate::{impl_abstract_ptr, Backend, MainMemoryBlock, MemoryBlock};
+use lib_hal::backend::Backend;
+use lib_hal::memory::{MainMemoryBlock, MemoryBlock};
 use std::future::join;
 use std::mem::size_of;
 use std::sync::Arc;

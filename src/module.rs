@@ -12,9 +12,10 @@ use crate::module::module_environ::{
     ImportTypeRef, ModuleEnviron, ModuleExport, ParsedElementKind, ParsedModuleUnit,
 };
 use crate::typed::{wasm_ty_bytes, FuncRef, Val};
-use crate::{Backend, Engine};
+use crate::Engine;
 use anyhow::{anyhow, Context, Error};
 use itertools::Itertools;
+use lib_hal::backend::Backend;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::slice::Iter;

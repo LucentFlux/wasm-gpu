@@ -1,7 +1,8 @@
 use crate::atomic_counter::AtomicCounter;
+use crate::impl_abstract_ptr;
 use crate::instance::memory::instance::{MemoryPtr, UnmappedMemoryInstanceSet};
-use crate::memory::limits_match;
-use crate::{impl_abstract_ptr, Backend, MainMemoryBlock};
+use lib_hal::backend::Backend;
+use lib_hal::memory::{limits_match, MainMemoryBlock};
 use std::sync::Arc;
 use wasmparser::MemoryType;
 

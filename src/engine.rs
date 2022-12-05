@@ -1,4 +1,4 @@
-use crate::Backend;
+use lib_hal::backend::Backend;
 use std::sync::Arc;
 use wasmparser::WasmFeatures;
 

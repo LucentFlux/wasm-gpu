@@ -3,8 +3,8 @@ use crate::instance::global::builder::AbstractGlobalPtr;
 use crate::instance::memory::builder::AbstractMemoryPtr;
 use crate::instance::table::builder::AbstractTablePtr;
 use crate::typed::WasmTyVec;
-use crate::Backend;
 use itertools::Itertools;
+use lib_hal::backend::Backend;
 use wasmparser::{FuncType, GlobalType, TableType};
 
 pub struct NamedExtern<B, T>

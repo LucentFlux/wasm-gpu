@@ -1,5 +1,7 @@
+use lib_hal::backend::lazy::buffer_ring::BufferRingConfig;
+use lib_hal::wgpu::{WgpuBackend, WgpuBackendConfig};
+use lib_wasm_spirv::{wasp, Config};
 use tokio::runtime::Runtime;
-use wasm_spirv::{wasp, BufferRingConfig, Config};
 use wast::lexer::Lexer;
 use wast::token::Span;
 use wast::{
@@ -12,15 +14,15 @@ fn gen_check(path: &str, test_index: usize) {
     check(path, test_index)
 }
 
-pub async fn get_backend() -> wasp::WgpuBackend {
-    let conf = wasp::WgpuBackendConfig {
+pub async fn get_backend() -> WgpuBackend {
+    let conf = WgpuBackendConfig {
         buffer_ring: BufferRingConfig {
             // Minimal memory footprint for tests
             total_mem: 2 * 1024,
         },
         ..Default::default()
     };
-    return wasp::WgpuBackend::new(conf, None)
+    return WgpuBackend::new(conf, None)
         .await
         .expect("failed to get backend");
 }

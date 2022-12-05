@@ -2,6 +2,8 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/lib-hal" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/lib-wasm-spirv" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/tests/testsuite" vcs="Git" />
   </component>
 </project>

@@ -1,7 +1,9 @@
 use crate::atomic_counter::AtomicCounter;
+use crate::impl_abstract_ptr;
 use crate::instance::table::instance::{TablePtr, UnmappedTableInstanceSet};
-use crate::memory::limits_match;
-use crate::{impl_abstract_ptr, Backend, MainMemoryBlock};
+use lib_hal::backend::Backend;
+use lib_hal::memory::limits_match;
+use lib_hal::memory::MainMemoryBlock;
 use std::sync::Arc;
 use wasmparser::TableType;
 

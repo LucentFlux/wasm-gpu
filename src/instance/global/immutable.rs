@@ -1,5 +1,7 @@
+use crate::impl_immutable_ptr;
 use crate::typed::WasmTyVal;
-use crate::{impl_immutable_ptr, Backend, MainMemoryBlock, MemoryBlock};
+use lib_hal::backend::Backend;
+use lib_hal::memory::{MainMemoryBlock, MemoryBlock};
 use std::mem::size_of;
 use wasmparser::GlobalType;
 use wasmparser::ValType;

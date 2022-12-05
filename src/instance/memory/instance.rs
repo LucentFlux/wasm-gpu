@@ -1,12 +1,13 @@
 use crate::fenwick::FenwickTree;
+use crate::impl_concrete_ptr;
 use crate::instance::memory::builder::AbstractMemoryPtr;
-use crate::memory::interleaved::{
-    DeviceInterleavedBuffer, HostInterleavedBuffer, InterleavedBufferView, InterleavedBufferViewMut,
-};
-use crate::Backend;
-use crate::{impl_concrete_ptr, MemoryBlock};
 use futures::future::join_all;
 use itertools::Itertools;
+use lib_hal::backend::Backend;
+use lib_hal::memory::interleaved::{
+    DeviceInterleavedBuffer, HostInterleavedBuffer, InterleavedBufferView, InterleavedBufferViewMut,
+};
+use lib_hal::memory::MemoryBlock;
 use std::sync::Arc;
 
 const STRIDE: usize = 4; // 4 * u32

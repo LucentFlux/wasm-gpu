@@ -1,3 +1,6 @@
 [submodule "tests/testsuite"]
 	path = tests/testsuite
 	url = https://github.com/WebAssembly/testsuite.git
+[submodule "lib-hal"]
+	path = lib-hal
+	url = https://github.com/LucentFlux/lib-hal.git

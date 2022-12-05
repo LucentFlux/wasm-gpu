@@ -1,11 +1,12 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::session::Session;
 use crate::typed::{FuncRef, Val, WasmTyVec};
-use crate::{impl_immutable_ptr, Backend, DeviceStoreSet, Func};
+use crate::{impl_immutable_ptr, DeviceStoreSet, Func};
 use anyhow::anyhow;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use itertools::Itertools;
+use lib_hal::backend::Backend;
 use wasmparser::{FuncType, Type};
 
 static COUNTER: AtomicCounter = AtomicCounter::new();

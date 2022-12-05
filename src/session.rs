@@ -1,7 +1,8 @@
 use crate::instance::func::UntypedFuncPtr;
 use crate::typed::Val;
-use crate::{Backend, DeviceStoreSet};
+use crate::DeviceStoreSet;
 use futures::future::BoxFuture;
+use lib_hal::backend::Backend;
 use std::sync::Arc;
 
 pub struct SessionProperties {

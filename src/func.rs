@@ -1,6 +1,7 @@
 pub mod func_ir;
 
 use futures::future::{BoxFuture, FutureExt};
+use lib_hal::backend::Backend;
 use std::marker::PhantomData;
 use wasmparser::{FuncType, ValType};
 
@@ -10,7 +11,7 @@ use crate::instance::ptrs::AbstractPtr;
 use crate::instance::ModuleInstanceSet;
 use crate::store_set::HostStoreSet;
 use crate::typed::{Val, WasmTyVec};
-use crate::{Backend, StoreSetBuilder};
+use crate::StoreSetBuilder;
 
 pub(crate) struct ExportFunction {
     signature: String, // TODO: make this something more reasonable

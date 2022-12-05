@@ -13,7 +13,8 @@ use crate::instance::table::builder::{
 };
 use crate::instance::ModuleInstanceSet;
 use crate::store_set::DeviceStoreSetData;
-use crate::{Backend, DeviceStoreSet, Engine, Func, Module};
+use crate::{DeviceStoreSet, Engine, Func, Module};
+use lib_hal::backend::Backend;
 use std::future::join;
 use std::sync::Arc;
 

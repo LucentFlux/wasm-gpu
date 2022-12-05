@@ -1,23 +1,11 @@
 [package]
-name = "wasm-spirv"
+name = "exe"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
-description = "Transpiles WASM to SPIRV"
-homepage = "https://github.com/Solid-Flux/WASM-SPIRV/"
-repository = "https://github.com/Solid-Flux/WASM-SPIRV/"
-readme = "README.md"
-keywords = []
-categories = []
-include = [
-    "/Cargo.toml",
-    "/LICENSE",
-    "/README.md",
-    "/src/**",
-    "/tests/**",
-]
 
 [dependencies]
+lf-hal = {path="lib-hal"}
+
 wat = "1.0"
 thiserror = "1.0"
 anyhow = "1.0"
@@ -30,17 +18,5 @@ elsa = "1.7"
 futures = "0.3"
 paste = "1.0"
 fenwick = "2.0"
-async-channel = "1.7"
 ouroboros = "0.15"
-wgpu = { version = "0.14", features = ["glsl"] }
-naga = "0.10"
 perfect-derive = "0.1"
-lazy-init = "0.5"
-
-# Tmp dependencies
-tokio = { version = "1", features = ["full"] }
-
-[dev-dependencies]
-wast = "44.0"
-wasm-spirv-test-gen = {path = "test_gen"}
-rand = "0.8"

@@ -1,7 +1,9 @@
 use crate::atomic_counter::AtomicCounter;
+use crate::impl_immutable_ptr;
 use crate::typed::{FuncRef, WasmTyVal, WasmTyVec};
-use crate::{impl_immutable_ptr, Backend, MainMemoryBlock, MemoryBlock};
 use itertools::Itertools;
+use lib_hal::backend::Backend;
+use lib_hal::memory::{MainMemoryBlock, MemoryBlock};
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
 

@@ -1,8 +1,8 @@
 use crate::impl_concrete_ptr;
 use crate::instance::table::builder::AbstractTablePtr;
-use crate::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
-use crate::Backend;
 use futures::future::join_all;
+use lib_hal::backend::Backend;
+use lib_hal::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
 use std::sync::Arc;
 
 const STRIDE: usize = 1; // FuncRef is 1 x u32
