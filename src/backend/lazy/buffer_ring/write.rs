@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use perfect_derive::perfect_derive;
 use std::sync::Arc;
 
-pub type WriteBufferRing<L: LazyBackend> = BufferRing<L, WriteImpl<L>>;
+pub type WriteBufferRing<L> = BufferRing<L, WriteImpl<L>>;
 
 #[perfect_derive(Debug)]
 pub struct WriteImpl<L: LazyBackend> {

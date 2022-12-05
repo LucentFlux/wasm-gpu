@@ -119,7 +119,7 @@ impl WgpuBackend {
         cfg: WgpuBackendConfig,
         adapter_ranking: Option<for<'a> fn(&'a wgpu::Adapter) -> usize>,
     ) -> Result<Self, WgpuBackendError> {
-        let adapter_ranking = adapter_ranking.unwrap_or(|adapter| 0);
+        let adapter_ranking = adapter_ranking.unwrap_or(|_| 0);
 
         let instance = wgpu::Instance::new(cfg.backends);
         let adapter = instance

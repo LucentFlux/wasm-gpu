@@ -48,5 +48,5 @@ where
     pub owned: O,
 }
 
-pub type DeviceStoreSet<B: Backend, T> = StoreSet<B, T, DeviceStoreSetData<B>>;
-pub type HostStoreSet<B: Backend, T> = StoreSet<B, T, HostStoreSetData<B>>;
+pub type DeviceStoreSet<B, T> = StoreSet<B, T, DeviceStoreSetData<B>>;
+pub type HostStoreSet<B, T> = StoreSet<B, T, HostStoreSetData<B>>;

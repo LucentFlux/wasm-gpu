@@ -159,7 +159,7 @@ impl HostMemoryBlob {
         Layout::array::<u8>(len).unwrap()
     }
 
-    fn new(mut len: usize) -> Self {
+    fn new(len: usize) -> Self {
         let layout = Self::new_layout(len);
         let ptr = unsafe { alloc::alloc(layout) };
         Self { ptr, len, layout }
@@ -515,8 +515,6 @@ mod tests {
     use crate::memory::DeviceMemoryBlock;
     use crate::tests_lib::{gen_test_data, get_backend};
     use crate::{Backend, MainMemoryBlock, MemoryBlock};
-    use paste::paste;
-    use tokio::runtime::Runtime;
 
     macro_rules! backend_buffer_tests {
         ($($value:expr),* $(,)?) => {

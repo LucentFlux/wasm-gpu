@@ -210,8 +210,6 @@ mod tests {
     use crate::tests_lib::{gen_test_memory_string, get_backend};
     use crate::wasp;
     use crate::{block_test, imports, Config, PanicOnAny};
-    use paste::paste;
-    use tokio::runtime::Runtime;
 
     macro_rules! backend_buffer_tests {
         ($($value:expr),* $(,)?) => {
@@ -251,7 +249,6 @@ mod tests {
             &mut stores_builder,
             move |caller: Caller<_, u32>, _param: i32| {
                 let expected_data = expected_data.clone();
-                let size = size.clone();
                 Box::pin(async move {
                     let mem = caller
                         .get_memory("mem")

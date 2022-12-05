@@ -57,11 +57,12 @@ where
     async fn map(self) -> B::MainMemoryBlock;
     async fn copy_from(&mut self, other: &B::DeviceMemoryBlock);
 
-    /// Resizes by reallocation and copying
+    /// Resizes by (at worst) reallocation and copying
     async fn resize(&mut self, new_len: usize) {
         let backend = self.backend();
         let mut new_buffer = backend.create_device_memory_block(new_len, None);
-        new_buffer.copy_from(&self);
+        let fut = new_buffer.copy_from(&self);
+        fut.await;
 
         *self = new_buffer;
     }

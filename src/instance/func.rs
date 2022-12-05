@@ -101,10 +101,10 @@ impl<B: Backend, T> UntypedFuncPtr<B, T> {
     /// # Panics
     /// This function panics if:
     ///  - the function pointer does not refer to the store_set set
-    fn call_all<'a>(
+    pub fn call_all<'a>(
         &self,
         stores: &'a mut DeviceStoreSet<B, T>,
-        mut args_fn: impl FnMut(&T) -> Vec<Val>,
+        args_fn: impl FnMut(&T) -> Vec<Val>,
     ) -> BoxFuture<'a, Vec<anyhow::Result<Vec<Val>>>> {
         let args = stores.data.iter().map(args_fn).collect();
 
@@ -132,7 +132,7 @@ impl<B: Backend, T, Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<B, T, Pa
     pub fn call_all<'a>(
         &self,
         stores: &'a mut DeviceStoreSet<B, T>,
-        mut args_fn: impl FnMut(&T) -> Params,
+        args_fn: impl FnMut(&T) -> Params,
     ) -> BoxFuture<'a, Vec<anyhow::Result<Results>>> {
         let args = stores
             .data

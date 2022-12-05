@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use perfect_derive::perfect_derive;
 use std::sync::Arc;
 
-pub type ReadBufferRing<L: LazyBackend> = BufferRing<L, ReadImpl<L>>;
+pub type ReadBufferRing<L> = BufferRing<L, ReadImpl<L>>;
 
 #[perfect_derive(Debug)]
 pub struct ReadImpl<B: LazyBackend> {

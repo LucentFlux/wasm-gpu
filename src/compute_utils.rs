@@ -1,7 +1,6 @@
 use crate::Backend;
 use async_trait::async_trait;
 use std::borrow::Cow;
-use std::collections::HashMap;
 
 /// Crudely pre-processed GLSL. Please make sure this doesn't become turing complete! If it does,
 /// please spend some time making a nice preprocessor language for GLSL and not just a bodged mess
