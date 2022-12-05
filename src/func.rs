@@ -207,7 +207,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests_lib::{gen_test_data, get_backend};
+    use crate::tests_lib::{gen_test_memory_string, get_backend};
     use crate::wasp;
     use crate::{block_test, imports, Config, PanicOnAny};
     use paste::paste;
@@ -221,32 +221,29 @@ mod tests {
         };
     }
 
-    backend_buffer_tests!(0, 1, 7, 8, 9, 1023, 1024, 1025, 2047, 2048, 2049);
+    backend_buffer_tests!(0, 1, 7, 8, 9, 1023, 1024, 1025, 4095, 4096, 4097);
 
     #[inline(never)]
     async fn test_host_func_memory_read(size: usize) {
         let backend = get_backend().await;
 
-        let expected_data = gen_test_data(size, (size * 65) as u32);
+        let (expected_data, data_str) = gen_test_memory_string(size, 203571423u32);
 
         let engine = wasp::Engine::new(backend, Config::default());
 
         let mut stores_builder = StoreSetBuilder::new(&engine).await;
-        let mut data_string = "".to_owned();
-        for byte in expected_data.iter() {
-            data_string += format!("\\{:02x?}", byte).as_str();
-        }
-        let wat = r#"
+
+        let wat = format!(
+            r#"
             (module
                 (import "host" "read" (func $host_read))
                 (export "read" (func $host_read))
 
-                (memory (export "mem") (data ""#
-            .to_owned()
-            + data_string.as_str()
-            + r#""))
+                (memory (export "mem") (data "{}"))
             )
-        "#;
+        "#,
+            data_str
+        );
         let wat = wat.into_bytes();
         let module = wasp::Module::new(&engine, &wat, "testmod1").unwrap();
 

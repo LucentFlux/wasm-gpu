@@ -1,5 +1,5 @@
 use crate::atomic_counter::AtomicCounter;
-use crate::{impl_immutable_ptr, Backend, MainMemoryBlock, MemoryBlock};
+use crate::{impl_immutable_ptr, Backend, DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
 
@@ -9,6 +9,13 @@ where
 {
     datas: B::DeviceMemoryBlock,
     id: usize,
+}
+
+impl<B: Backend> UnmappedDataInstance<B> {
+    /// Used for unit tests. Consumes and gets the contained bytes
+    pub(crate) async fn read_all(self) -> Vec<u8> {
+        self.datas.map().await.as_slice(..).await.to_vec()
+    }
 }
 
 pub struct MappedDataInstance<B>

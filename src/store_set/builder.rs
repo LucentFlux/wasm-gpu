@@ -239,3 +239,57 @@ impl<B: Backend, T> CompletedBuilder<B, T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::tests_lib::{gen_test_memory_string, get_backend};
+    use crate::{block_test, imports, wasp, Config, StoreSetBuilder};
+    use anyhow::anyhow;
+    use std::sync::Arc;
+    macro_rules! data_tests {
+        ($($value:expr),* $(,)?) => {
+        $(
+            block_test!($value, test_data_buffer_populated_correctly);
+        )*
+        };
+    }
+
+    data_tests!(0, 1, 7, 8, 9, 1023, 1024, 1025, 4095, 4096, 4097);
+
+    #[inline(never)]
+    async fn test_data_buffer_populated_correctly(size: usize) {
+        let backend = get_backend().await;
+
+        let (expected_data, data_str) = gen_test_memory_string(size, 84637322u32);
+
+        let engine = wasp::Engine::new(backend, Config::default());
+
+        let mut stores_builder = StoreSetBuilder::<_, ()>::new(&engine).await;
+
+        let wat = format!(
+            r#"
+            (module
+                (data "{}")
+            )
+        "#,
+            data_str
+        );
+        let wat = wat.into_bytes();
+        let module = wasp::Module::new(&engine, &wat, "testmod1").unwrap();
+
+        let _instance = stores_builder
+            .instantiate_module(&module, imports! {})
+            .await
+            .expect("could not instantiate all modules");
+
+        let set = stores_builder.complete().await;
+
+        let buffers = Arc::try_unwrap(set.datas)
+            .map_err(|_| {
+                anyhow!("multiple references existed to buffer that should probably be owned")
+            })
+            .unwrap();
+
+        assert_eq!(buffers.read_all().await, expected_data)
+    }
+}

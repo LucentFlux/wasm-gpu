@@ -519,7 +519,7 @@ mod tests {
     use tokio::runtime::Runtime;
 
     macro_rules! backend_buffer_tests {
-        ($($value:expr,)*) => {
+        ($($value:expr),* $(,)?) => {
         $(
             block_test!($value, test_get_unmapped_len);
             block_test!($value, test_get_mapped_len);
@@ -530,11 +530,7 @@ mod tests {
         };
     }
 
-    backend_buffer_tests!(
-        0, 1, 7, 8, 9, 1023, 1024, 1025, 1048575, //(1024 * 1024 - 1),
-        1048576, //(1024 * 1024),
-        1048577, //(1024 * 1024 + 1),
-    );
+    backend_buffer_tests!(0, 1, 7, 8, 9, 511, 512, 513, 1023, 1024, 1025, 4095, 4096, 4097);
 
     #[inline(never)]
     async fn test_get_unmapped_len(size: usize) {
