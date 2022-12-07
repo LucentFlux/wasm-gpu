@@ -1,4 +1,4 @@
-use lib_hal::backend::Backend;
+use lf_hal::backend::Backend;
 use std::sync::Arc;
 use wasmparser::WasmFeatures;
 

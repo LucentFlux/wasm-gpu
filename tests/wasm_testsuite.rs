@@ -1,7 +1,7 @@
-use lib_hal::backend::lazy::buffer_ring::BufferRingConfig;
-use lib_hal::wgpu::{WgpuBackend, WgpuBackendConfig};
-use lib_wasm_spirv::{wasp, Config};
+use lf_hal::wgpu::{WgpuBackend, WgpuBackendConfig};
+use lf_hal::BufferRingConfig;
 use tokio::runtime::Runtime;
+use wasm_spirv::{wasp, Config};
 use wast::lexer::Lexer;
 use wast::token::Span;
 use wast::{

@@ -1,8 +1,8 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::impl_abstract_ptr;
 use crate::instance::memory::instance::{MemoryPtr, UnmappedMemoryInstanceSet};
-use lib_hal::backend::Backend;
-use lib_hal::memory::{limits_match, MainMemoryBlock};
+use lf_hal::backend::Backend;
+use lf_hal::memory::{limits_match, MainMemoryBlock};
 use std::sync::Arc;
 use wasmparser::MemoryType;
 
@@ -19,7 +19,7 @@ where
 
 impl<B: Backend> UnmappedMemoryInstanceSetBuilder<B> {
     pub async fn build(&self, count: usize) -> UnmappedMemoryInstanceSet<B> {
-        UnmappedMemoryInstanceSet::new(self.backend.clone(), &self.memories, count, self.id).await
+        UnmappedMemoryInstanceSet::new(&self.memories, count, self.id).await
     }
 }
 

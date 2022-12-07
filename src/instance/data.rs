@@ -1,7 +1,7 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::impl_immutable_ptr;
-use lib_hal::backend::Backend;
-use lib_hal::memory::{DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
+use lf_hal::backend::Backend;
+use lf_hal::memory::{DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
 

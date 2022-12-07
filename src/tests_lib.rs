@@ -1,20 +1,19 @@
 #![cfg(test)]
 
-use crate::backend::lazy::buffer_ring::BufferRingConfig;
-use crate::wasp;
+use lf_hal::wgpu::{WgpuBackend, WgpuBackendConfig};
+use lf_hal::BufferRingConfig;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
-pub async fn get_backend() -> wasp::WgpuBackend {
-    let conf = wasp::WgpuBackendConfig {
+pub async fn get_backend() -> WgpuBackend {
+    let conf = WgpuBackendConfig {
         buffer_ring: BufferRingConfig {
             // Minimal memory footprint for tests
             total_mem: 2 * 1024,
         },
-        backends: wgpu::Backends::all(),
-        allowed_features: Default::default(),
+        ..Default::default()
     };
-    return wasp::WgpuBackend::new(conf, None)
+    return WgpuBackend::new(conf, None)
         .await
         .expect("couldn't create default test backend");
 }

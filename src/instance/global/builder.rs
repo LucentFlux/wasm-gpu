@@ -9,8 +9,8 @@ use crate::instance::global::instance::GlobalMutablePtr;
 use crate::instance::global::instance::UnmappedMutableGlobalInstanceSet;
 use crate::module::module_environ::Global;
 use crate::typed::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal};
-use lib_hal::backend::Backend;
-use lib_hal::memory::{MainMemoryBlock, MemoryBlock};
+use lf_hal::backend::Backend;
+use lf_hal::memory::{MainMemoryBlock, MemoryBlock};
 use std::future::join;
 use std::mem::size_of;
 use std::sync::Arc;
@@ -38,8 +38,7 @@ impl<B: Backend> UnmappedGlobalInstanceBuilder<B> {
         Arc<DeviceImmutableGlobalsInstance<B>>,
     ) {
         let mutables =
-            UnmappedMutableGlobalInstanceSet::new(backend, &self.mutable_values, count, self.id)
-                .await;
+            UnmappedMutableGlobalInstanceSet::new(&self.mutable_values, count, self.id).await;
 
         return (mutables, self.immutable_values.clone());
     }

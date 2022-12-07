@@ -1,7 +1,7 @@
 pub mod func_ir;
 
 use futures::future::{BoxFuture, FutureExt};
-use lib_hal::backend::Backend;
+use lf_hal::backend::Backend;
 use std::marker::PhantomData;
 use wasmparser::{FuncType, ValType};
 

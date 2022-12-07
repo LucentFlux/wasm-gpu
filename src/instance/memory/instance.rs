@@ -3,11 +3,11 @@ use crate::impl_concrete_ptr;
 use crate::instance::memory::builder::AbstractMemoryPtr;
 use futures::future::join_all;
 use itertools::Itertools;
-use lib_hal::backend::Backend;
-use lib_hal::memory::interleaved::{
+use lf_hal::backend::Backend;
+use lf_hal::memory::interleaved::{
     DeviceInterleavedBuffer, HostInterleavedBuffer, InterleavedBufferView, InterleavedBufferViewMut,
 };
-use lib_hal::memory::MemoryBlock;
+use lf_hal::memory::{DeviceMemoryBlock, MemoryBlock};
 use std::sync::Arc;
 
 const STRIDE: usize = 4; // 4 * u32
@@ -30,17 +30,9 @@ impl<B> UnmappedMemoryInstanceSet<B>
 where
     B: Backend,
 {
-    pub(crate) async fn new(
-        backend: Arc<B>,
-        sources: &Vec<B::DeviceMemoryBlock>,
-        count: usize,
-        id: usize,
-    ) -> Self {
+    pub(crate) async fn new(sources: &Vec<B::DeviceMemoryBlock>, count: usize, id: usize) -> Self {
         let memories = sources.iter().map(|source: &B::DeviceMemoryBlock| async {
-            (
-                source.len(),
-                DeviceInterleavedBuffer::new_interleaved_from(backend.clone(), source, count).await,
-            )
+            (source.len(), source.interleave(count).await)
         });
         let memory_and_infos = join_all(memories).await;
         let lengths = memory_and_infos.iter().map(|(len, _)| *len);

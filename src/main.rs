@@ -1,6 +1,6 @@
-use lib_hal::backend::lazy::buffer_ring::BufferRingConfig;
-use lib_hal::wgpu::{WgpuBackend, WgpuBackendConfig};
-use lib_wasm_spirv::{imports, wasp, Caller, Config, PanicOnAny};
+use lf_hal::wgpu::{WgpuBackend, WgpuBackendConfig};
+use lf_hal::BufferRingConfig;
+use wasm_spirv::{imports, wasp, Caller, Config, PanicOnAny};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

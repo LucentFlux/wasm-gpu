@@ -1,7 +1,8 @@
 use crate::impl_concrete_ptr;
 use crate::instance::global::builder::AbstractGlobalMutablePtr;
-use lib_hal::backend::Backend;
-use lib_hal::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
+use lf_hal::backend::Backend;
+use lf_hal::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
+use lf_hal::memory::DeviceMemoryBlock;
 use std::sync::Arc;
 
 const STRIDE: usize = 1; // 1 * u32
@@ -20,18 +21,12 @@ where
     B: Backend,
 {
     pub(crate) async fn new(
-        backend: Arc<B>,
         mutables_source: &B::DeviceMemoryBlock,
         count: usize,
         id: usize, // Same as abstract
     ) -> Self {
         Self {
-            mutables: DeviceInterleavedBuffer::new_interleaved_from(
-                backend,
-                mutables_source,
-                count,
-            )
-            .await,
+            mutables: mutables_source.interleave(count).await,
             id,
         }
     }

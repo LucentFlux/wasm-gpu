@@ -1,8 +1,9 @@
 use crate::impl_concrete_ptr;
 use crate::instance::table::builder::AbstractTablePtr;
 use futures::future::join_all;
-use lib_hal::backend::Backend;
-use lib_hal::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
+use lf_hal::backend::Backend;
+use lf_hal::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
+use lf_hal::memory::DeviceMemoryBlock;
 use std::sync::Arc;
 
 const STRIDE: usize = 1; // FuncRef is 1 x u32
@@ -19,15 +20,10 @@ impl<B> UnmappedTableInstanceSet<B>
 where
     B: Backend,
 {
-    pub(crate) async fn new(
-        backend: Arc<B>,
-        sources: &Vec<B::DeviceMemoryBlock>,
-        count: usize,
-        id: usize,
-    ) -> Self {
-        let tables = sources.iter().map(|source| {
-            DeviceInterleavedBuffer::new_interleaved_from(backend.clone(), source, count)
-        });
+    pub(crate) async fn new(sources: &Vec<B::DeviceMemoryBlock>, count: usize, id: usize) -> Self {
+        let tables = sources
+            .iter()
+            .map(|source: &B::DeviceMemoryBlock| source.interleave(count));
 
         let data: Vec<_> = join_all(tables).await.into_iter().collect();
 

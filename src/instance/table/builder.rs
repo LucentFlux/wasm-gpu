@@ -1,9 +1,9 @@
 use crate::atomic_counter::AtomicCounter;
 use crate::impl_abstract_ptr;
 use crate::instance::table::instance::{TablePtr, UnmappedTableInstanceSet};
-use lib_hal::backend::Backend;
-use lib_hal::memory::limits_match;
-use lib_hal::memory::MainMemoryBlock;
+use lf_hal::backend::Backend;
+use lf_hal::memory::limits_match;
+use lf_hal::memory::MainMemoryBlock;
 use std::sync::Arc;
 use wasmparser::TableType;
 
@@ -20,7 +20,7 @@ where
 
 impl<B: Backend> UnmappedTableInstanceSetBuilder<B> {
     pub async fn build(&self, count: usize) -> UnmappedTableInstanceSet<B> {
-        UnmappedTableInstanceSet::new(self.backend.clone(), &self.tables, count, self.id).await
+        UnmappedTableInstanceSet::new(&self.tables, count, self.id).await
     }
 }
 

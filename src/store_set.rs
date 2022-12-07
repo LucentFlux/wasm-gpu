@@ -10,7 +10,7 @@ use crate::instance::global::instance::{
 };
 use crate::instance::memory::instance::{MappedMemoryInstanceSet, UnmappedMemoryInstanceSet};
 use crate::instance::table::instance::{MappedTableInstanceSet, UnmappedTableInstanceSet};
-use lib_hal::backend::Backend;
+use lf_hal::backend::Backend;
 use std::sync::Arc;
 
 pub mod builder;

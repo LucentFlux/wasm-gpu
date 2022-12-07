@@ -4,7 +4,7 @@ use crate::instance::memory::builder::AbstractMemoryPtr;
 use crate::instance::table::builder::AbstractTablePtr;
 use crate::typed::WasmTyVec;
 use itertools::Itertools;
-use lib_hal::backend::Backend;
+use lf_hal::backend::Backend;
 use wasmparser::{FuncType, GlobalType, TableType};
 
 pub struct NamedExtern<B, T>

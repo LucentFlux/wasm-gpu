@@ -7,7 +7,7 @@ use crate::module::module_environ::ModuleExport;
 use crate::read_only::AppendOnlyVec;
 use crate::typed::WasmTyVec;
 use anyhow::{anyhow, Context};
-use lib_hal::backend::Backend;
+use lf_hal::backend::Backend;
 use std::collections::HashMap;
 
 pub mod data;

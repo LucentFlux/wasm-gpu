@@ -6,7 +6,7 @@ use anyhow::anyhow;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use itertools::Itertools;
-use lib_hal::backend::Backend;
+use lf_hal::backend::Backend;
 use wasmparser::{FuncType, Type};
 
 static COUNTER: AtomicCounter = AtomicCounter::new();
