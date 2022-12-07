@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-lf-hal = {path="lf-hal"}
+lf-hal = {git="https://github.com/LucentFlux/lf-hal.git"}
 
 wat = "1.0"
 thiserror = "1.0"
