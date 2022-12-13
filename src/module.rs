@@ -9,7 +9,7 @@ use crate::instance::global::builder::{AbstractGlobalPtr, MappedGlobalInstanceBu
 use crate::instance::memory::builder::{AbstractMemoryPtr, MappedMemoryInstanceSetBuilder};
 use crate::instance::table::builder::{AbstractTablePtr, MappedTableInstanceSetBuilder};
 use crate::module::module_environ::{
-    ImportTypeRef, ModuleEnviron, ModuleExport, ParsedElementKind, ParsedModuleUnit,
+    ImportTypeRef, ModuleEnviron, ModuleExport, ParsedDataKind, ParsedElementKind, ParsedModuleUnit,
 };
 use crate::typed::{wasm_ty_bytes, FuncRef, Val};
 use crate::Engine;
@@ -20,7 +20,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::slice::Iter;
 use std::sync::Arc;
-use wasmparser::{Type, ValType, Validator};
+use wasmparser::{DataKind, Type, ValType, Validator};
 
 /// A wasm module that has not been instantiated
 pub struct Module<B>
@@ -313,7 +313,10 @@ where
 
                     let data = elements.get(element_ptr).await;
 
-                    tables.initialize(table_ptr, data, offset).await
+                    tables.initialize(table_ptr, data, offset).await;
+
+                    // Then we can drop this element
+                    elements.drop(element_ptr).await;
                 }
                 _ => {}
             }
@@ -357,7 +360,54 @@ where
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<AbstractMemoryPtr<B, T>> {
-        unimplemented!()
+        // Pointers starts with imports
+        let mut ptrs = imported_memories.map(|tp| tp.clone()).collect_vec();
+
+        // Create memories first
+        for memory_type in self.parsed.borrow_sections().memories.iter() {
+            let ptr = memory_set.add_memory(memory_type).await;
+            ptrs.push(ptr);
+        }
+
+        // Initialise from datas
+        for (data, data_ptr) in self
+            .parsed
+            .borrow_sections()
+            .datas
+            .iter()
+            .zip_eq(module_data_ptrs)
+        {
+            match &data.kind {
+                ParsedDataKind::Active {
+                    memory_index,
+                    offset_expr,
+                } => {
+                    assert_eq!(*memory_index, 0);
+
+                    let memory_ptr = ptrs
+                        .get((*memory_index) as usize)
+                        .expect("memory index out of range");
+                    let v = module_globals
+                        .interpret_constexpr(offset_expr, module_global_ptrs, module_func_ptrs)
+                        .await;
+                    let offset = match v {
+                        Val::I32(v) => v as usize,
+                        Val::I64(v) => v as usize,
+                        _ => unreachable!(),
+                    };
+
+                    let data = datas.get(data_ptr).await;
+
+                    memory_set.initialize(memory_ptr, data, offset).await;
+
+                    // Then we can drop this data
+                    datas.drop(data_ptr).await;
+                }
+                _ => {}
+            }
+        }
+
+        return ptrs;
     }
 
     pub(crate) async fn initialize_functions<T>(
@@ -370,6 +420,9 @@ where
         module_datas: &Vec<DataPtr<B, T>>,
         module_memories: &Vec<AbstractMemoryPtr<B, T>>,
     ) -> Vec<UntypedFuncPtr<B, T>> {
+        if self.parsed.borrow_sections().functions.is_empty() {
+            return vec![];
+        }
         unimplemented!()
     }
 

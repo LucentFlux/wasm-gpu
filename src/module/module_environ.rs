@@ -3,7 +3,7 @@ use ouroboros::self_referencing;
 use std::collections::HashMap;
 use std::ops::Range;
 use wasmparser::{
-    BinaryReaderError, Data, ElementItem, ElementKind, Encoding, ExternalKind,
+    BinaryReaderError, DataKind, ElementItem, ElementKind, Encoding, ExternalKind,
     FuncValidatorAllocations, GlobalType, MemoryType, Operator, Parser, Payload, TableType, Type,
     TypeRef, ValType, Validator,
 };
@@ -62,6 +62,27 @@ pub struct ParsedElement<'data> {
     pub range: Range<usize>,
 }
 
+pub enum ParsedDataKind<'data> {
+    /// The data segment is passive.
+    Passive,
+    /// The data segment is active.
+    Active {
+        /// The memory index for the data segment.
+        memory_index: u32,
+        /// The initialization expression for the data segment.
+        offset_expr: Vec<Operator<'data>>,
+    },
+}
+
+pub struct ParsedData<'data> {
+    /// The kind of data segment.
+    pub kind: ParsedDataKind<'data>,
+    /// The data of the data segment.
+    pub data: &'data [u8],
+    /// The range of the data segment.
+    pub range: Range<usize>,
+}
+
 pub struct ParsedModule<'data> {
     pub types: Vec<Type>,
     pub imports: Vec<(&'data str, &'data str, ImportTypeRef)>,
@@ -71,7 +92,7 @@ pub struct ParsedModule<'data> {
     pub exports: HashMap<String, ModuleExport>,
     pub start_func: Option<u32>,
     pub elements: Vec<ParsedElement<'data>>,
-    pub datas: Vec<Data<'data>>,
+    pub datas: Vec<ParsedData<'data>>,
     pub functions: Vec<ParsedFunc<'data>>,
 }
 
@@ -396,9 +417,28 @@ impl ModuleEnviron {
             Payload::DataSection(mut data) => {
                 self.validator.data_section(&data)?;
 
-                let data = data.read()?;
+                let data = data.read()?; // Parse values
 
-                result.datas.push(data)
+                let kind = match data.kind {
+                    DataKind::Passive => ParsedDataKind::Passive,
+                    DataKind::Active {
+                        memory_index,
+                        offset_expr,
+                    } => {
+                        let offset_expr: Result<Vec<Operator>, BinaryReaderError> =
+                            offset_expr.get_operators_reader().into_iter().collect();
+                        ParsedDataKind::Active {
+                            memory_index,
+                            offset_expr: offset_expr?,
+                        }
+                    }
+                };
+
+                result.datas.push(ParsedData {
+                    kind,
+                    data: data.data,
+                    range: data.range,
+                });
             }
 
             Payload::CustomSection(s) => {

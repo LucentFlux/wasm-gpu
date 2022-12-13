@@ -257,7 +257,7 @@ mod tests {
                         .expect("memory mem not found");
 
                     for (i, b) in expected_data.iter().enumerate() {
-                        assert_eq!(*b, mem.get(i).await);
+                        assert_eq!(Some(*b), mem.get(i).await.copied());
                     }
 
                     Ok(())

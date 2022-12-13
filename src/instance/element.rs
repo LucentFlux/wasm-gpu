@@ -74,6 +74,11 @@ impl<B: Backend> MappedElementInstance<B> {
         return self.references.as_slice(start..end).await;
     }
 
+    /// Calls `elem.drop` on the element pointed to. May or may not actually free the memory
+    pub async fn drop<T>(&mut self, ptr: &ElementPtr<B, T>) {
+        //TODO - use this optimisation hint
+    }
+
     pub async fn unmap(self) -> UnmappedElementInstance<B> {
         assert_eq!(
             self.head,

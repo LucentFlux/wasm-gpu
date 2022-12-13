@@ -2,13 +2,9 @@ use crate::fenwick::FenwickTree;
 use crate::impl_concrete_ptr;
 use crate::instance::memory::builder::AbstractMemoryPtr;
 use futures::future::join_all;
-use itertools::Itertools;
 use lf_hal::backend::Backend;
-use lf_hal::memory::interleaved::{
-    DeviceInterleavedBuffer, HostInterleavedBuffer, InterleavedBufferView, InterleavedBufferViewMut,
-};
+use lf_hal::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
 use lf_hal::memory::{DeviceMemoryBlock, MemoryBlock};
-use std::sync::Arc;
 
 const STRIDE: usize = 4; // 4 * u32
 
@@ -63,19 +59,8 @@ pub struct MemoryView<'a, B: Backend> {
 }
 
 impl<'a, B: Backend> MemoryView<'a, B> {
-    pub async fn get(&self, index: usize) -> u8 {
-        let chunk = index / STRIDE;
-        let offset = index % STRIDE;
-        let view: InterleavedBufferView = self.buf.get(chunk..=chunk).await;
-
-        let vec = view
-            .get(self.index)
-            .expect("memory index offset out of bounds")
-            .collect_vec();
-
-        assert_eq!(vec.len(), STRIDE);
-
-        return *vec[offset];
+    pub async fn get(&self, index: usize) -> Option<&u8> {
+        self.buf.get(self.index, index).await
     }
 }
 
@@ -86,23 +71,8 @@ pub struct MemoryViewMut<'a, B: Backend> {
 }
 
 impl<'a, B: Backend> MemoryViewMut<'a, B> {
-    pub async fn get_mut(&'a mut self, index: usize) -> &'a mut u8 {
-        let chunk = index / STRIDE;
-        let offset = index % STRIDE;
-        let view: InterleavedBufferViewMut = self.buf.get_mut(chunk..=chunk).await;
-
-        return view
-            .take(self.index)
-            .expect("memory index offset out of bounds")
-            .skip(offset)
-            .next()
-            .expect(
-                format!(
-                    "chunk of size {} did not have an index {} element",
-                    STRIDE, offset
-                )
-                .as_str(),
-            );
+    pub async fn get_mut(&'a mut self, index: usize) -> Option<&'a mut u8> {
+        self.buf.get_mut(self.index, index).await
     }
 }
 

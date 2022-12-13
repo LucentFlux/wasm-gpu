@@ -70,6 +70,11 @@ impl<B: Backend> MappedDataInstance<B> {
         return self.datas.as_slice(start..end).await;
     }
 
+    /// Calls `elem.drop` on the element pointed to. May or may not actually free the memory
+    pub async fn drop<T>(&mut self, ptr: &DataPtr<B, T>) {
+        //TODO: Use this hint
+    }
+
     pub async fn unmap(self) -> UnmappedDataInstance<B> {
         assert_eq!(self.head, self.datas.len(), "space reserved but not used");
 
