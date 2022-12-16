@@ -1,36 +1,41 @@
+use crate::atomic_counter::AtomicCounter;
+use crate::capabilities::CapabilityStore;
 use crate::impl_immutable_ptr;
 use crate::typed::WasmTyVal;
 use lf_hal::backend::Backend;
 use lf_hal::memory::{MainMemoryBlock, MemoryBlock};
 use std::mem::size_of;
+use std::sync::Arc;
 use wasmparser::GlobalType;
-use wasmparser::ValType;
 
-pub struct DeviceImmutableGlobalsInstance<B>
+pub struct UnmappedImmutableGlobalsInstance<B>
 where
     B: Backend,
 {
     immutables: B::DeviceMemoryBlock,
-    id: usize, // Shared with mutable counterpart
+    cap_set: CapabilityStore,
 }
 
-impl<B: Backend> DeviceImmutableGlobalsInstance<B> {}
+impl<B: Backend> UnmappedImmutableGlobalsInstance<B> {}
 
-pub struct HostImmutableGlobalsInstance<B>
+pub struct MappedImmutableGlobalsInstance<B>
 where
     B: Backend,
 {
+    backend: Arc<B>,
     immutables: B::MainMemoryBlock,
-    id: usize,
+    cap_set: CapabilityStore,
     head: usize,
 }
 
-impl<B: Backend> HostImmutableGlobalsInstance<B> {
-    pub async fn new(backend: &B, id: usize) -> Self {
+impl<B: Backend> MappedImmutableGlobalsInstance<B> {
+    pub async fn new(backend: Arc<B>) -> Self {
+        let cap_set = CapabilityStore::new(0);
         let immutables = backend.create_and_map_empty().await;
         Self {
+            backend,
             immutables,
-            id,
+            cap_set,
             head: 0,
         }
     }
@@ -39,11 +44,11 @@ impl<B: Backend> HostImmutableGlobalsInstance<B> {
     ///
     /// values_size is given in units of bytes, so an f64 is 8 bytes
     pub async fn reserve(&mut self, values_size: usize) {
-        self.immutables.extend(values_size).await
+        self.immutables.extend(values_size).await;
+        self.cap_set = self.cap_set.resize_ref(self.immutables.len())
     }
 
-    // Called through joint collection of mutables and immutables
-    pub(crate) async fn push_typed<V, T>(&mut self, v: V) -> GlobalImmutablePtr<B, T>
+    pub async fn push_typed<V, T>(&mut self, v: V) -> GlobalImmutablePtr<B, T>
     where
         V: WasmTyVal,
     {
@@ -59,10 +64,15 @@ impl<B: Backend> HostImmutableGlobalsInstance<B> {
 
         self.head = end;
 
-        return GlobalImmutablePtr::new(start, self.id, V::VAL_TYPE);
+        return GlobalImmutablePtr::new(start, self.cap_set.get_cap(), V::VAL_TYPE);
     }
 
     pub async fn get_typed<T, V: WasmTyVal>(&mut self, ptr: &GlobalImmutablePtr<B, T>) -> V {
+        assert!(
+            self.cap_set.check(&ptr.cap),
+            "immutable pointer was not valid for this instance"
+        );
+
         let start = ptr.ptr;
         let end = start + size_of::<V>();
 
@@ -79,7 +89,7 @@ impl<B: Backend> HostImmutableGlobalsInstance<B> {
         );
     }
 
-    pub async fn unmap(self) -> DeviceImmutableGlobalsInstance<B> {
+    pub async fn unmap(self) -> UnmappedImmutableGlobalsInstance<B> {
         assert_eq!(
             self.head,
             self.immutables.len(),
@@ -88,9 +98,9 @@ impl<B: Backend> HostImmutableGlobalsInstance<B> {
 
         let immutables = self.immutables.unmap().await;
 
-        DeviceImmutableGlobalsInstance {
+        UnmappedImmutableGlobalsInstance {
             immutables,
-            id: self.id,
+            cap_set: self.cap_set,
         }
     }
 }
@@ -105,9 +115,5 @@ impl_immutable_ptr!(
 impl<B: Backend, T> GlobalImmutablePtr<B, T> {
     pub fn is_type(&self, ty: &GlobalType) -> bool {
         return self.content_type.eq(&ty.content_type) && !ty.mutable;
-    }
-
-    pub(in crate::instance::global) fn id(&self) -> usize {
-        return self.id;
     }
 }

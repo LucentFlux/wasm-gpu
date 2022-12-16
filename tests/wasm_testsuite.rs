@@ -1,17 +1,24 @@
+use itertools::Itertools;
 use lf_hal::wgpu::{WgpuBackend, WgpuBackendConfig};
 use lf_hal::BufferRingConfig;
+use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::runtime::Runtime;
-use wasm_spirv::{wasp, Config};
+use wasm_spirv::wasp::externs::NamedExtern;
+use wasm_spirv::{
+    wasp, Config, Engine, Ieee32, Ieee64, ModuleInstanceReferences, StoreSetBuilder, Val,
+};
+use wast::core::{HeapType, NanPattern, V128Pattern, WastRetCore};
 use wast::lexer::Lexer;
-use wast::token::Span;
+use wast::token::{Float32, Float64, Id, Span};
 use wast::{
     parser::{parse, ParseBuffer},
-    QuoteWat, Wast, WastDirective,
+    QuoteWat, Wast, WastDirective, WastExecute, WastInvoke, WastRet, Wat,
 };
 
 #[wasm_spirv_test_gen::wast("tests/testsuite/*.wast")]
 fn gen_check(path: &str, test_index: usize) {
-    check(path, test_index)
+    Runtime::new().unwrap().block_on(check(path, test_index))
 }
 
 pub async fn get_backend() -> WgpuBackend {
@@ -27,8 +34,141 @@ pub async fn get_backend() -> WgpuBackend {
         .expect("failed to get backend");
 }
 
+struct WastState {
+    engine: Engine<WgpuBackend>,
+    store_builder: Option<StoreSetBuilder<WgpuBackend, ()>>, // Taken when invoking
+    named_modules: HashMap<String, Arc<ModuleInstanceReferences<WgpuBackend, ()>>>,
+    latest_module: Option<Arc<ModuleInstanceReferences<WgpuBackend, ()>>>,
+    imports: Vec<NamedExtern<WgpuBackend, ()>>,
+}
+
+const INSTANCE_COUNT: usize = 8;
+
+impl WastState {
+    async fn new() -> Self {
+        let backend = get_backend().await;
+        let engine = Engine::new(backend, Config::default());
+
+        Self {
+            store_builder: Some(StoreSetBuilder::new(engine.backend()).await),
+            named_modules: HashMap::new(),
+            latest_module: None,
+            imports: Vec::new(),
+            engine,
+        }
+    }
+
+    async fn add_module(&mut self, mut quote_wast: QuoteWat) {
+        let bytes = quote_wast.encode().expect(&format!(
+            "could not encode expected module at {:?}",
+            kind.span()
+        ));
+        let module = wasp::Module::new(&self.engine, &bytes)
+            .expect(&format!("could not parse module byes at {:?}", kind.span()));
+        let instance = self
+            .store_builder
+            .as_mut()
+            .unwrap()
+            .instantiate_module(&module, self.imports.clone())
+            .await
+            .expect(&format!(
+                "could not instantiate module at {:?}",
+                kind.span()
+            ));
+
+        let instance = Arc::new(instance);
+
+        let id = match quote_wast {
+            QuoteWat::Wat(Wat::Module(m)) => m.id,
+            QuoteWat::QuoteModule(_, _) => unimplemented!("I don't know what this is"),
+            QuoteWat::Wat(Wat::Component(_)) | QuoteWat::QuoteComponent(_, _) => {
+                panic!("component model not supported")
+            }
+        };
+
+        if let Some(id) = id {
+            self.named_modules
+                .insert(id.name().to_string(), instance.clone())
+        }
+
+        self.latest_module = Some(instance);
+    }
+
+    async fn register_module(&mut self, module: Option<Id>, name: &str) {
+        let module = match module {
+            None => self
+                .latest_module
+                .as_ref()
+                .expect(&format!(
+                    "register without module id, with no previous module at {:?}",
+                    kind.span()
+                ))
+                .clone(),
+            Some(id) => self.named_modules.get(id.name()).clone(),
+        };
+        let mut named_exports = module.get_named_exports(name);
+        self.imports.append(&mut named_exports)
+    }
+
+    async fn invoke(&mut self, wast_invoke: WastInvoke) -> anyhow::Result<Vec<Val>> {
+        let module = match wast_invoke.module {
+            None => self
+                .latest_module
+                .as_ref()
+                .expect(&format!(
+                    "invoke without module id, with no previous module at {:?}",
+                    kind.span()
+                ))
+                .clone(),
+            Some(id) => self.named_modules.get(id.name()).clone(),
+        };
+
+        let func = module.get_func(wast_invoke.name).expect(&format!(
+            "no function with name {} found at {:?}",
+            wast_invoke.name, wast_invoke.span
+        ));
+
+        // Build
+        let completed = self.store_builder.take().unwrap().complete().await;
+        let mut instances = completed.build(vec![(); INSTANCE_COUNT]).await;
+
+        // Invoke
+        let args: Vec<Val> = wast_invoke.args.into_iter().map(|v| Val::from(v)).collect();
+        let args: Vec<Vec<Val>> = (0..INSTANCE_COUNT).map(|_| args.clone()).collect();
+        let mut res_list: Vec<anyhow::Result<Vec<Val>>> = func.call_all(&mut instances, args).await;
+
+        // Many instances but should all be the same result
+        let res = res_list.pop().unwrap();
+        assert!(
+            res_list
+                .into_iter()
+                .all(|other_res: anyhow::Result<Vec<Val>>| {
+                    match (&res, &other_res) {
+                        (Ok(v1), Ok(v2)) => v1.eq(v2),
+                        (Err(_), Err(_)) => true,
+                        _ => false,
+                    }
+                }),
+            "all results were not the same"
+        );
+
+        // Unbuild
+        self.store_builder = Some(instances.snapshot(0).await);
+
+        return res;
+    }
+
+    async fn exec(&mut self, exec: WastExecute) -> anyhow::Result<Vec<Val>> {
+        match exec {
+            WastExecute::Invoke(inv) => self.invoke(inv),
+            WastExecute::Wat(_) => unimplemented!(),
+            WastExecute::Get { .. } => unimplemented!(),
+        }
+    }
+}
+
 #[inline(never)] // Reduce code bloat to avoid OOM sigkill
-fn check(path: &str, test_offset: usize) {
+async fn check(path: &str, test_offset: usize) {
     let source = std::fs::read_to_string(path).unwrap();
     let mut lexer = Lexer::new(&source);
     lexer.allow_confusing_unicode(true);
@@ -36,50 +176,52 @@ fn check(path: &str, test_offset: usize) {
         .expect(&format!("could not create parse buffer {}", path));
     let wast = parse::<Wast>(&buffer).unwrap();
 
+    let mut state = WastState::new().await;
+
     // Parsed things
     for kind in wast.directives {
-        match &kind {
-            WastDirective::Wat(quote_wast) => {}
-            WastDirective::Register { span, name, module } => {}
-            WastDirective::Invoke(wast_invoke) => {}
+        match kind {
+            WastDirective::Wat(quote_wast) => state.add_module(quote_wast).await,
+            WastDirective::Register {
+                span: _,
+                name,
+                module,
+            } => state.register_module(module, name).await,
+            WastDirective::Invoke(wast_invoke) => state.invoke(wast_invoke).await,
+            other_kind if (other_kind.span().offset() == test_offset) => {
+                run_assertion(other_kind, state).await;
+                return;
+            }
             _ => {}
-        }
-        if kind.span().offset() == test_offset {
-            Runtime::new().unwrap().block_on(run_test(kind));
-            return;
         }
     }
 }
 
-async fn run_test(directive: WastDirective<'_>) {
+async fn run_assertion(directive: WastDirective<'_>, state: WastState) {
     match directive {
-        WastDirective::Wat(_) => {
-            panic!("wat not assertion")
-        }
-        WastDirective::Register { .. } => {
-            panic!("register not assertion")
-        }
-        WastDirective::Invoke(_) => {
-            panic!("invoke not assertion")
+        WastDirective::Wat(_) | WastDirective::Register { .. } | WastDirective::Invoke(_) => {
+            panic!("cannot test non-assert")
         }
         WastDirective::AssertMalformed {
             span,
             module,
             message,
-        } => test_assert_malformed_or_invalid(span, module, message).await,
+        } => test_assert_malformed_or_invalid(state, span, module, message).await,
         WastDirective::AssertInvalid {
             span,
             module,
             message,
-        } => test_assert_malformed_or_invalid(span, module, message).await,
+        } => test_assert_malformed_or_invalid(state, span, module, message).await,
         WastDirective::AssertTrap {
             span,
             exec,
             message,
+        } => test_assert_trap(state, span, exec, message).await,
+        WastDirective::AssertReturn {
+            span,
+            exec,
+            results,
         } => {
-            panic!("assertion not implemented")
-        }
-        WastDirective::AssertReturn { .. } => {
             panic!("assertion not implemented")
         }
         WastDirective::AssertExhaustion { .. } => {
@@ -94,42 +236,137 @@ async fn run_test(directive: WastDirective<'_>) {
     }
 }
 
-async fn test_assert_malformed_or_invalid(span: Span, mut module: QuoteWat<'_>, message: &str) {
+async fn test_assert_malformed_or_invalid(
+    mut state: WastState,
+    span: Span,
+    mut module: QuoteWat<'_>,
+    message: &str,
+) {
     let bytes = match module.encode() {
         Ok(bs) => bs,
         Err(_) => return, // Failure to encode is fine if malformed
     };
 
-    let backend = get_backend().await;
+    let module = wasp::Module::new(&engine, &bytes);
 
-    let engine = wasp::Engine::new(backend, Config::default());
+    let module = match module {
+        Err(_) => return, // We want this to fail
+        Ok(module) => module,
+    };
 
-    let module = wasp::Module::new(&engine, &bytes, "test");
+    let res = state
+        .store_builder
+        .instantiate_module(&module, state.imports.clone())
+        .await;
 
     assert!(
-        module.is_err(),
+        res.is_err(),
         "assert malformed/invalid failed: {} at {:?}",
         message,
         span
     );
 }
 
-async fn test_assert_trap(span: Span, mut module: QuoteWat<'_>, message: &str) {
-    let bytes = match module.encode() {
-        Ok(bs) => bs,
-        Err(_) => return, // Failure to encode is fine if malformed
+async fn test_assert_trap(
+    mut state: WastState,
+    _span: Span,
+    mut exec: WastExecute,
+    _message: &str,
+) {
+    let ret = state.exec(exec).await;
+
+    assert!(ret.is_err())
+}
+
+fn f32_matches(got: Ieee32, expected: &NanPattern<Float32>) -> bool {
+    match expected {
+        NanPattern::CanonicalNan | NanPattern::ArithmeticNan => got.to_float().is_nan(),
+        NanPattern::Value(v) => v.bits == got.bits(),
+    }
+}
+
+fn f64_matches(got: Ieee64, expected: &NanPattern<Float64>) -> bool {
+    match expected {
+        NanPattern::CanonicalNan | NanPattern::ArithmeticNan => got.to_float().is_nan(),
+        NanPattern::Value(v) => v.bits == got.bits(),
+    }
+}
+
+macro_rules! to_bytes {
+    ($v:ident) => {
+        $v.into_iter()
+            .flat_map(|i| (*i).to_le_bytes())
+            .collect_vec()
     };
+}
 
-    let backend = get_backend().await;
+fn vec_matches(got: u128, expected: &V128Pattern) -> bool {
+    let bs = got.to_le_bytes();
+    match expected {
+        V128Pattern::I8x16(v) => to_bytes!(v) == bs,
+        V128Pattern::I16x8(v) => to_bytes!(v) == bs,
+        V128Pattern::I32x4(v) => to_bytes!(v) == bs,
+        V128Pattern::I64x2(v) => to_bytes!(v) == bs,
+        V128Pattern::F32x4(v) => bs
+            .into_iter()
+            .chunks(4)
+            .map(|i| Ieee32::from_le_bytes(i))
+            .zip(v)
+            .all(|(got, expected)| f32_matches(got, expected)),
+        V128Pattern::F64x2(v) => bs
+            .into_iter()
+            .chunks(8)
+            .map(|i| Ieee64::from_le_bytes(i))
+            .zip(v)
+            .all(|(got, expected)| f64_matches(got, expected)),
+    }
+}
 
-    let engine = wasp::Engine::new(backend, Config::default());
+fn test_match(got: Val, expected: &WastRet) -> bool {
+    match (expected, got) {
+        (WastRet::Core(WastRetCore::I32(i1)), Val::I32(i2)) => i1 == i2,
+        (WastRet::Core(WastRetCore::I64(i1)), Val::I64(i2)) => i1 == i2,
+        (WastRet::Core(WastRetCore::F32(f1)), Val::F32(f2)) => f32_matches(f2, f1),
+        (WastRet::Core(WastRetCore::F64(f1)), Val::F64(f2)) => f64_matches(f2, f1),
+        (WastRet::Core(WastRetCore::V128(v1)), Val::V128(v2)) => vec_matches(v2, v1),
+        (WastRet::Core(WastRetCore::RefNull(Some(HeapType::Func))), Val::FuncRef(r)) => r.is_none(),
+        (WastRet::Core(WastRetCore::RefNull(Some(HeapType::Extern))), Val::ExternRef(r)) => {
+            r.is_none()
+        }
+        (WastRet::Core(WastRetCore::RefFunc(None)), Val::FuncRef(_)) => true,
+        (WastRet::Core(WastRetCore::RefFunc(Some(v))), Val::FuncRef(_)) => true,
+        (WastRet::Core(WastRetCore::RefExtern(v1)), Val::ExternRef(v2)) => v2.as_u32() == Some(*v1),
+        (WastRet::Core(WastRetCore::Either(choices)), got) => {
+            choices.into_iter().any(|option| test_match(got, option))
+        }
+        _ => false,
+    }
+}
 
-    let module = wasp::Module::new(&engine, &bytes, "test");
+async fn test_assert_return(
+    mut state: WastState,
+    _span: Span,
+    mut exec: WastExecute,
+    results: Vec<WastRet>,
+) {
+    let ret = state
+        .exec(exec)
+        .await
+        .expect("failed to run test assert return");
 
-    assert!(
-        module.is_err(),
-        "assert malformed/invalid failed: {} at {:?}",
-        message,
-        span
-    );
+    if ret.len() != results.len() {
+        panic!(
+            "failed assert return: expected {:?} but got {:?}",
+            results, ret
+        )
+    }
+
+    for (expected, result) in results.iter().zip(ret.clone()) {
+        if !test_match(result, expected) {
+            panic!(
+                "failed assert return: expected {:?} but got {:?}",
+                results, ret
+            )
+        }
+    }
 }

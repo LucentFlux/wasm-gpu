@@ -1,9 +1,9 @@
+use crate::capabilities::CapabilityStore;
 use crate::impl_concrete_ptr;
 use crate::instance::global::builder::AbstractGlobalMutablePtr;
 use lf_hal::backend::Backend;
 use lf_hal::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
 use lf_hal::memory::DeviceMemoryBlock;
-use std::sync::Arc;
 
 const STRIDE: usize = 1; // 1 * u32
 
@@ -13,7 +13,7 @@ where
 {
     mutables: DeviceInterleavedBuffer<B, STRIDE>,
 
-    id: usize,
+    cap_set: CapabilityStore,
 }
 
 impl<B> UnmappedMutableGlobalInstanceSet<B>
@@ -23,11 +23,11 @@ where
     pub(crate) async fn new(
         mutables_source: &B::DeviceMemoryBlock,
         count: usize,
-        id: usize, // Same as abstract
+        cap_set: CapabilityStore, // Same as abstract
     ) -> Self {
         Self {
             mutables: mutables_source.interleave(count).await,
-            id,
+            cap_set,
         }
     }
 }
@@ -38,7 +38,7 @@ where
 {
     mutables: HostInterleavedBuffer<B, STRIDE>,
 
-    id: usize,
+    cap_set: CapabilityStore,
 }
 
 impl_concrete_ptr!(

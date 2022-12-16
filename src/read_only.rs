@@ -18,22 +18,22 @@ impl<T> ReadOnly<T> {
     }
 }
 
-pub struct AppendOnlyVec<T> {
-    inner: FrozenVec<Box<ReadOnly<T>>>,
+/// A lockless list that doesn't allow mutable references of elements,
+/// and doesn't require a mutable reference to append.
+pub struct AppendOnlyVec<T: Clone> {
+    inner: Vec<T>,
 }
 
-impl<T> AppendOnlyVec<T> {
+impl<T: Clone> AppendOnlyVec<T> {
     pub fn new() -> Self {
-        Self {
-            inner: FrozenVec::new(),
-        }
+        Self { inner: Vec::new() }
     }
 
     pub fn push_get_index(&self, val: T) -> usize {
-        return self.inner.push_get_index(Box::new(ReadOnly::new(val)));
+        return self.inner.push(val);
     }
 
-    pub fn get(&self, i: usize) -> Option<RwLockReadGuard<T>> {
+    pub fn get(&self, i: usize) -> Option<&T> {
         return self.inner.get(i).map(|v| v.inner.read().unwrap());
     }
 }
@@ -42,7 +42,7 @@ impl<T> FromIterator<T> for AppendOnlyVec<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let vec = FrozenVec::new();
 
-        for i in iter.into_iter().map(|v| Box::new(ReadOnly::new(v))) {
+        for i in iter.into_iter() {
             vec.push(i);
         }
 

@@ -1,4 +1,4 @@
-use crate::atomic_counter::AtomicCounter;
+use crate::capabilities::CapabilityStore;
 use crate::session::Session;
 use crate::typed::{FuncRef, Val, WasmTyVec};
 use crate::{impl_immutable_ptr, DeviceStoreSet, Func};
@@ -7,9 +7,7 @@ use futures::future::BoxFuture;
 use futures::FutureExt;
 use itertools::Itertools;
 use lf_hal::backend::Backend;
-use wasmparser::{FuncType, Type};
-
-static COUNTER: AtomicCounter = AtomicCounter::new();
+use wasmparser::Type;
 
 pub struct FuncsInstance<B, T>
 where
@@ -18,7 +16,7 @@ where
     /// Holds data that can later be copied into memory
     funcs: Vec<Func<B, T>>,
 
-    id: usize,
+    cap_set: CapabilityStore,
 }
 
 impl<B, T> FuncsInstance<B, T>
@@ -28,7 +26,7 @@ where
     pub fn new() -> Self {
         Self {
             funcs: Vec::new(),
-            id: COUNTER.next(),
+            cap_set: CapabilityStore::new(0),
         }
     }
 
@@ -38,7 +36,9 @@ where
 
         self.funcs.push(func);
 
-        return UntypedFuncPtr::new(ptr, self.id, ty);
+        self.cap_set = self.cap_set.resize_ref(self.funcs.len());
+
+        return UntypedFuncPtr::new(ptr, self.cap_set.get_cap(), ty);
     }
 
     pub(crate) fn predict<'a>(
@@ -51,7 +51,7 @@ where
             .map(|(i, f)| {
                 UntypedFuncPtr::new(
                     start + i,
-                    self.id,
+                    self.cap_set.get_cap(),
                     match f {
                         Type::Func(f) => f.clone(),
                     },
@@ -90,7 +90,7 @@ impl<B: Backend, T> UntypedFuncPtr<B, T> {
                 self.ty.results()
             ));
         }
-        Ok(TypedFuncPtr::new(self.ptr, self.id, self.ty))
+        Ok(TypedFuncPtr::new(self.ptr, self.cap, self.ty))
     }
 
     pub fn typed<Params: WasmTyVec, Results: WasmTyVec>(
@@ -101,13 +101,13 @@ impl<B: Backend, T> UntypedFuncPtr<B, T> {
 
     /// # Panics
     /// This function panics if:
-    ///  - the function pointer does not refer to the store_set set
+    ///  - the function pointer does not refer to a store set that the function is in
     pub fn call_all<'a>(
         &self,
         stores: &'a mut DeviceStoreSet<B, T>,
-        args_fn: impl FnMut(&T) -> Vec<Val>,
+        args: impl IntoIterator<Item = Vec<Val>>,
     ) -> BoxFuture<'a, Vec<anyhow::Result<Vec<Val>>>> {
-        let args = stores.data.iter().map(args_fn).collect();
+        let args = args.into_iter().collect();
 
         let session = Session::new(stores.backend.clone(), stores, self.clone(), args);
         return session.run().boxed();
@@ -124,7 +124,7 @@ impl_immutable_ptr!(
 
 impl<B: Backend, T, Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<B, T, Params, Results> {
     pub fn as_untyped(&self) -> UntypedFuncPtr<B, T> {
-        UntypedFuncPtr::new(self.ptr, self.id, self.ty.clone())
+        UntypedFuncPtr::new(self.ptr, self.cap, self.ty.clone())
     }
 
     /// # Panics
@@ -133,14 +133,9 @@ impl<B: Backend, T, Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<B, T, Pa
     pub fn call_all<'a>(
         &self,
         stores: &'a mut DeviceStoreSet<B, T>,
-        args_fn: impl FnMut(&T) -> Params,
+        args: impl IntoIterator<Item = Params>,
     ) -> BoxFuture<'a, Vec<anyhow::Result<Results>>> {
-        let args = stores
-            .data
-            .iter()
-            .map(args_fn)
-            .map(|v| v.to_val_vec())
-            .collect_vec();
+        let args = args.into_iter().collect();
 
         let entry_func = self.as_untyped();
         let session = Session::new(stores.backend.clone(), stores, entry_func, args);

@@ -1,18 +1,16 @@
-use crate::atomic_counter::AtomicCounter;
+use crate::capabilities::CapabilityStore;
 use crate::impl_immutable_ptr;
 use crate::typed::{FuncRef, WasmTyVal, WasmTyVec};
 use itertools::Itertools;
 use lf_hal::backend::Backend;
 use lf_hal::memory::{MainMemoryBlock, MemoryBlock};
 
-static COUNTER: AtomicCounter = AtomicCounter::new();
-
 pub struct UnmappedElementInstance<B>
 where
     B: Backend,
 {
     references: B::DeviceMemoryBlock,
-    id: usize,
+    cap_set: CapabilityStore,
 }
 
 impl<B: Backend> UnmappedElementInstance<B> {}
@@ -23,7 +21,7 @@ where
 {
     references: B::MainMemoryBlock,
     head: usize,
-    id: usize,
+    cap_set: CapabilityStore,
 }
 
 impl<B: Backend> MappedElementInstance<B> {
@@ -31,7 +29,7 @@ impl<B: Backend> MappedElementInstance<B> {
         let references = backend.create_and_map_empty().await;
         Self {
             references,
-            id: COUNTER.next(),
+            cap_set: CapabilityStore::new(0),
             head: 0,
         }
     }
@@ -41,6 +39,7 @@ impl<B: Backend> MappedElementInstance<B> {
     /// values_count is given in units of bytes, so an f64 is 8 bytes
     pub async fn reserve(&mut self, values_size: usize) {
         self.references.extend(values_size).await;
+        self.cap_set = self.cap_set.resize_ref(self.references.len());
     }
 
     pub async fn add_element<T>(&mut self, element: Vec<Option<u32>>) -> ElementPtr<B, T> {
@@ -67,7 +66,10 @@ impl<B: Backend> MappedElementInstance<B> {
     }
 
     pub async fn get<T>(&mut self, ptr: &ElementPtr<B, T>) -> &[u8] {
-        assert_eq!(ptr.id, self.id);
+        assert!(
+            self.cap_set.check(&ptr.cap),
+            "element pointer was not valid for this instance"
+        );
 
         let start = ptr.ptr;
         let end = start + (ptr.len * std::mem::size_of::<u32>());
@@ -90,7 +92,7 @@ impl<B: Backend> MappedElementInstance<B> {
 
         UnmappedElementInstance {
             references,
-            id: self.id,
+            cap_set: self.cap_set,
         }
     }
 }

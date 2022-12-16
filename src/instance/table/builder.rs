@@ -1,4 +1,5 @@
 use crate::atomic_counter::AtomicCounter;
+use crate::capabilities::CapabilityStore;
 use crate::impl_abstract_ptr;
 use crate::instance::table::instance::{TablePtr, UnmappedTableInstanceSet};
 use lf_hal::backend::Backend;
@@ -7,20 +8,18 @@ use lf_hal::memory::MainMemoryBlock;
 use std::sync::Arc;
 use wasmparser::TableType;
 
-static COUNTER: AtomicCounter = AtomicCounter::new();
-
 pub struct UnmappedTableInstanceSetBuilder<B>
 where
     B: Backend,
 {
-    id: usize,
+    cap_set: CapabilityStore,
     backend: Arc<B>,
     tables: Vec<B::DeviceMemoryBlock>,
 }
 
 impl<B: Backend> UnmappedTableInstanceSetBuilder<B> {
     pub async fn build(&self, count: usize) -> UnmappedTableInstanceSet<B> {
-        UnmappedTableInstanceSet::new(&self.tables, count, self.id).await
+        UnmappedTableInstanceSet::new(&self.tables, count, self.cap_set.clone()).await
     }
 }
 
@@ -28,7 +27,7 @@ pub struct MappedTableInstanceSetBuilder<B>
 where
     B: Backend,
 {
-    id: usize,
+    cap_set: CapabilityStore,
     backend: Arc<B>,
     tables: Vec<B::MainMemoryBlock>,
 }
@@ -39,7 +38,7 @@ where
 {
     pub fn new(backend: Arc<B>) -> Self {
         Self {
-            id: COUNTER.next(),
+            cap_set: CapabilityStore::new(0),
             backend,
             tables: Vec::new(),
         }
@@ -48,6 +47,7 @@ where
     pub async fn add_table<T>(&mut self, plan: &TableType) -> AbstractTablePtr<B, T> {
         let ptr = self.tables.len();
         self.tables.push(self.backend.create_and_map_empty().await);
+        self.cap_set = self.cap_set.resize_ref(self.tables.len());
         return AbstractTablePtr::new(ptr, self.id, plan.clone());
     }
 
@@ -57,7 +57,10 @@ where
         data: &[u8],
         offset: usize,
     ) {
-        assert_eq!(ptr.id, self.id);
+        assert!(
+            self.cap_set.check(&ptr.cap),
+            "table pointer was not valid for this instance"
+        );
 
         self.tables
             .get_mut(ptr.ptr)
@@ -74,7 +77,7 @@ where
             .collect();
 
         UnmappedTableInstanceSetBuilder {
-            id: self.id,
+            cap_set: self.cap_set,
             backend: self.backend,
             tables,
         }

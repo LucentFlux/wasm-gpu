@@ -2,6 +2,8 @@ use crate::for_each_function_signature;
 use anyhow::Error;
 use std::fmt::{Display, Formatter};
 use wasmparser::ValType;
+use wast::core::{HeapType, WastArgCore};
+use wast::WastArg;
 
 pub const fn wasm_ty_bytes(ty: ValType) -> usize {
     match ty {
@@ -31,6 +33,9 @@ impl Ieee32 {
     pub fn bits(&self) -> u32 {
         self.0
     }
+    pub fn to_float(self) -> f32 {
+        f32::from_le_bytes(self.to_le_bytes())
+    }
 }
 
 impl From<wasmparser::Ieee32> for Ieee32 {
@@ -54,6 +59,9 @@ impl Ieee64 {
     }
     pub fn bits(&self) -> u64 {
         self.0
+    }
+    pub fn to_float(self) -> f64 {
+        f64::from_le_bytes(self.to_le_bytes())
     }
 }
 
@@ -93,6 +101,12 @@ macro_rules! impl_ref {
                     Some(v) => Self::from_u32(*v),
                 }
             }
+            pub fn is_none(&self) -> bool {
+                self.0 == 0
+            }
+            pub fn is_some(&self) -> bool {
+                !self.is_none()
+            }
         }
     };
 }
@@ -121,6 +135,31 @@ impl Val {
             Val::V128(_) => ValType::V128,
             Val::FuncRef(_) => ValType::FuncRef,
             Val::ExternRef(_) => ValType::ExternRef,
+        }
+    }
+}
+
+impl From<WastArg> for Val {
+    fn from(value: WastArg) -> Self {
+        match value {
+            WastArg::Core(c) => Self::from(c),
+            WastArg::Component(_) => panic!("component model not supported"),
+        }
+    }
+}
+
+impl From<WastArgCore> for Val {
+    fn from(value: WastArgCore) -> Self {
+        match value {
+            WastArgCore::I32(i) => Self::I32(i),
+            WastArgCore::I64(i) => Self::I64(i),
+            WastArgCore::F32(f) => Self::F32(Ieee32::from_bits(f.bits)),
+            WastArgCore::F64(f) => Self::F64(Ieee64::from_bits(f.bits)),
+            WastArgCore::V128(v) => Self::V128(u128::from_le_bytes(v.to_le_bytes())),
+            WastArgCore::RefNull(HeapType::Func) => Self::FuncRef(FuncRef::none()),
+            WastArgCore::RefNull(HeapType::Extern) => Self::ExternRef(ExternRef::none()),
+            WastArgCore::RefNull(ty) => panic!("null reference of type {:?} is not supported", ty),
+            WastArgCore::RefExtern(v) => Self::ExternRef(ExternRef::from_u32(v)),
         }
     }
 }

@@ -3,7 +3,10 @@ use crate::instance::data::{MappedDataInstance, UnmappedDataInstance};
 use crate::instance::element::{MappedElementInstance, UnmappedElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
 use crate::instance::global::builder::{
-    MappedGlobalInstanceBuilder, UnmappedGlobalInstanceBuilder,
+    AbstractGlobalPtr, MappedMutableGlobalInstanceBuilder, UnmappedMutableGlobalInstanceBuilder,
+};
+use crate::instance::global::immutable::{
+    MappedImmutableGlobalsInstance, UnmappedImmutableGlobalsInstance,
 };
 use crate::instance::memory::builder::{
     MappedMemoryInstanceSetBuilder, UnmappedMemoryInstanceSetBuilder,
@@ -11,12 +14,13 @@ use crate::instance::memory::builder::{
 use crate::instance::table::builder::{
     MappedTableInstanceSetBuilder, UnmappedTableInstanceSetBuilder,
 };
-use crate::instance::ModuleInstanceSet;
+use crate::instance::ModuleInstanceReferences;
 use crate::store_set::DeviceStoreSetData;
-use crate::{DeviceStoreSet, Engine, Func, Module};
+use crate::{DeviceStoreSet, ExternRef, Func, FuncRef, Ieee32, Ieee64, Module, Val};
 use lf_hal::backend::Backend;
 use std::future::join;
 use std::sync::Arc;
+use wasmparser::{Global, Operator, ValType};
 
 /// Acts like a traditional OOP factory where we initialise modules into this before
 /// creating single Stores after all initialization is done, to amortize the instantiation cost
@@ -28,35 +32,104 @@ where
 
     tables: MappedTableInstanceSetBuilder<B>,
     memories: MappedMemoryInstanceSetBuilder<B>,
-    globals: MappedGlobalInstanceBuilder<B>,
+    mutable_globals: MappedMutableGlobalInstanceBuilder<B>,
     // Immutable so don't need to be abstr
     elements: MappedElementInstance<B>,
     datas: MappedDataInstance<B>,
     functions: FuncsInstance<B, T>,
+    immutable_globals: MappedImmutableGlobalsInstance<B>,
 }
 
 impl<B, T> StoreSetBuilder<B, T>
 where
     B: Backend,
 {
-    pub async fn new(engine: &Engine<B>) -> Self {
-        let backend = engine.backend();
-
-        let globals_fut = MappedGlobalInstanceBuilder::new(backend.as_ref());
+    pub async fn new(backend: Arc<B>) -> Self {
+        let mutable_globals_fut = MappedMutableGlobalInstanceBuilder::new(backend.as_ref());
         let elements_fut = MappedElementInstance::new(backend.as_ref());
         let datas_fut = MappedDataInstance::new(backend.as_ref());
 
-        let (globals, elements, datas) = join!(globals_fut, elements_fut, datas_fut).await;
+        let (mutable_globals, elements, datas) =
+            join!(mutable_globals_fut, elements_fut, datas_fut).await;
 
         Self {
             functions: FuncsInstance::new(),
-            tables: MappedTableInstanceSetBuilder::new(engine.backend()),
-            memories: MappedMemoryInstanceSetBuilder::new(engine.backend()),
-            globals,
+            tables: MappedTableInstanceSetBuilder::new(backend.clone()),
+            memories: MappedMemoryInstanceSetBuilder::new(backend.clone()),
+            immutable_globals: MappedImmutableGlobalsInstance::new(backend.clone()),
+            mutable_globals,
             elements,
             datas,
             backend,
         }
+    }
+
+    /// Used during instantiation to evaluate an expression in a single pass
+    pub async fn interpret_constexpr<'data, T>(
+        &mut self,
+        constr_expr: &Vec<Operator<'data>>,
+        module: &ModuleInstanceReferences<B, T>,
+    ) -> Val {
+        let mut stack = Vec::new();
+
+        let mut iter = constr_expr.into_iter();
+        while let Some(expr) = iter.next() {
+            match expr {
+                Operator::I32Const { value } => stack.push(Val::I32(*value)),
+                Operator::I64Const { value } => stack.push(Val::I64(*value)),
+                Operator::F32Const { value } => stack.push(Val::F32(Ieee32::from(*value))),
+                Operator::F64Const { value } => stack.push(Val::F64(Ieee64::from(*value))),
+                Operator::V128Const { value } => {
+                    stack.push(Val::V128(u128::from_le_bytes(value.bytes().clone())))
+                }
+                Operator::RefNull { ty } => match ty {
+                    ValType::FuncRef => stack.push(Val::FuncRef(FuncRef::none())),
+                    ValType::ExternRef => stack.push(Val::ExternRef(ExternRef::none())),
+                    _ => unreachable!(),
+                },
+                Operator::RefFunc { function_index } => {
+                    let function_index = usize::try_from(*function_index).unwrap();
+                    let function_ptr = module
+                        .get_func_at(function_index)
+                        .expect("function index out of range of module functions");
+                    stack.push(Val::FuncRef(function_ptr.to_func_ref()))
+                }
+                Operator::GlobalGet { global_index } => {
+                    let global_index = usize::try_from(*global_index).unwrap();
+                    let global_ptr = module
+                        .get_global_at(global_index)
+                        .expect("global index out of range of module globals");
+                    let global_val = match global_ptr {
+                        AbstractGlobalPtr::Immutable(imm_ptr) => {
+                            self.immutable_globals.get(imm_ptr).await
+                        }
+                        AbstractGlobalPtr::Mutable(mut_ptr) => {
+                            self.mutable_globals.get(mut_ptr).await
+                        }
+                    };
+
+                    stack.push(global_val)
+                }
+                Operator::End => {
+                    if !iter.next().is_none() {
+                        // End at end
+                        panic!("end expression was found before the end of the constexpr - this should be caught by validation earlier")
+                    }
+                    break;
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        let res = stack.pop().expect("expression did not result in a value");
+
+        return res;
+    }
+
+    pub(crate) async fn snapshot(src: &DeviceStoreSet<B, T>, store_index: usize) -> Self {
+        // We're doing this so you can execute a bit then load more modules, then execute some more.
+        // See wizer for the idea origin.
+        todo!()
     }
 
     pub fn backend(&self) -> Arc<B> {
@@ -69,7 +142,7 @@ where
         &mut self,
         module: &Module<B>,
         imports: Vec<NamedExtern<B, T>>,
-    ) -> anyhow::Result<ModuleInstanceSet<B, T>> {
+    ) -> anyhow::Result<ModuleInstanceReferences<B, T>> {
         // Validation
         let validated_imports = module.typecheck_imports(&imports)?;
 
@@ -79,7 +152,7 @@ where
         // Globals
         let global_ptrs = module
             .initialize_globals(
-                &mut self.globals,
+                &mut self.mutable_globals,
                 validated_imports.globals().map(|p| p.clone()),
                 &predicted_func_ptrs,
             )
@@ -89,7 +162,7 @@ where
         let element_ptrs = module
             .initialize_elements(
                 &mut self.elements,
-                &mut self.globals,
+                &mut self.mutable_globals,
                 &global_ptrs,
                 &predicted_func_ptrs,
             )
@@ -102,7 +175,7 @@ where
                 validated_imports.tables(),
                 &mut self.elements,
                 &element_ptrs,
-                &mut self.globals,
+                &mut self.mutable_globals,
                 &global_ptrs,
                 &predicted_func_ptrs,
             )
@@ -118,7 +191,7 @@ where
                 validated_imports.memories(),
                 &mut self.datas,
                 &data_ptrs,
-                &mut self.globals,
+                &mut self.mutable_globals,
                 &global_ptrs,
                 &predicted_func_ptrs,
             )
@@ -154,7 +227,7 @@ where
             .into_iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        return Ok(ModuleInstanceSet::new(
+        return Ok(ModuleInstanceReferences::new(
             func_ptrs,
             table_ptrs,
             memory_ptrs,
@@ -168,19 +241,43 @@ where
         return self.functions.register(func);
     }
 
+    pub async fn add_global<T>(
+        &mut self,
+        global: Global<'_>,
+        module: &ModuleInstanceReferences<B, T>,
+    ) -> AbstractGlobalPtr<B, T> {
+        // Initialise
+        let val = self.interpret_constexpr(&global.initializer, module).await;
+        assert_eq!(
+            val.get_type(),
+            global.ty.content_type,
+            "global evaluation had differing type to definition"
+        );
+
+        let ptr = if global.ty.mutable {
+            AbstractGlobalPtr::Mutable(self.mutable_globals.push(val).await)
+        } else {
+            AbstractGlobalPtr::Immutable(self.immutable_globals.push(val).await)
+        };
+
+        return ptr;
+    }
+
     /// Takes this builder and makes it immutable, allowing instances to be created from it
     pub async fn complete(self) -> CompletedBuilder<B, T> {
         let Self {
             backend,
             tables,
             memories,
-            globals,
+            mutable_globals,
+            immutable_globals,
             elements,
             datas,
             functions,
         } = self;
 
-        let globals = globals.unmap().await;
+        let mutable_globals = mutable_globals.unmap().await;
+        let immutable_globals = immutable_globals.unmap().await;
         let elements = elements.unmap().await;
         let datas = datas.unmap().await;
         let tables = tables.unmap().await;
@@ -189,8 +286,9 @@ where
             backend,
             tables,
             memories,
-            globals,
+            mutable_globals,
             elements: Arc::new(elements),
+            immutable_globals: Arc::new(immutable_globals),
             datas: Arc::new(datas),
             functions: Arc::new(functions),
         }
@@ -203,7 +301,8 @@ pub struct CompletedBuilder<B: Backend, T> {
     // Move host things to GPU
     tables: UnmappedTableInstanceSetBuilder<B>,
     memories: UnmappedMemoryInstanceSetBuilder<B>,
-    globals: UnmappedGlobalInstanceBuilder<B>,
+    mutable_globals: UnmappedMutableGlobalInstanceBuilder<B>,
+    immutable_globals: Arc<UnmappedImmutableGlobalsInstance<B>>,
     elements: Arc<UnmappedElementInstance<B>>,
     datas: Arc<UnmappedDataInstance<B>>,
     functions: Arc<FuncsInstance<B, T>>,
@@ -222,8 +321,7 @@ impl<B: Backend, T> CompletedBuilder<B, T> {
 
         let memories = self.memories.build(data.len()).await;
 
-        let (mutable_globals, immutable_globals) =
-            self.globals.build(self.backend.clone(), data.len()).await;
+        let mutable_globals = self.mutable_globals.build(data.len()).await;
 
         DeviceStoreSet {
             backend: self.backend.clone(),
@@ -231,7 +329,7 @@ impl<B: Backend, T> CompletedBuilder<B, T> {
             functions: self.functions.clone(),
             elements: self.elements.clone(),
             datas: self.datas.clone(),
-            immutable_globals,
+            immutable_globals: self.immutable_globals.clone(),
             owned: DeviceStoreSetData {
                 tables,
                 memories,
@@ -265,7 +363,7 @@ mod tests {
 
         let engine = wasp::Engine::new(backend, Config::default());
 
-        let mut stores_builder = StoreSetBuilder::<_, ()>::new(&engine).await;
+        let mut stores_builder = StoreSetBuilder::<_, ()>::new(engine.backend()).await;
 
         let wat = format!(
             r#"
@@ -276,7 +374,7 @@ mod tests {
             data_str
         );
         let wat = wat.into_bytes();
-        let module = wasp::Module::new(&engine, &wat, "testmod1").unwrap();
+        let module = wasp::Module::new(&engine, &wat).unwrap();
 
         let _instance = stores_builder
             .instantiate_module(&module, imports! {})

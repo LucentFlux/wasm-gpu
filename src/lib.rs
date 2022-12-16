@@ -9,11 +9,11 @@ mod func;
 mod instance;
 mod module;
 mod panic_on_any;
-mod read_only;
 mod session;
 mod store_set;
 mod typed;
 
+mod capabilities;
 #[cfg(test)]
 pub mod tests_lib;
 
@@ -38,13 +38,15 @@ pub mod wasp {
     pub use store_set::builder::StoreSetBuilder;
     pub use store_set::DeviceStoreSet;
     // Instance
-    pub use instance::ModuleInstanceSet;
+    pub use instance::ModuleInstanceReferences;
     // Ptr
     pub use instance::func::TypedFuncPtr;
     pub use instance::func::UntypedFuncPtr;
     // Func
     pub use func::Caller;
     pub use func::Func;
+    // Typing
+    pub use typed::*;
 }
 
 pub use wasp::*;

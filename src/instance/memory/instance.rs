@@ -1,3 +1,4 @@
+use crate::capabilities::CapabilityStore;
 use crate::fenwick::FenwickTree;
 use crate::impl_concrete_ptr;
 use crate::instance::memory::builder::AbstractMemoryPtr;
@@ -11,7 +12,7 @@ const STRIDE: usize = 4; // 4 * u32
 #[derive(Clone)]
 struct Meta {
     lengths: FenwickTree,
-    id: usize,
+    cap_set: CapabilityStore,
 }
 
 pub struct UnmappedMemoryInstanceSet<B>
@@ -26,7 +27,11 @@ impl<B> UnmappedMemoryInstanceSet<B>
 where
     B: Backend,
 {
-    pub(crate) async fn new(sources: &Vec<B::DeviceMemoryBlock>, count: usize, id: usize) -> Self {
+    pub(crate) async fn new(
+        sources: &Vec<B::DeviceMemoryBlock>,
+        count: usize,
+        cap_set: CapabilityStore,
+    ) -> Self {
         let memories = sources.iter().map(|source: &B::DeviceMemoryBlock| async {
             (source.len(), source.interleave(count).await)
         });
@@ -39,7 +44,7 @@ where
             .collect();
         Self {
             data,
-            meta: Meta { lengths, id },
+            meta: Meta { lengths, cap_set },
         }
     }
 }
@@ -78,14 +83,14 @@ impl<'a, B: Backend> MemoryViewMut<'a, B> {
 
 macro_rules! impl_get {
     (with $self:ident, $ptr:ident using $get:ident making $MemoryView:ident) => {{
-        assert_eq!(
-            $ptr.src.id, $self.meta.id,
-            "memory pointer does not belong to this memory instance set"
+        assert!(
+            $self.meta.cap_set.check(&$ptr.src.cap),
+            "memory pointer was not valid for this instance"
         );
         let buf = $self
             .data
             .$get($ptr.src.ptr)
-            .expect("memory pointer was valid but malformed");
+            .expect("memory pointer was valid but malformed - this is a bug");
         $MemoryView {
             buf,
             index: $ptr.index,

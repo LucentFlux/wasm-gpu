@@ -1,16 +1,15 @@
 use crate::atomic_counter::AtomicCounter;
+use crate::capabilities::CapabilityStore;
 use crate::impl_immutable_ptr;
 use lf_hal::backend::Backend;
 use lf_hal::memory::{DeviceMemoryBlock, MainMemoryBlock, MemoryBlock};
-
-static COUNTER: AtomicCounter = AtomicCounter::new();
 
 pub struct UnmappedDataInstance<B>
 where
     B: Backend,
 {
     datas: B::DeviceMemoryBlock,
-    id: usize,
+    cap_set: CapabilityStore,
 }
 
 impl<B: Backend> UnmappedDataInstance<B> {
@@ -25,7 +24,7 @@ where
     B: Backend,
 {
     datas: B::MainMemoryBlock,
-    id: usize,
+    cap_set: CapabilityStore,
     head: usize,
 }
 
@@ -33,7 +32,7 @@ impl<B: Backend> MappedDataInstance<B> {
     pub async fn new(backend: &B) -> Self {
         Self {
             datas: backend.create_and_map_empty().await,
-            id: COUNTER.next(),
+            cap_set: CapabilityStore::new(0),
             head: 0,
         }
     }
@@ -42,7 +41,8 @@ impl<B: Backend> MappedDataInstance<B> {
     ///
     /// values_size is given in units of bytes, so an f64 is 8 bytes
     pub async fn reserve(&mut self, values_size: usize) {
-        self.datas.resize(values_size).await
+        self.datas.resize(values_size).await;
+        self.cap_set = self.cap_set.resize_ref(self.datas.len())
     }
 
     pub async fn add_data<T>(&mut self, data: &[u8]) -> DataPtr<B, T> {
@@ -63,7 +63,10 @@ impl<B: Backend> MappedDataInstance<B> {
     }
 
     pub async fn get<T>(&mut self, ptr: &DataPtr<B, T>) -> &[u8] {
-        assert_eq!(ptr.id, self.id);
+        assert!(
+            self.cap_set.check(&ptr.cap),
+            "data pointer was not valid for this instance"
+        );
 
         let start = ptr.ptr;
         let end = start + ptr.len;
@@ -80,7 +83,10 @@ impl<B: Backend> MappedDataInstance<B> {
 
         let datas = self.datas.unmap().await;
 
-        UnmappedDataInstance { datas, id: self.id }
+        UnmappedDataInstance {
+            datas,
+            cap_set: self.cap_set,
+        }
     }
 }
 

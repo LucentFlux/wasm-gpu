@@ -1,4 +1,5 @@
 use crate::atomic_counter::AtomicCounter;
+use crate::capabilities::CapabilityStore;
 use crate::impl_abstract_ptr;
 use crate::instance::memory::instance::{MemoryPtr, UnmappedMemoryInstanceSet};
 use lf_hal::backend::Backend;
@@ -6,20 +7,18 @@ use lf_hal::memory::{limits_match, MainMemoryBlock};
 use std::sync::Arc;
 use wasmparser::MemoryType;
 
-static COUNTER: AtomicCounter = AtomicCounter::new();
-
 pub struct UnmappedMemoryInstanceSetBuilder<B>
 where
     B: Backend,
 {
     backend: Arc<B>,
     memories: Vec<B::DeviceMemoryBlock>,
-    id: usize,
+    cap_set: CapabilityStore,
 }
 
 impl<B: Backend> UnmappedMemoryInstanceSetBuilder<B> {
     pub async fn build(&self, count: usize) -> UnmappedMemoryInstanceSet<B> {
-        UnmappedMemoryInstanceSet::new(&self.memories, count, self.id).await
+        UnmappedMemoryInstanceSet::new(&self.memories, count, self.cap_set.clone()).await
     }
 }
 
@@ -29,13 +28,13 @@ where
 {
     backend: Arc<B>,
     memories: Vec<B::MainMemoryBlock>,
-    id: usize,
+    cap_set: CapabilityStore,
 }
 
 impl<B: Backend> MappedMemoryInstanceSetBuilder<B> {
     pub fn new(backend: Arc<B>) -> Self {
         Self {
-            id: COUNTER.next(),
+            cap_set: CapabilityStore.new(0),
             backend,
             memories: Vec::new(),
         }
@@ -45,7 +44,8 @@ impl<B: Backend> MappedMemoryInstanceSetBuilder<B> {
         let ptr = self.memories.len();
         self.memories
             .push(self.backend.create_and_map_empty().await);
-        return AbstractMemoryPtr::new(ptr, self.id, plan.clone());
+        self.cap_set = self.cap_set.resize_ref(self.memories.len());
+        return AbstractMemoryPtr::new(ptr, self.cap_set.get_cap(), plan.clone());
     }
 
     /// # Panics
@@ -56,7 +56,10 @@ impl<B: Backend> MappedMemoryInstanceSetBuilder<B> {
         data: &[u8],
         offset: usize,
     ) {
-        assert_eq!(ptr.id, self.id);
+        assert!(
+            self.cap_set.check(&ptr.cap),
+            "memory pointer was not valid for this instance"
+        );
 
         self.memories
             .get_mut(ptr.ptr as usize)
@@ -73,7 +76,7 @@ impl<B: Backend> MappedMemoryInstanceSetBuilder<B> {
             .collect();
 
         UnmappedMemoryInstanceSetBuilder {
-            id: self.id,
+            cap_set: self.cap_set,
             memories,
             backend: self.backend,
         }

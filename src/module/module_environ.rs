@@ -4,8 +4,9 @@ use std::collections::HashMap;
 use std::ops::Range;
 use wasmparser::{
     BinaryReaderError, DataKind, ElementItem, ElementKind, Encoding, ExternalKind,
-    FuncValidatorAllocations, GlobalType, MemoryType, Operator, Parser, Payload, TableType, Type,
-    TypeRef, ValType, Validator,
+    FuncValidatorAllocations, GlobalType, IndirectNameMap, MemoryType, Name, NameMap,
+    NameSectionReader, Operator, Parser, Payload, SingleName, TableType, Type, TypeRef, ValType,
+    Validator,
 };
 
 type WasmResult<T> = Result<T, WasmError>;
@@ -139,7 +140,8 @@ impl ModuleEnviron {
                 allocs: None,
             };
 
-            for payload in parser.parse_all(src.as_slice()) {
+            let parsed = parser.parse_all(src.as_slice());
+            for payload in parsed {
                 self.translate_payload(payload?, &mut scratch, &mut result)?;
             }
 
@@ -443,7 +445,9 @@ impl ModuleEnviron {
 
             Payload::CustomSection(s) => {
                 match s.name() {
-                    "name" => {} // Do nothing - not invalid but not used
+                    "name" => {
+                        let _reader = NameSectionReader::new(s.data(), 0)?;
+                    }
                     _ => {
                         return Err(WasmError::Unsupported(format!(
                             "custom section not supported: {}",

@@ -8,7 +8,7 @@ use wasmparser::{FuncType, ValType};
 use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
 use crate::instance::memory::instance::{MappedMemoryInstanceSet, MemoryView, MemoryViewMut};
 use crate::instance::ptrs::AbstractPtr;
-use crate::instance::ModuleInstanceSet;
+use crate::instance::ModuleInstanceReferences;
 use crate::store_set::HostStoreSet;
 use crate::typed::{Val, WasmTyVec};
 use crate::StoreSetBuilder;
@@ -157,7 +157,7 @@ where
 
     // Info into store data
     index: usize,
-    instance: &'a ModuleInstanceSet<B, T>,
+    instance: &'a ModuleInstanceReferences<B, T>,
 }
 
 impl<'a, B, T> Caller<'a, B, T>
@@ -167,7 +167,7 @@ where
     pub fn new(
         stores: &'a mut HostStoreSet<B, T>,
         index: usize,
-        instance: &'a ModuleInstanceSet<B, T>,
+        instance: &'a ModuleInstanceReferences<B, T>,
     ) -> Self {
         Self {
             data: &mut stores.data,

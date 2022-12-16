@@ -27,7 +27,7 @@ macro_rules! impl_immutable_ptr {
         {
             #[doc="Point within the data as seen by WASM"]
             $v ptr: usize,
-            $v id: usize,
+            $v cap: $crate::capabilities::Capability,
 
             $($e_vis $e_ident : $e_type ,)*
 
@@ -36,10 +36,10 @@ macro_rules! impl_immutable_ptr {
 
         impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* $name $(<$($lt),*>)*
         {
-            fn new(ptr: usize, id: usize $(, $e_ident : $e_type)*) -> Self {
+            fn new(ptr: usize, cap: $crate::capabilities::Capability $(, $e_ident : $e_type)*) -> Self {
                 Self {
                     ptr,
-                    id,
+                    cap,
                     $($e_ident ,)*
                     _phantom_data: Default::default(),
                 }
@@ -55,7 +55,7 @@ macro_rules! impl_immutable_ptr {
         impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* PartialOrd<Self> for $name$(<$($lt),*>)*
         {
             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                let success = match self.id.cmp(&other.id) {
+                let success = match self.cap.cmp(&other.cap) {
                     std::cmp::Ordering::Equal => match self.ptr.cmp(&other.ptr) {
                         std::cmp::Ordering::Equal => return None,
                         v => v,

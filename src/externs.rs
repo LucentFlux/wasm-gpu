@@ -5,8 +5,10 @@ use crate::instance::table::builder::AbstractTablePtr;
 use crate::typed::WasmTyVec;
 use itertools::Itertools;
 use lf_hal::backend::Backend;
+use perfect_derive::perfect_derive;
 use wasmparser::{FuncType, GlobalType, TableType};
 
+#[perfect_derive(Clone)]
 pub struct NamedExtern<B, T>
 where
     B: Backend,
@@ -14,16 +16,6 @@ where
     pub module: String,
     pub name: String,
     pub ext: Extern<B, T>,
-}
-
-impl<B: Backend, T> Clone for NamedExtern<B, T> {
-    fn clone(&self) -> Self {
-        Self {
-            module: self.module.clone(),
-            name: self.name.clone(),
-            ext: self.ext.clone(),
-        }
-    }
 }
 
 #[derive(Debug)]

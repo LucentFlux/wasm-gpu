@@ -5,7 +5,7 @@ use crate::externs::{Extern, NamedExtern};
 use crate::instance::data::{DataPtr, MappedDataInstance};
 use crate::instance::element::{ElementPtr, MappedElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
-use crate::instance::global::builder::{AbstractGlobalPtr, MappedGlobalInstanceBuilder};
+use crate::instance::global::builder::{AbstractGlobalPtr, MappedMutableGlobalInstanceBuilder};
 use crate::instance::memory::builder::{AbstractMemoryPtr, MappedMemoryInstanceSetBuilder};
 use crate::instance::table::builder::{AbstractTablePtr, MappedTableInstanceSetBuilder};
 use crate::module::module_environ::{
@@ -20,14 +20,13 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::slice::Iter;
 use std::sync::Arc;
-use wasmparser::{DataKind, Type, ValType, Validator};
+use wasmparser::{Type, ValType, Validator};
 
 /// A wasm module that has not been instantiated
 pub struct Module<B>
 where
     B: Backend,
 {
-    name: String,
     backend: Arc<B>,
     parsed: ParsedModuleUnit,
 }
@@ -77,7 +76,6 @@ where
     pub fn new<'a>(
         engine: &Engine<B>,
         bytes: impl IntoIterator<Item = &'a u8>,
-        name: &str,
     ) -> Result<Self, Error> {
         let wasm: Vec<_> = bytes.into_iter().map(|v| *v).collect();
         let wasm: Cow<'_, [u8]> = wat::parse_bytes(wasm.as_slice())?;
@@ -86,7 +84,6 @@ where
         let parsed = Self::parse(engine, wasm)?;
 
         return Ok(Self {
-            name: name.to_owned(),
             backend: engine.backend(),
             parsed,
         });
@@ -171,7 +168,7 @@ where
     /// module, then writes the initial values
     pub(crate) async fn initialize_globals<T>(
         &self,
-        globals_instance: &mut MappedGlobalInstanceBuilder<B>,
+        globals_instance: &mut MappedMutableGlobalInstanceBuilder<B>,
         global_imports: impl Iterator<Item = AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<AbstractGlobalPtr<B, T>> {
@@ -194,7 +191,7 @@ where
 
         // Reserve
         globals_instance.reserve_immutable(immutable_space).await;
-        globals_instance.reserve_mutable(mutable_space).await;
+        globals_instance.reserve(mutable_space).await;
 
         // Add the values
         let mut results = global_imports.into_iter().collect_vec();
@@ -227,7 +224,7 @@ where
         &self,
         elements: &mut MappedElementInstance<B>,
         // Needed for const expr evaluation
-        module_globals: &mut MappedGlobalInstanceBuilder<B>,
+        module_globals: &mut MappedMutableGlobalInstanceBuilder<B>,
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<ElementPtr<B, T>> {
@@ -273,7 +270,7 @@ where
         elements: &mut MappedElementInstance<B>,
         module_element_ptrs: &Vec<ElementPtr<B, T>>,
         // Needed for const expr evaluation
-        module_globals: &mut MappedGlobalInstanceBuilder<B>,
+        module_globals: &mut MappedMutableGlobalInstanceBuilder<B>,
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<AbstractTablePtr<B, T>> {
@@ -356,7 +353,7 @@ where
         datas: &mut MappedDataInstance<B>,
         module_data_ptrs: &Vec<DataPtr<B, T>>,
         // Needed for const expr evaluation
-        module_globals: &mut MappedGlobalInstanceBuilder<B>,
+        module_globals: &mut MappedMutableGlobalInstanceBuilder<B>,
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<AbstractMemoryPtr<B, T>> {

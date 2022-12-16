@@ -1,3 +1,4 @@
+use crate::capabilities::CapabilityStore;
 use crate::impl_concrete_ptr;
 use crate::instance::table::builder::AbstractTablePtr;
 use futures::future::join_all;
@@ -13,21 +14,25 @@ where
     B: Backend,
 {
     data: Vec<DeviceInterleavedBuffer<B, STRIDE>>,
-    id: usize,
+    cap_set: CapabilityStore,
 }
 
 impl<B> UnmappedTableInstanceSet<B>
 where
     B: Backend,
 {
-    pub(crate) async fn new(sources: &Vec<B::DeviceMemoryBlock>, count: usize, id: usize) -> Self {
+    pub(crate) async fn new(
+        sources: &Vec<B::DeviceMemoryBlock>,
+        count: usize,
+        cap_set: CapabilityStore,
+    ) -> Self {
         let tables = sources
             .iter()
             .map(|source: &B::DeviceMemoryBlock| source.interleave(count));
 
         let data: Vec<_> = join_all(tables).await.into_iter().collect();
 
-        Self { data, id }
+        Self { data, cap_set }
     }
 }
 
@@ -36,7 +41,7 @@ where
     B: Backend,
 {
     data: HostInterleavedBuffer<B, STRIDE>,
-    id: usize,
+    cap_set: CapabilityStore,
 }
 
 impl_concrete_ptr!(

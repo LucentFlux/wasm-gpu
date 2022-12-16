@@ -1,10 +1,9 @@
-use crate::externs::Extern;
+use crate::externs::{Extern, NamedExtern};
 use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
 use crate::instance::global::builder::AbstractGlobalPtr;
 use crate::instance::memory::builder::AbstractMemoryPtr;
 use crate::instance::table::builder::AbstractTablePtr;
 use crate::module::module_environ::ModuleExport;
-use crate::read_only::AppendOnlyVec;
 use crate::typed::WasmTyVec;
 use anyhow::{anyhow, Context};
 use lf_hal::backend::Backend;
@@ -18,27 +17,29 @@ pub mod memory;
 pub mod ptrs;
 pub mod table;
 
-pub struct ModuleInstanceSet<B, T>
+/// Points into a `StoreSetBuilder`, `CompletedBuilder`, `DeviceStoreSet` or `HostStoreSet` to the
+/// elements given by the module instantiated to produce this object
+pub struct ModuleInstanceReferences<B, T>
 where
     B: Backend,
 {
-    funcs: AppendOnlyVec<UntypedFuncPtr<B, T>>,
-    tables: AppendOnlyVec<AbstractTablePtr<B, T>>,
-    memories: AppendOnlyVec<AbstractMemoryPtr<B, T>>,
-    globals: AppendOnlyVec<AbstractGlobalPtr<B, T>>,
+    funcs: Vec<UntypedFuncPtr<B, T>>,
+    tables: Vec<AbstractTablePtr<B, T>>,
+    memories: Vec<AbstractMemoryPtr<B, T>>,
+    globals: Vec<AbstractGlobalPtr<B, T>>,
     exports: HashMap<String, ModuleExport>,
     start_fn: Option<UntypedFuncPtr<B, T>>,
 }
 
-impl<B, T> ModuleInstanceSet<B, T>
+impl<B, T> ModuleInstanceReferences<B, T>
 where
     B: Backend,
 {
     pub fn new(
-        funcs: AppendOnlyVec<UntypedFuncPtr<B, T>>,
-        tables: AppendOnlyVec<AbstractTablePtr<B, T>>,
-        memories: AppendOnlyVec<AbstractMemoryPtr<B, T>>,
-        globals: AppendOnlyVec<AbstractGlobalPtr<B, T>>,
+        funcs: Vec<UntypedFuncPtr<B, T>>,
+        tables: Vec<AbstractTablePtr<B, T>>,
+        memories: Vec<AbstractMemoryPtr<B, T>>,
+        globals: Vec<AbstractGlobalPtr<B, T>>,
         exports: HashMap<String, ModuleExport>,
         start_fn: Option<UntypedFuncPtr<B, T>>,
     ) -> Self {
@@ -50,6 +51,21 @@ where
             exports,
             start_fn,
         }
+    }
+
+    pub fn get_named_exports(&self, module_name: &str) -> Vec<NamedExtern<B, T>> {
+        self.exports
+            .keys()
+            .into_iter()
+            .map(|export_name| {
+                let export = self.get_export(export_name).unwrap();
+                NamedExtern {
+                    module: module_name.to_string(),
+                    name: export_name.to_string(),
+                    ext: export,
+                }
+            })
+            .collect()
     }
 
     pub fn get_export(&self, name: &str) -> Option<Extern<B, T>> {
@@ -72,6 +88,14 @@ where
                 Extern::Func(f) => Ok(f.clone()),
                 _ => Err(anyhow!("exported object named {} is not a function", name)),
             })
+    }
+
+    /// Used when evaluating const expressions
+    pub(crate) fn get_func_at(&self, i: usize) -> Option<&UntypedFuncPtr<B, T>> {
+        self.funcs.get(i)
+    }
+    pub(crate) fn get_global_at(&self, i: usize) -> Option<&AbstractGlobalPtr<B, T>> {
+        self.globals.get(i)
     }
 
     /// Create an exported function that tracks its types.
