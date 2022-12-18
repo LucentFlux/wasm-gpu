@@ -7,7 +7,7 @@ use lf_hal::memory::DeviceMemoryBlock;
 
 const STRIDE: usize = 1; // 1 * u32
 
-pub struct UnmappedMutableGlobalInstanceSet<B>
+pub struct UnmappedMutableGlobalsInstanceSet<B>
 where
     B: Backend,
 {
@@ -16,7 +16,7 @@ where
     cap_set: CapabilityStore,
 }
 
-impl<B> UnmappedMutableGlobalInstanceSet<B>
+impl<B> UnmappedMutableGlobalsInstanceSet<B>
 where
     B: Backend,
 {
@@ -32,7 +32,7 @@ where
     }
 }
 
-pub struct MappedMutableGlobalInstanceSet<B>
+pub struct MappedMutableGlobalsInstanceSet<B>
 where
     B: Backend,
 {

@@ -1,12 +1,19 @@
-use crate::atomic_counter::AtomicCounter;
 use crate::capabilities::CapabilityStore;
 use crate::impl_immutable_ptr;
+use crate::instance::global::builder::AbstractGlobalMutablePtr;
+use crate::instance::global::{impl_global_get, impl_global_push};
+use crate::instance::AbstractGlobalPtr;
 use crate::typed::WasmTyVal;
+use crate::ExternRef;
+use crate::FuncRef;
+use crate::Ieee32;
+use crate::Ieee64;
+use crate::Val;
 use lf_hal::backend::Backend;
 use lf_hal::memory::{MainMemoryBlock, MemoryBlock};
 use std::mem::size_of;
 use std::sync::Arc;
-use wasmparser::GlobalType;
+use wasmparser::{GlobalType, ValType};
 
 pub struct UnmappedImmutableGlobalsInstance<B>
 where
@@ -67,6 +74,10 @@ impl<B: Backend> MappedImmutableGlobalsInstance<B> {
         return GlobalImmutablePtr::new(start, self.cap_set.get_cap(), V::VAL_TYPE);
     }
 
+    impl_global_push! {
+        pub async fn push<T>(&mut self, val: Val) -> GlobalImmutablePtr<B, T>
+    }
+
     pub async fn get_typed<T, V: WasmTyVal>(&mut self, ptr: &GlobalImmutablePtr<B, T>) -> V {
         assert!(
             self.cap_set.check(&ptr.cap),
@@ -89,6 +100,10 @@ impl<B: Backend> MappedImmutableGlobalsInstance<B> {
         );
     }
 
+    impl_global_get! {
+        pub async fn get<T>(&mut self, ptr: &GlobalImmutablePtr<B, T>) -> Val
+    }
+
     pub async fn unmap(self) -> UnmappedImmutableGlobalsInstance<B> {
         assert_eq!(
             self.head,
@@ -108,7 +123,7 @@ impl<B: Backend> MappedImmutableGlobalsInstance<B> {
 impl_immutable_ptr!(
     pub struct GlobalImmutablePtr<B: Backend, T> {
         data...
-        content_type: ValType,
+        content_type: wasmparser::ValType,
     }
 );
 

@@ -139,8 +139,8 @@ impl Val {
     }
 }
 
-impl From<WastArg> for Val {
-    fn from(value: WastArg) -> Self {
+impl<'a> From<WastArg<'a>> for Val {
+    fn from(value: WastArg<'a>) -> Self {
         match value {
             WastArg::Core(c) => Self::from(c),
             WastArg::Component(_) => panic!("component model not supported"),
@@ -148,8 +148,8 @@ impl From<WastArg> for Val {
     }
 }
 
-impl From<WastArgCore> for Val {
-    fn from(value: WastArgCore) -> Self {
+impl<'a> From<WastArgCore<'a>> for Val {
+    fn from(value: WastArgCore<'a>) -> Self {
         match value {
             WastArgCore::I32(i) => Self::I32(i),
             WastArgCore::I64(i) => Self::I64(i),

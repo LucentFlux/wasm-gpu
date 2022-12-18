@@ -30,9 +30,9 @@ async fn main() -> anyhow::Result<()> {
                 call $host_hello)
         )
     "#;
-    let module = wasp::Module::new(&engine, wat.as_bytes(), "main")?;
+    let module = wasp::Module::new(&engine, wat.as_bytes())?;
 
-    let mut store_builder = wasp::StoreSetBuilder::new(&engine).await;
+    let mut store_builder = wasp::StoreSetBuilder::new(engine.backend()).await;
 
     let host_hello = wasp::Func::wrap(&mut store_builder, |caller: Caller<_, u32>, param: i32| {
         Box::pin(async move {
@@ -62,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
     let mut stores = store_source.build([16]).await;
 
     hellos
-        .call_all(&mut stores, |_| ())
+        .call_all(&mut stores, vec![(); 16])
         .await
         .expect_all("could not call all hello functions");
 

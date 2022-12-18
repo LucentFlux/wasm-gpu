@@ -71,7 +71,7 @@ impl CapabilityStore {
 }
 
 /// This is the capability that a pointer stores into a buffer, to be checked against a store.
-#[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug, Hash)]
 pub struct Capability {
     id: usize,
 }

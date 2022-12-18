@@ -62,7 +62,7 @@ impl<B: Backend> MappedElementInstance<B> {
 
         self.head = end;
 
-        return ElementPtr::new(start, self.id, element.len());
+        return ElementPtr::new(start, self.cap_set.get_cap(), element.len());
     }
 
     pub async fn get<T>(&mut self, ptr: &ElementPtr<B, T>) -> &[u8] {

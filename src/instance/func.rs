@@ -64,7 +64,7 @@ where
 impl_immutable_ptr!(
     pub struct UntypedFuncPtr<B: Backend, T> {
         data...
-        ty: FuncType,
+        ty: wasmparser::FuncType,
     }
 );
 
@@ -118,7 +118,7 @@ impl<B: Backend, T> UntypedFuncPtr<B, T> {
 impl_immutable_ptr!(
     pub struct TypedFuncPtr<B: Backend, T, Params: WasmTyVec, Results: WasmTyVec> {
         data...
-        ty: FuncType,
+        ty: wasmparser::FuncType,
     }
 );
 
@@ -135,7 +135,7 @@ impl<B: Backend, T, Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<B, T, Pa
         stores: &'a mut DeviceStoreSet<B, T>,
         args: impl IntoIterator<Item = Params>,
     ) -> BoxFuture<'a, Vec<anyhow::Result<Results>>> {
-        let args = args.into_iter().collect();
+        let args = args.into_iter().map(|v| v.to_val_vec()).collect();
 
         let entry_func = self.as_untyped();
         let session = Session::new(stores.backend.clone(), stores, entry_func, args);

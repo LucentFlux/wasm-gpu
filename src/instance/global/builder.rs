@@ -1,23 +1,17 @@
-use crate::atomic_counter::AtomicCounter;
 use crate::capabilities::CapabilityStore;
 use crate::impl_abstract_ptr;
 use crate::instance::func::UntypedFuncPtr;
 use crate::instance::global::immutable::GlobalImmutablePtr;
-use crate::instance::global::immutable::{
-    MappedImmutableGlobalsInstance, UnmappedImmutableGlobalsInstance,
-};
 use crate::instance::global::instance::GlobalMutablePtr;
-use crate::instance::global::instance::UnmappedMutableGlobalInstanceSet;
-use crate::module::module_environ::Global;
+use crate::instance::global::instance::UnmappedMutableGlobalsInstanceSet;
+use crate::instance::global::{impl_global_get, impl_global_push};
 use crate::typed::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal};
 use lf_hal::backend::Backend;
 use lf_hal::memory::{MainMemoryBlock, MemoryBlock};
-use std::future::join;
 use std::mem::size_of;
-use std::sync::Arc;
-use wasmparser::{GlobalType, Operator, ValType};
+use wasmparser::{GlobalType, ValType};
 
-pub struct UnmappedMutableGlobalInstanceBuilder<B>
+pub struct UnmappedMutableGlobalsInstanceBuilder<B>
 where
     B: Backend,
 {
@@ -26,9 +20,9 @@ where
     cap_set: CapabilityStore,
 }
 
-impl<B: Backend> UnmappedMutableGlobalInstanceBuilder<B> {
-    pub async fn build(&self, count: usize) -> UnmappedMutableGlobalInstanceSet<B> {
-        return UnmappedMutableGlobalInstanceSet::new(
+impl<B: Backend> UnmappedMutableGlobalsInstanceBuilder<B> {
+    pub async fn build(&self, count: usize) -> UnmappedMutableGlobalsInstanceSet<B> {
+        return UnmappedMutableGlobalsInstanceSet::new(
             &self.mutable_values,
             count,
             self.cap_set.clone(),
@@ -37,7 +31,7 @@ impl<B: Backend> UnmappedMutableGlobalInstanceBuilder<B> {
     }
 }
 
-pub struct MappedMutableGlobalInstanceBuilder<B>
+pub struct MappedMutableGlobalsInstanceBuilder<B>
 where
     B: Backend,
 {
@@ -48,7 +42,7 @@ where
     cap_set: CapabilityStore,
 }
 
-impl<B: Backend> MappedMutableGlobalInstanceBuilder<B> {
+impl<B: Backend> MappedMutableGlobalsInstanceBuilder<B> {
     pub async fn new(backend: &B) -> Self {
         Self {
             mutable_values: backend.create_and_map_empty().await,
@@ -63,7 +57,7 @@ impl<B: Backend> MappedMutableGlobalInstanceBuilder<B> {
         self.cap_set = self.cap_set.resize_ref(self.mutable_values.len())
     }
 
-    async fn push_typed<V, T>(&mut self, v: V) -> AbstractGlobalPtr<B, T>
+    async fn push_typed<V, T>(&mut self, v: V) -> AbstractGlobalMutablePtr<B, T>
     where
         V: WasmTyVal,
     {
@@ -79,20 +73,11 @@ impl<B: Backend> MappedMutableGlobalInstanceBuilder<B> {
 
         self.mutable_values_head = end;
 
-        let mutable_ptr = AbstractGlobalMutablePtr::new(start, self.id, V::VAL_TYPE);
-        return AbstractGlobalPtr::Mutable(mutable_ptr);
+        return AbstractGlobalMutablePtr::new(start, self.cap_set.get_cap(), V::VAL_TYPE);
     }
 
-    pub async fn push<T>(&mut self, val: Val) -> AbstractGlobalPtr<B, T> {
-        match val {
-            Val::I32(v) => self.push_typed(v).await,
-            Val::I64(v) => self.push_typed(v).await,
-            Val::F32(v) => self.push_typed(v).await,
-            Val::F64(v) => self.push_typed(v).await,
-            Val::V128(v) => self.push_typed(v).await,
-            Val::FuncRef(v) => self.push_typed(v).await,
-            Val::ExternRef(v) => self.push_typed(v).await,
-        }
+    impl_global_push! {
+        pub async fn push<T>(&mut self, val: Val) -> AbstractGlobalMutablePtr<B, T>
     }
 
     /// A typed version of `get`, panics if types mismatch
@@ -119,25 +104,11 @@ impl<B: Backend> MappedMutableGlobalInstanceBuilder<B> {
         );
     }
 
-    async fn get_val<T, V: WasmTyVal>(&mut self, ptr: &AbstractGlobalMutablePtr<B, T>) -> Val {
-        self.get_typed::<T, V>(ptr).await.to_val()
+    impl_global_get! {
+        pub async fn get<T>(&mut self, ptr: &AbstractGlobalMutablePtr<B, T>) -> Val
     }
 
-    pub async fn get<T>(&mut self, ptr: &AbstractGlobalMutablePtr<B, T>) -> Val {
-        assert_eq!(self.id, ptr.id());
-
-        match &ptr.content_type() {
-            ValType::I32 => self.get_val::<T, i32>(ptr).await,
-            ValType::I64 => self.get_val::<T, i64>(ptr).await,
-            ValType::F32 => self.get_val::<T, Ieee32>(ptr).await,
-            ValType::F64 => self.get_val::<T, Ieee64>(ptr).await,
-            ValType::V128 => self.get_val::<T, u128>(ptr).await,
-            ValType::FuncRef => self.get_val::<T, FuncRef>(ptr).await,
-            ValType::ExternRef => self.get_val::<T, ExternRef>(ptr).await,
-        }
-    }
-
-    pub async fn unmap(self) -> UnmappedMutableGlobalInstanceBuilder<B> {
+    pub async fn unmap(self) -> UnmappedMutableGlobalsInstanceBuilder<B> {
         assert_eq!(
             self.mutable_values_head,
             self.mutable_values.len(),
@@ -146,9 +117,9 @@ impl<B: Backend> MappedMutableGlobalInstanceBuilder<B> {
 
         let mutable_values = self.mutable_values.unmap().await;
 
-        UnmappedMutableGlobalInstanceBuilder {
+        UnmappedMutableGlobalsInstanceBuilder {
             mutable_values,
-            cap_set: self.,
+            cap_set: self.cap_set,
         }
     }
 }
@@ -177,13 +148,6 @@ impl<B: Backend, T> AbstractGlobalPtr<B, T> {
         match self {
             AbstractGlobalPtr::Immutable(ptr) => ptr.is_type(ty),
             AbstractGlobalPtr::Mutable(ptr) => ptr.is_type(ty),
-        }
-    }
-
-    fn id(&self) -> usize {
-        match self {
-            AbstractGlobalPtr::Immutable(ptr) => ptr.id(),
-            AbstractGlobalPtr::Mutable(ptr) => ptr.id,
         }
     }
 

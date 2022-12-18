@@ -230,7 +230,7 @@ mod tests {
 
         let engine = wasp::Engine::new(backend, Config::default());
 
-        let mut stores_builder = StoreSetBuilder::new(&engine).await;
+        let mut stores_builder = StoreSetBuilder::new(engine.backend()).await;
 
         let wat = format!(
             r#"
@@ -244,7 +244,7 @@ mod tests {
             data_str
         );
         let wat = wat.into_bytes();
-        let module = wasp::Module::new(&engine, &wat, "testmod1").unwrap();
+        let module = wasp::Module::new(&engine, &wat).unwrap();
 
         let host_read = Func::wrap(
             &mut stores_builder,
@@ -285,7 +285,7 @@ mod tests {
         let mut stores = stores_builder.build(0..10).await;
 
         module_read
-            .call_all(&mut stores, |_| ())
+            .call_all(&mut stores, vec![(); 10])
             .await
             .expect_all("could not call all hello functions");
     }

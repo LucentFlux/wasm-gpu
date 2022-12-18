@@ -48,7 +48,7 @@ where
         let ptr = self.tables.len();
         self.tables.push(self.backend.create_and_map_empty().await);
         self.cap_set = self.cap_set.resize_ref(self.tables.len());
-        return AbstractTablePtr::new(ptr, self.id, plan.clone());
+        return AbstractTablePtr::new(ptr, self.cap_set.get_cap(), plan.clone());
     }
 
     pub async fn initialize<T>(

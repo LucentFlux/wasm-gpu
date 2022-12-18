@@ -5,12 +5,14 @@ use crate::externs::{Extern, NamedExtern};
 use crate::instance::data::{DataPtr, MappedDataInstance};
 use crate::instance::element::{ElementPtr, MappedElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
-use crate::instance::global::builder::{AbstractGlobalPtr, MappedMutableGlobalInstanceBuilder};
+use crate::instance::global::builder::{AbstractGlobalPtr, MappedMutableGlobalsInstanceBuilder};
+use crate::instance::global::immutable::MappedImmutableGlobalsInstance;
 use crate::instance::memory::builder::{AbstractMemoryPtr, MappedMemoryInstanceSetBuilder};
 use crate::instance::table::builder::{AbstractTablePtr, MappedTableInstanceSetBuilder};
 use crate::module::module_environ::{
     ImportTypeRef, ModuleEnviron, ModuleExport, ParsedDataKind, ParsedElementKind, ParsedModuleUnit,
 };
+use crate::store_set::builder::interpret_constexpr;
 use crate::typed::{wasm_ty_bytes, FuncRef, Val};
 use crate::Engine;
 use anyhow::{anyhow, Context, Error};
@@ -168,7 +170,8 @@ where
     /// module, then writes the initial values
     pub(crate) async fn initialize_globals<T>(
         &self,
-        globals_instance: &mut MappedMutableGlobalInstanceBuilder<B>,
+        mutable_globals_instance: &mut MappedMutableGlobalsInstanceBuilder<B>,
+        immutable_globals_instance: &mut MappedImmutableGlobalsInstance<B>,
         global_imports: impl Iterator<Item = AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<AbstractGlobalPtr<B, T>> {
@@ -190,15 +193,25 @@ where
         let mutable_space: usize = mutables.into_iter().map(|(_, v)| v).sum();
 
         // Reserve
-        globals_instance.reserve_immutable(immutable_space).await;
-        globals_instance.reserve(mutable_space).await;
+        immutable_globals_instance.reserve(immutable_space).await;
+        mutable_globals_instance.reserve(mutable_space).await;
 
         // Add the values
         let mut results = global_imports.into_iter().collect_vec();
         for global in self.parsed.borrow_sections().globals.iter() {
-            let ptr: AbstractGlobalPtr<B, T> = globals_instance
-                .add_global(global.clone(), &results, &module_func_ptrs)
-                .await;
+            let value = interpret_constexpr(
+                &global.initializer,
+                mutable_globals_instance,
+                immutable_globals_instance,
+                &results,
+                &module_func_ptrs,
+            )
+            .await;
+            let ptr: AbstractGlobalPtr<B, T> = if global.ty.mutable {
+                AbstractGlobalPtr::Mutable(mutable_globals_instance.push(value).await)
+            } else {
+                AbstractGlobalPtr::Immutable(immutable_globals_instance.push(value).await)
+            };
             results.push(ptr);
         }
 
@@ -224,7 +237,8 @@ where
         &self,
         elements: &mut MappedElementInstance<B>,
         // Needed for const expr evaluation
-        module_globals: &mut MappedMutableGlobalInstanceBuilder<B>,
+        module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder<B>,
+        module_immutable_globals: &mut MappedImmutableGlobalsInstance<B>,
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<ElementPtr<B, T>> {
@@ -245,9 +259,14 @@ where
             // Evaluate values
             let mut vals = Vec::new();
             for expr in element.items.iter() {
-                let v = module_globals
-                    .interpret_constexpr(expr, module_global_ptrs, module_func_ptrs)
-                    .await;
+                let v = interpret_constexpr(
+                    expr,
+                    module_mutable_globals,
+                    module_immutable_globals,
+                    module_global_ptrs,
+                    module_func_ptrs,
+                )
+                .await;
                 let v = match (v, &element.ty) {
                     (Val::FuncRef(fr), ValType::FuncRef) => fr.as_u32(),
                     (Val::ExternRef(er), ValType::ExternRef) => er.as_u32(),
@@ -270,7 +289,8 @@ where
         elements: &mut MappedElementInstance<B>,
         module_element_ptrs: &Vec<ElementPtr<B, T>>,
         // Needed for const expr evaluation
-        module_globals: &mut MappedMutableGlobalInstanceBuilder<B>,
+        module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder<B>,
+        module_immutable_globals: &mut MappedImmutableGlobalsInstance<B>,
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<AbstractTablePtr<B, T>> {
@@ -299,9 +319,14 @@ where
                     let table_ptr = ptrs
                         .get((*table_index) as usize)
                         .expect("table index out of range");
-                    let v = module_globals
-                        .interpret_constexpr(offset_expr, module_global_ptrs, module_func_ptrs)
-                        .await;
+                    let v = interpret_constexpr(
+                        offset_expr,
+                        module_mutable_globals,
+                        module_immutable_globals,
+                        module_global_ptrs,
+                        module_func_ptrs,
+                    )
+                    .await;
                     let offset = match v {
                         Val::I32(v) => v as usize,
                         Val::I64(v) => v as usize,
@@ -353,7 +378,8 @@ where
         datas: &mut MappedDataInstance<B>,
         module_data_ptrs: &Vec<DataPtr<B, T>>,
         // Needed for const expr evaluation
-        module_globals: &mut MappedMutableGlobalInstanceBuilder<B>,
+        module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder<B>,
+        module_immutable_globals: &mut MappedImmutableGlobalsInstance<B>,
         module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
     ) -> Vec<AbstractMemoryPtr<B, T>> {
@@ -384,9 +410,14 @@ where
                     let memory_ptr = ptrs
                         .get((*memory_index) as usize)
                         .expect("memory index out of range");
-                    let v = module_globals
-                        .interpret_constexpr(offset_expr, module_global_ptrs, module_func_ptrs)
-                        .await;
+                    let v = interpret_constexpr(
+                        offset_expr,
+                        module_mutable_globals,
+                        module_immutable_globals,
+                        module_global_ptrs,
+                        module_func_ptrs,
+                    )
+                    .await;
                     let offset = match v {
                         Val::I32(v) => v as usize,
                         Val::I64(v) => v as usize,

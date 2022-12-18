@@ -3,7 +3,7 @@ use crate::instance::data::{MappedDataInstance, UnmappedDataInstance};
 use crate::instance::element::{MappedElementInstance, UnmappedElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
 use crate::instance::global::builder::{
-    AbstractGlobalPtr, MappedMutableGlobalInstanceBuilder, UnmappedMutableGlobalInstanceBuilder,
+    AbstractGlobalPtr, MappedMutableGlobalsInstanceBuilder, UnmappedMutableGlobalsInstanceBuilder,
 };
 use crate::instance::global::immutable::{
     MappedImmutableGlobalsInstance, UnmappedImmutableGlobalsInstance,
@@ -22,6 +22,66 @@ use std::future::join;
 use std::sync::Arc;
 use wasmparser::{Global, Operator, ValType};
 
+/// Used during instantiation to evaluate an expression in a single pass
+pub(crate) async fn interpret_constexpr<'data, B: Backend, T>(
+    constr_expr: &Vec<Operator<'data>>,
+    mutable_globals: &mut MappedMutableGlobalsInstanceBuilder<B>,
+    immutable_globals: &mut MappedImmutableGlobalsInstance<B>,
+    global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
+    func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
+) -> Val {
+    let mut stack = Vec::new();
+
+    let mut iter = constr_expr.into_iter();
+    while let Some(expr) = iter.next() {
+        match expr {
+            Operator::I32Const { value } => stack.push(Val::I32(*value)),
+            Operator::I64Const { value } => stack.push(Val::I64(*value)),
+            Operator::F32Const { value } => stack.push(Val::F32(Ieee32::from(*value))),
+            Operator::F64Const { value } => stack.push(Val::F64(Ieee64::from(*value))),
+            Operator::V128Const { value } => {
+                stack.push(Val::V128(u128::from_le_bytes(value.bytes().clone())))
+            }
+            Operator::RefNull { ty } => match ty {
+                ValType::FuncRef => stack.push(Val::FuncRef(FuncRef::none())),
+                ValType::ExternRef => stack.push(Val::ExternRef(ExternRef::none())),
+                _ => unreachable!(),
+            },
+            Operator::RefFunc { function_index } => {
+                let function_index = usize::try_from(*function_index).unwrap();
+                let function_ptr = func_ptrs
+                    .get(function_index)
+                    .expect("function index out of range of module functions");
+                stack.push(Val::FuncRef(function_ptr.to_func_ref()))
+            }
+            Operator::GlobalGet { global_index } => {
+                let global_index = usize::try_from(*global_index).unwrap();
+                let global_ptr = global_ptrs
+                    .get(global_index)
+                    .expect("global index out of range of module globals");
+                let global_val = match global_ptr {
+                    AbstractGlobalPtr::Immutable(imm_ptr) => immutable_globals.get(imm_ptr).await,
+                    AbstractGlobalPtr::Mutable(mut_ptr) => mutable_globals.get(mut_ptr).await,
+                };
+
+                stack.push(global_val)
+            }
+            Operator::End => {
+                if !iter.next().is_none() {
+                    // End at end
+                    panic!("end expression was found before the end of the constexpr - this should be caught by validation earlier")
+                }
+                break;
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    let res = stack.pop().expect("expression did not result in a value");
+
+    return res;
+}
+
 /// Acts like a traditional OOP factory where we initialise modules into this before
 /// creating single Stores after all initialization is done, to amortize the instantiation cost
 pub struct StoreSetBuilder<B, T>
@@ -32,7 +92,7 @@ where
 
     tables: MappedTableInstanceSetBuilder<B>,
     memories: MappedMemoryInstanceSetBuilder<B>,
-    mutable_globals: MappedMutableGlobalInstanceBuilder<B>,
+    mutable_globals: MappedMutableGlobalsInstanceBuilder<B>,
     // Immutable so don't need to be abstr
     elements: MappedElementInstance<B>,
     datas: MappedDataInstance<B>,
@@ -45,85 +105,29 @@ where
     B: Backend,
 {
     pub async fn new(backend: Arc<B>) -> Self {
-        let mutable_globals_fut = MappedMutableGlobalInstanceBuilder::new(backend.as_ref());
+        let mutable_globals_fut = MappedMutableGlobalsInstanceBuilder::new(backend.as_ref());
+        let immutable_globals_fut = MappedImmutableGlobalsInstance::new(backend.clone());
         let elements_fut = MappedElementInstance::new(backend.as_ref());
         let datas_fut = MappedDataInstance::new(backend.as_ref());
 
-        let (mutable_globals, elements, datas) =
-            join!(mutable_globals_fut, elements_fut, datas_fut).await;
+        let (mutable_globals, immutable_globals, elements, datas) = join!(
+            mutable_globals_fut,
+            immutable_globals_fut,
+            elements_fut,
+            datas_fut
+        )
+        .await;
 
         Self {
             functions: FuncsInstance::new(),
             tables: MappedTableInstanceSetBuilder::new(backend.clone()),
             memories: MappedMemoryInstanceSetBuilder::new(backend.clone()),
-            immutable_globals: MappedImmutableGlobalsInstance::new(backend.clone()),
+            immutable_globals,
             mutable_globals,
             elements,
             datas,
             backend,
         }
-    }
-
-    /// Used during instantiation to evaluate an expression in a single pass
-    pub async fn interpret_constexpr<'data, T>(
-        &mut self,
-        constr_expr: &Vec<Operator<'data>>,
-        module: &ModuleInstanceReferences<B, T>,
-    ) -> Val {
-        let mut stack = Vec::new();
-
-        let mut iter = constr_expr.into_iter();
-        while let Some(expr) = iter.next() {
-            match expr {
-                Operator::I32Const { value } => stack.push(Val::I32(*value)),
-                Operator::I64Const { value } => stack.push(Val::I64(*value)),
-                Operator::F32Const { value } => stack.push(Val::F32(Ieee32::from(*value))),
-                Operator::F64Const { value } => stack.push(Val::F64(Ieee64::from(*value))),
-                Operator::V128Const { value } => {
-                    stack.push(Val::V128(u128::from_le_bytes(value.bytes().clone())))
-                }
-                Operator::RefNull { ty } => match ty {
-                    ValType::FuncRef => stack.push(Val::FuncRef(FuncRef::none())),
-                    ValType::ExternRef => stack.push(Val::ExternRef(ExternRef::none())),
-                    _ => unreachable!(),
-                },
-                Operator::RefFunc { function_index } => {
-                    let function_index = usize::try_from(*function_index).unwrap();
-                    let function_ptr = module
-                        .get_func_at(function_index)
-                        .expect("function index out of range of module functions");
-                    stack.push(Val::FuncRef(function_ptr.to_func_ref()))
-                }
-                Operator::GlobalGet { global_index } => {
-                    let global_index = usize::try_from(*global_index).unwrap();
-                    let global_ptr = module
-                        .get_global_at(global_index)
-                        .expect("global index out of range of module globals");
-                    let global_val = match global_ptr {
-                        AbstractGlobalPtr::Immutable(imm_ptr) => {
-                            self.immutable_globals.get(imm_ptr).await
-                        }
-                        AbstractGlobalPtr::Mutable(mut_ptr) => {
-                            self.mutable_globals.get(mut_ptr).await
-                        }
-                    };
-
-                    stack.push(global_val)
-                }
-                Operator::End => {
-                    if !iter.next().is_none() {
-                        // End at end
-                        panic!("end expression was found before the end of the constexpr - this should be caught by validation earlier")
-                    }
-                    break;
-                }
-                _ => unreachable!(),
-            }
-        }
-
-        let res = stack.pop().expect("expression did not result in a value");
-
-        return res;
     }
 
     pub(crate) async fn snapshot(src: &DeviceStoreSet<B, T>, store_index: usize) -> Self {
@@ -153,6 +157,7 @@ where
         let global_ptrs = module
             .initialize_globals(
                 &mut self.mutable_globals,
+                &mut self.immutable_globals,
                 validated_imports.globals().map(|p| p.clone()),
                 &predicted_func_ptrs,
             )
@@ -163,6 +168,7 @@ where
             .initialize_elements(
                 &mut self.elements,
                 &mut self.mutable_globals,
+                &mut self.immutable_globals,
                 &global_ptrs,
                 &predicted_func_ptrs,
             )
@@ -176,6 +182,7 @@ where
                 &mut self.elements,
                 &element_ptrs,
                 &mut self.mutable_globals,
+                &mut self.immutable_globals,
                 &global_ptrs,
                 &predicted_func_ptrs,
             )
@@ -192,6 +199,7 @@ where
                 &mut self.datas,
                 &data_ptrs,
                 &mut self.mutable_globals,
+                &mut self.immutable_globals,
                 &global_ptrs,
                 &predicted_func_ptrs,
             )
@@ -241,28 +249,6 @@ where
         return self.functions.register(func);
     }
 
-    pub async fn add_global<T>(
-        &mut self,
-        global: Global<'_>,
-        module: &ModuleInstanceReferences<B, T>,
-    ) -> AbstractGlobalPtr<B, T> {
-        // Initialise
-        let val = self.interpret_constexpr(&global.initializer, module).await;
-        assert_eq!(
-            val.get_type(),
-            global.ty.content_type,
-            "global evaluation had differing type to definition"
-        );
-
-        let ptr = if global.ty.mutable {
-            AbstractGlobalPtr::Mutable(self.mutable_globals.push(val).await)
-        } else {
-            AbstractGlobalPtr::Immutable(self.immutable_globals.push(val).await)
-        };
-
-        return ptr;
-    }
-
     /// Takes this builder and makes it immutable, allowing instances to be created from it
     pub async fn complete(self) -> CompletedBuilder<B, T> {
         let Self {
@@ -301,7 +287,7 @@ pub struct CompletedBuilder<B: Backend, T> {
     // Move host things to GPU
     tables: UnmappedTableInstanceSetBuilder<B>,
     memories: UnmappedMemoryInstanceSetBuilder<B>,
-    mutable_globals: UnmappedMutableGlobalInstanceBuilder<B>,
+    mutable_globals: UnmappedMutableGlobalsInstanceBuilder<B>,
     immutable_globals: Arc<UnmappedImmutableGlobalsInstance<B>>,
     elements: Arc<UnmappedElementInstance<B>>,
     datas: Arc<UnmappedDataInstance<B>>,

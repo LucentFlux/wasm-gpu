@@ -34,7 +34,7 @@ where
 impl<B: Backend> MappedMemoryInstanceSetBuilder<B> {
     pub fn new(backend: Arc<B>) -> Self {
         Self {
-            cap_set: CapabilityStore.new(0),
+            cap_set: CapabilityStore::new(0),
             backend,
             memories: Vec::new(),
         }

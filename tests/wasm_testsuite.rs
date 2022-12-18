@@ -1,3 +1,5 @@
+#![feature(iter_array_chunks)]
+
 use itertools::Itertools;
 use lf_hal::wgpu::{WgpuBackend, WgpuBackendConfig};
 use lf_hal::BufferRingConfig;
@@ -58,23 +60,19 @@ impl WastState {
         }
     }
 
-    async fn add_module(&mut self, mut quote_wast: QuoteWat) {
-        let bytes = quote_wast.encode().expect(&format!(
-            "could not encode expected module at {:?}",
-            kind.span()
-        ));
+    async fn add_module<'a>(&'a mut self, mut quote_wast: QuoteWat<'a>, span: &Span) {
+        let bytes = quote_wast
+            .encode()
+            .expect(&format!("could not encode expected module at {:?}", span));
         let module = wasp::Module::new(&self.engine, &bytes)
-            .expect(&format!("could not parse module byes at {:?}", kind.span()));
+            .expect(&format!("could not parse module byes at {:?}", span));
         let instance = self
             .store_builder
             .as_mut()
             .unwrap()
             .instantiate_module(&module, self.imports.clone())
             .await
-            .expect(&format!(
-                "could not instantiate module at {:?}",
-                kind.span()
-            ));
+            .expect(&format!("could not instantiate module at {:?}", span));
 
         let instance = Arc::new(instance);
 
@@ -88,39 +86,51 @@ impl WastState {
 
         if let Some(id) = id {
             self.named_modules
-                .insert(id.name().to_string(), instance.clone())
+                .insert(id.name().to_string(), instance.clone());
         }
 
         self.latest_module = Some(instance);
     }
 
-    async fn register_module(&mut self, module: Option<Id>, name: &str) {
+    async fn register_module<'a>(&'a mut self, module: Option<Id<'a>>, name: &'a str, span: &Span) {
         let module = match module {
             None => self
                 .latest_module
                 .as_ref()
                 .expect(&format!(
                     "register without module id, with no previous module at {:?}",
-                    kind.span()
+                    span
                 ))
                 .clone(),
-            Some(id) => self.named_modules.get(id.name()).clone(),
+            Some(id) => self
+                .named_modules
+                .get(id.name())
+                .expect(&format!("no module with id {:?} at {:?}", id, span))
+                .clone(),
         };
         let mut named_exports = module.get_named_exports(name);
         self.imports.append(&mut named_exports)
     }
 
-    async fn invoke(&mut self, wast_invoke: WastInvoke) -> anyhow::Result<Vec<Val>> {
+    async fn invoke<'a>(
+        &'a mut self,
+        wast_invoke: WastInvoke<'a>,
+        span: &Span,
+    ) -> anyhow::Result<Vec<Val>> {
         let module = match wast_invoke.module {
             None => self
                 .latest_module
                 .as_ref()
                 .expect(&format!(
                     "invoke without module id, with no previous module at {:?}",
-                    kind.span()
+                    span
                 ))
                 .clone(),
-            Some(id) => self.named_modules.get(id.name()).clone(),
+            Some(id) => self
+                .named_modules
+                .get(id.name())
+                .expect(&format!("no module with id {:?} at {:?}", id, span))
+                .clone(),
         };
 
         let func = module.get_func(wast_invoke.name).expect(&format!(
@@ -158,9 +168,13 @@ impl WastState {
         return res;
     }
 
-    async fn exec(&mut self, exec: WastExecute) -> anyhow::Result<Vec<Val>> {
+    async fn exec<'a>(
+        &'a mut self,
+        exec: WastExecute<'a>,
+        span: &Span,
+    ) -> anyhow::Result<Vec<Val>> {
         match exec {
-            WastExecute::Invoke(inv) => self.invoke(inv),
+            WastExecute::Invoke(inv) => self.invoke(inv, span).await,
             WastExecute::Wat(_) => unimplemented!(),
             WastExecute::Get { .. } => unimplemented!(),
         }
@@ -180,14 +194,20 @@ async fn check(path: &str, test_offset: usize) {
 
     // Parsed things
     for kind in wast.directives {
+        let span = kind.span();
         match kind {
-            WastDirective::Wat(quote_wast) => state.add_module(quote_wast).await,
+            WastDirective::Wat(quote_wast) => state.add_module(quote_wast, &span).await,
             WastDirective::Register {
                 span: _,
                 name,
                 module,
-            } => state.register_module(module, name).await,
-            WastDirective::Invoke(wast_invoke) => state.invoke(wast_invoke).await,
+            } => state.register_module(module, name, &span).await,
+            WastDirective::Invoke(wast_invoke) => {
+                state
+                    .invoke(wast_invoke, &span)
+                    .await
+                    .expect(&format!("failed to run invoke at {:?}", span));
+            }
             other_kind if (other_kind.span().offset() == test_offset) => {
                 run_assertion(other_kind, state).await;
                 return;
@@ -247,7 +267,7 @@ async fn test_assert_malformed_or_invalid(
         Err(_) => return, // Failure to encode is fine if malformed
     };
 
-    let module = wasp::Module::new(&engine, &bytes);
+    let module = wasp::Module::new(&state.engine, &bytes);
 
     let module = match module {
         Err(_) => return, // We want this to fail
@@ -256,6 +276,7 @@ async fn test_assert_malformed_or_invalid(
 
     let res = state
         .store_builder
+        .unwrap()
         .instantiate_module(&module, state.imports.clone())
         .await;
 
@@ -267,13 +288,13 @@ async fn test_assert_malformed_or_invalid(
     );
 }
 
-async fn test_assert_trap(
+async fn test_assert_trap<'a>(
     mut state: WastState,
-    _span: Span,
-    mut exec: WastExecute,
-    _message: &str,
+    span: Span,
+    mut exec: WastExecute<'a>,
+    _message: &'a str,
 ) {
-    let ret = state.exec(exec).await;
+    let ret = state.exec(exec, &span).await;
 
     assert!(ret.is_err())
 }
@@ -309,48 +330,48 @@ fn vec_matches(got: u128, expected: &V128Pattern) -> bool {
         V128Pattern::I64x2(v) => to_bytes!(v) == bs,
         V128Pattern::F32x4(v) => bs
             .into_iter()
-            .chunks(4)
+            .array_chunks::<4>()
+            .into_iter()
             .map(|i| Ieee32::from_le_bytes(i))
             .zip(v)
             .all(|(got, expected)| f32_matches(got, expected)),
         V128Pattern::F64x2(v) => bs
             .into_iter()
-            .chunks(8)
+            .array_chunks::<8>()
+            .into_iter()
             .map(|i| Ieee64::from_le_bytes(i))
             .zip(v)
             .all(|(got, expected)| f64_matches(got, expected)),
     }
 }
 
-fn test_match(got: Val, expected: &WastRet) -> bool {
+fn test_match(got: Val, expected: &WastRetCore) -> bool {
     match (expected, got) {
-        (WastRet::Core(WastRetCore::I32(i1)), Val::I32(i2)) => i1 == i2,
-        (WastRet::Core(WastRetCore::I64(i1)), Val::I64(i2)) => i1 == i2,
-        (WastRet::Core(WastRetCore::F32(f1)), Val::F32(f2)) => f32_matches(f2, f1),
-        (WastRet::Core(WastRetCore::F64(f1)), Val::F64(f2)) => f64_matches(f2, f1),
-        (WastRet::Core(WastRetCore::V128(v1)), Val::V128(v2)) => vec_matches(v2, v1),
-        (WastRet::Core(WastRetCore::RefNull(Some(HeapType::Func))), Val::FuncRef(r)) => r.is_none(),
-        (WastRet::Core(WastRetCore::RefNull(Some(HeapType::Extern))), Val::ExternRef(r)) => {
-            r.is_none()
-        }
-        (WastRet::Core(WastRetCore::RefFunc(None)), Val::FuncRef(_)) => true,
-        (WastRet::Core(WastRetCore::RefFunc(Some(v))), Val::FuncRef(_)) => true,
-        (WastRet::Core(WastRetCore::RefExtern(v1)), Val::ExternRef(v2)) => v2.as_u32() == Some(*v1),
-        (WastRet::Core(WastRetCore::Either(choices)), got) => {
+        (WastRetCore::I32(i1), Val::I32(i2)) => (*i1) == i2,
+        (WastRetCore::I64(i1), Val::I64(i2)) => (*i1) == i2,
+        (WastRetCore::F32(f1), Val::F32(f2)) => f32_matches(f2, f1),
+        (WastRetCore::F64(f1), Val::F64(f2)) => f64_matches(f2, f1),
+        (WastRetCore::V128(v1), Val::V128(v2)) => vec_matches(v2, v1),
+        (WastRetCore::RefNull(Some(HeapType::Func)), Val::FuncRef(r)) => r.is_none(),
+        (WastRetCore::RefNull(Some(HeapType::Extern)), Val::ExternRef(r)) => r.is_none(),
+        (WastRetCore::RefFunc(None), Val::FuncRef(_)) => true,
+        (WastRetCore::RefFunc(Some(v)), Val::FuncRef(_)) => true,
+        (WastRetCore::RefExtern(v1), Val::ExternRef(v2)) => v2.as_u32() == Some(*v1),
+        (WastRetCore::Either(choices), got) => {
             choices.into_iter().any(|option| test_match(got, option))
         }
         _ => false,
     }
 }
 
-async fn test_assert_return(
+async fn test_assert_return<'a>(
     mut state: WastState,
-    _span: Span,
-    mut exec: WastExecute,
-    results: Vec<WastRet>,
+    span: Span,
+    mut exec: WastExecute<'a>,
+    results: Vec<WastRet<'a>>,
 ) {
     let ret = state
-        .exec(exec)
+        .exec(exec, &span)
         .await
         .expect("failed to run test assert return");
 
@@ -362,6 +383,10 @@ async fn test_assert_return(
     }
 
     for (expected, result) in results.iter().zip(ret.clone()) {
+        let expected = match expected {
+            WastRet::Core(c) => c,
+            WastRet::Component(_) => panic!("component tests aren't supported"),
+        };
         if !test_match(result, expected) {
             panic!(
                 "failed assert return: expected {:?} but got {:?}",

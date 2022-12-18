@@ -59,7 +59,7 @@ impl<B: Backend> MappedDataInstance<B> {
 
         self.head = end;
 
-        return DataPtr::new(start, self.id, data.len());
+        return DataPtr::new(start, self.cap_set.get_cap(), data.len());
     }
 
     pub async fn get<T>(&mut self, ptr: &DataPtr<B, T>) -> &[u8] {

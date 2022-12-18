@@ -90,14 +90,6 @@ where
             })
     }
 
-    /// Used when evaluating const expressions
-    pub(crate) fn get_func_at(&self, i: usize) -> Option<&UntypedFuncPtr<B, T>> {
-        self.funcs.get(i)
-    }
-    pub(crate) fn get_global_at(&self, i: usize) -> Option<&AbstractGlobalPtr<B, T>> {
-        self.globals.get(i)
-    }
-
     /// Create an exported function that tracks its types.
     /// Prefer calling once and reusing the returned exported function.
     pub fn get_typed_func<Params, Results>(

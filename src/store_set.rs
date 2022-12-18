@@ -3,7 +3,7 @@ use crate::instance::element::UnmappedElementInstance;
 use crate::instance::func::FuncsInstance;
 use crate::instance::global::immutable::UnmappedImmutableGlobalsInstance;
 use crate::instance::global::instance::{
-    MappedMutableGlobalInstanceSet, UnmappedMutableGlobalInstanceSet,
+    MappedMutableGlobalsInstanceSet, UnmappedMutableGlobalsInstanceSet,
 };
 use crate::instance::memory::instance::{MappedMemoryInstanceSet, UnmappedMemoryInstanceSet};
 use crate::instance::table::instance::{MappedTableInstanceSet, UnmappedTableInstanceSet};
@@ -19,7 +19,7 @@ where
 {
     pub tables: UnmappedTableInstanceSet<B>,
     pub memories: UnmappedMemoryInstanceSet<B>,
-    pub mutable_globals: UnmappedMutableGlobalInstanceSet<B>,
+    pub mutable_globals: UnmappedMutableGlobalsInstanceSet<B>,
 }
 
 pub struct HostStoreSetData<B>
@@ -28,7 +28,7 @@ where
 {
     pub tables: MappedTableInstanceSet<B>,
     pub memories: MappedMemoryInstanceSet<B>,
-    pub mutable_globals: MappedMutableGlobalInstanceSet<B>,
+    pub mutable_globals: MappedMutableGlobalsInstanceSet<B>,
 }
 
 /// All of the state for a collection of active WASM state machines

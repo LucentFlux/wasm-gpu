@@ -21,8 +21,8 @@ fenwick = "2.0"
 ouroboros = "0.15"
 perfect-derive = "0.1"
 tokio = {version = "1.22", features=["rt", "rt-multi-thread", "macros"]}
+wast = "50.0"
 
 [dev-dependencies]
 rand = "0.8"
-wast = "50.0"
 wasm-spirv-test-gen = {path="test_gen"}
