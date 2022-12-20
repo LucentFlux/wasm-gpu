@@ -451,7 +451,19 @@ where
         if self.parsed.borrow_sections().functions.is_empty() {
             return vec![];
         }
-        unimplemented!()
+
+        let ptrs: Vec<UntypedFuncPtr<B, T>> = func_imports.collect_vec();
+
+        let sections = self.parsed.borrow_sections();
+        for func in sections.functions {
+            let ty = match sections.types.get(func.type_id).unwrap().clone() {
+                Type::FuncType(ty) => ty,
+            };
+
+            // TODO: Compile and add functions
+        }
+
+        return ptrs;
     }
 
     pub fn start_fn<T>(

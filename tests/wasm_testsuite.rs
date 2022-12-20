@@ -241,9 +241,7 @@ async fn run_assertion(directive: WastDirective<'_>, state: WastState) {
             span,
             exec,
             results,
-        } => {
-            panic!("assertion not implemented")
-        }
+        } => test_assert_return(state, span, exec, results).await,
         WastDirective::AssertExhaustion { .. } => {
             panic!("assertion not implemented")
         }
