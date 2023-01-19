@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-lf-hal = {git="https://github.com/LucentFlux/lf-hal.git"}
+wgpu = "0.14"
+wgpu-async = { path = "../wgpu-async" }
+wgpu-lazybuffers = { path = "../wgpu-lazybuffers" }
+wgpu-lazybuffers-operations = { path = "../wgpu-lazybuffers-operations" }
+wgpu-lazybuffers-interleaving = { path = "../wgpu-lazybuffers-interleaving" }
 
 wat = "1.0"
 thiserror = "1.0"
@@ -20,9 +24,9 @@ paste = "1.0"
 fenwick = "2.0"
 ouroboros = "0.15"
 perfect-derive = "0.1"
-tokio = {version = "1.22", features=["rt", "rt-multi-thread", "macros"]}
+tokio = { version = "1.22", features = ["rt", "rt-multi-thread", "macros"] }
 wast = "50.0"
 
 [dev-dependencies]
 rand = "0.8"
-wasm-spirv-test-gen = {path="test_gen"}
+wasm-spirv-test-gen = { path = "test_gen" }

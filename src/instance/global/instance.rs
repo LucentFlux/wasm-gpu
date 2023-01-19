@@ -1,48 +1,53 @@
 use crate::capabilities::CapabilityStore;
 use crate::impl_concrete_ptr;
 use crate::instance::global::builder::AbstractGlobalMutablePtr;
-use lf_hal::backend::Backend;
-use lf_hal::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
-use lf_hal::memory::DeviceMemoryBlock;
+use wgpu_async::{async_device::OutOfMemoryError, async_queue::AsyncQueue};
+use wgpu_lazybuffers::{MemorySystem, UnmappedLazyBuffer};
+use wgpu_lazybuffers_interleaving::{
+    Interleaveable, InterleavedBufferConfig, MappedInterleavedBuffer, UnmappedInterleavedBuffer,
+};
 
-const STRIDE: usize = 1; // 1 * u32
+const STRIDE: u64 = 4; // 1 * u32
 
-pub struct UnmappedMutableGlobalsInstanceSet<B>
-where
-    B: Backend,
-{
-    mutables: DeviceInterleavedBuffer<B, STRIDE>,
+pub struct UnmappedMutableGlobalsInstanceSet {
+    mutables: UnmappedInterleavedBuffer<STRIDE>,
 
     cap_set: CapabilityStore,
 }
 
-impl<B> UnmappedMutableGlobalsInstanceSet<B>
-where
-    B: Backend,
-{
+impl UnmappedMutableGlobalsInstanceSet {
     pub(crate) async fn new(
-        mutables_source: &B::DeviceMemoryBlock,
+        memory_system: &MemorySystem,
+        queue: &AsyncQueue,
+        mutables_source: &UnmappedLazyBuffer,
         count: usize,
         cap_set: CapabilityStore, // Same as abstract
-    ) -> Self {
-        Self {
-            mutables: mutables_source.interleave(count).await,
+    ) -> Result<Self, OutOfMemoryError> {
+        Ok(Self {
+            mutables: mutables_source
+                .duplicate_interleave(
+                    memory_system,
+                    queue,
+                    &InterleavedBufferConfig {
+                        repetitions: count,
+                        usages: wgpu::BufferUsages::STORAGE,
+                        locking_size: None,
+                    },
+                )
+                .await?,
             cap_set,
-        }
+        })
     }
 }
 
-pub struct MappedMutableGlobalsInstanceSet<B>
-where
-    B: Backend,
-{
-    mutables: HostInterleavedBuffer<B, STRIDE>,
+pub struct MappedMutableGlobalsInstanceSet {
+    mutables: MappedInterleavedBuffer<STRIDE>,
 
     cap_set: CapabilityStore,
 }
 
 impl_concrete_ptr!(
-    pub struct GlobalMutablePtr<B: Backend, T> {
+    pub struct GlobalMutablePtr<T> {
         data...
-    } with abstract AbstractGlobalMutablePtr<B, T>;
+    } with abstract AbstractGlobalMutablePtr<T>;
 );

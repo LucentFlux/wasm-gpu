@@ -6,23 +6,16 @@ use anyhow::anyhow;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use itertools::Itertools;
-use lf_hal::backend::Backend;
 use wasmparser::Type;
 
-pub struct FuncsInstance<B, T>
-where
-    B: Backend,
-{
+pub struct FuncsInstance<T> {
     /// Holds data that can later be copied into memory
-    funcs: Vec<Func<B, T>>,
+    funcs: Vec<Func<T>>,
 
     cap_set: CapabilityStore,
 }
 
-impl<B, T> FuncsInstance<B, T>
-where
-    B: Backend,
-{
+impl<T> FuncsInstance<T> {
     pub fn new() -> Self {
         Self {
             funcs: Vec::new(),
@@ -30,7 +23,7 @@ where
         }
     }
 
-    pub fn register(&mut self, func: Func<B, T>) -> UntypedFuncPtr<B, T> {
+    pub fn register(&mut self, func: Func<T>) -> UntypedFuncPtr<T> {
         let ty = func.ty();
         let ptr = self.funcs.len();
 
@@ -44,7 +37,7 @@ where
     pub(crate) fn predict<'a>(
         &self,
         funcs: impl Iterator<Item = &'a Type>,
-    ) -> Vec<UntypedFuncPtr<B, T>> {
+    ) -> Vec<UntypedFuncPtr<T>> {
         let start = self.funcs.len();
         funcs
             .enumerate()
@@ -62,20 +55,20 @@ where
 }
 
 impl_immutable_ptr!(
-    pub struct UntypedFuncPtr<B: Backend, T> {
+    pub struct UntypedFuncPtr<T> {
         data...
         ty: wasmparser::FuncType,
     }
 );
 
-impl<B: Backend, T> UntypedFuncPtr<B, T> {
+impl<T> UntypedFuncPtr<T> {
     pub fn to_func_ref(&self) -> FuncRef {
         FuncRef::from_u32(self.ptr as u32)
     }
 
     pub fn try_typed<Params: WasmTyVec, Results: WasmTyVec>(
         self,
-    ) -> anyhow::Result<TypedFuncPtr<B, T, Params, Results>> {
+    ) -> anyhow::Result<TypedFuncPtr<T, Params, Results>> {
         if !Params::VAL_TYPES.eq(self.ty.params()) {
             return Err(anyhow!(
                 "function pointer parameters were not the correct type, expected {:?} but got {:?}",
@@ -93,9 +86,7 @@ impl<B: Backend, T> UntypedFuncPtr<B, T> {
         Ok(TypedFuncPtr::new(self.ptr, self.cap, self.ty))
     }
 
-    pub fn typed<Params: WasmTyVec, Results: WasmTyVec>(
-        self,
-    ) -> TypedFuncPtr<B, T, Params, Results> {
+    pub fn typed<Params: WasmTyVec, Results: WasmTyVec>(self) -> TypedFuncPtr<T, Params, Results> {
         self.try_typed().unwrap()
     }
 
@@ -104,26 +95,26 @@ impl<B: Backend, T> UntypedFuncPtr<B, T> {
     ///  - the function pointer does not refer to a store set that the function is in
     pub fn call_all<'a>(
         &self,
-        stores: &'a mut DeviceStoreSet<B, T>,
+        stores: &'a mut DeviceStoreSet<T>,
         args: impl IntoIterator<Item = Vec<Val>>,
     ) -> BoxFuture<'a, Vec<anyhow::Result<Vec<Val>>>> {
         let args = args.into_iter().collect();
 
-        let session = Session::new(stores.backend.clone(), stores, self.clone(), args);
+        let session = Session::new(stores, self.clone(), args);
         return session.run().boxed();
     }
 }
 
 // Typed function pointers should have their types checked before construction
 impl_immutable_ptr!(
-    pub struct TypedFuncPtr<B: Backend, T, Params: WasmTyVec, Results: WasmTyVec> {
+    pub struct TypedFuncPtr<T, Params: WasmTyVec, Results: WasmTyVec> {
         data...
         ty: wasmparser::FuncType,
     }
 );
 
-impl<B: Backend, T, Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<B, T, Params, Results> {
-    pub fn as_untyped(&self) -> UntypedFuncPtr<B, T> {
+impl<T, Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<T, Params, Results> {
+    pub fn as_untyped(&self) -> UntypedFuncPtr<T> {
         UntypedFuncPtr::new(self.ptr, self.cap, self.ty.clone())
     }
 
@@ -132,13 +123,13 @@ impl<B: Backend, T, Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<B, T, Pa
     ///  - the function pointer does not refer to the store_set set
     pub fn call_all<'a>(
         &self,
-        stores: &'a mut DeviceStoreSet<B, T>,
+        stores: &'a mut DeviceStoreSet<T>,
         args: impl IntoIterator<Item = Params>,
     ) -> BoxFuture<'a, Vec<anyhow::Result<Results>>> {
         let args = args.into_iter().map(|v| v.to_val_vec()).collect();
 
         let entry_func = self.as_untyped();
-        let session = Session::new(stores.backend.clone(), stores, entry_func, args);
+        let session = Session::new(stores, entry_func, args);
         return session
             .run()
             .map(|res| {

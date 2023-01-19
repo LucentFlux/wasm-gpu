@@ -16,19 +16,19 @@ use crate::instance::table::builder::{
 };
 use crate::instance::ModuleInstanceReferences;
 use crate::store_set::DeviceStoreSetData;
-use crate::{DeviceStoreSet, ExternRef, Func, FuncRef, Ieee32, Ieee64, Module, Val};
-use lf_hal::backend::Backend;
-use std::future::join;
+use crate::{DeviceStoreSet, Engine, ExternRef, Func, FuncRef, Ieee32, Ieee64, Module, Val};
 use std::sync::Arc;
-use wasmparser::{Global, Operator, ValType};
+use wasmparser::{Operator, ValType};
+use wgpu_async::async_queue::AsyncQueue;
+use wgpu_lazybuffers::{DelayedOutOfMemoryError, MemorySystem};
 
 /// Used during instantiation to evaluate an expression in a single pass
-pub(crate) async fn interpret_constexpr<'data, B: Backend, T>(
+pub(crate) async fn interpret_constexpr<'data, T>(
     constr_expr: &Vec<Operator<'data>>,
-    mutable_globals: &mut MappedMutableGlobalsInstanceBuilder<B>,
-    immutable_globals: &mut MappedImmutableGlobalsInstance<B>,
-    global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
-    func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
+    mutable_globals: &mut MappedMutableGlobalsInstanceBuilder,
+    immutable_globals: &mut MappedImmutableGlobalsInstance,
+    global_ptrs: &Vec<AbstractGlobalPtr<T>>,
+    func_ptrs: &Vec<UntypedFuncPtr<T>>,
 ) -> Val {
     let mut stack = Vec::new();
 
@@ -84,69 +84,47 @@ pub(crate) async fn interpret_constexpr<'data, B: Backend, T>(
 
 /// Acts like a traditional OOP factory where we initialise modules into this before
 /// creating single Stores after all initialization is done, to amortize the instantiation cost
-pub struct StoreSetBuilder<B, T>
-where
-    B: Backend,
-{
-    backend: Arc<B>,
-
-    tables: MappedTableInstanceSetBuilder<B>,
-    memories: MappedMemoryInstanceSetBuilder<B>,
-    mutable_globals: MappedMutableGlobalsInstanceBuilder<B>,
+pub struct StoreSetBuilder<T> {
+    tables: MappedTableInstanceSetBuilder,
+    memories: MappedMemoryInstanceSetBuilder,
+    mutable_globals: MappedMutableGlobalsInstanceBuilder,
     // Immutable so don't need to be abstr
-    elements: MappedElementInstance<B>,
-    datas: MappedDataInstance<B>,
-    functions: FuncsInstance<B, T>,
-    immutable_globals: MappedImmutableGlobalsInstance<B>,
+    elements: MappedElementInstance,
+    datas: MappedDataInstance,
+    functions: FuncsInstance<T>,
+    immutable_globals: MappedImmutableGlobalsInstance,
+    memory_system: MemorySystem,
 }
 
-impl<B, T> StoreSetBuilder<B, T>
-where
-    B: Backend,
-{
-    pub async fn new(backend: Arc<B>) -> Self {
-        let mutable_globals_fut = MappedMutableGlobalsInstanceBuilder::new(backend.as_ref());
-        let immutable_globals_fut = MappedImmutableGlobalsInstance::new(backend.clone());
-        let elements_fut = MappedElementInstance::new(backend.as_ref());
-        let datas_fut = MappedDataInstance::new(backend.as_ref());
-
-        let (mutable_globals, immutable_globals, elements, datas) = join!(
-            mutable_globals_fut,
-            immutable_globals_fut,
-            elements_fut,
-            datas_fut
-        )
-        .await;
-
+impl<T> StoreSetBuilder<T> {
+    pub fn new(engine: &Engine) -> Self {
+        let memory_system = engine.memory_system();
+        let queue = engine.queue();
         Self {
             functions: FuncsInstance::new(),
-            tables: MappedTableInstanceSetBuilder::new(backend.clone()),
-            memories: MappedMemoryInstanceSetBuilder::new(backend.clone()),
-            immutable_globals,
-            mutable_globals,
-            elements,
-            datas,
-            backend,
+            tables: MappedTableInstanceSetBuilder::new(memory_system),
+            memories: MappedMemoryInstanceSetBuilder::new(memory_system),
+            immutable_globals: MappedImmutableGlobalsInstance::new(memory_system),
+            mutable_globals: MappedMutableGlobalsInstanceBuilder::new(memory_system),
+            elements: MappedElementInstance::new(memory_system, queue),
+            datas: MappedDataInstance::new(memory_system, queue),
+            memory_system: memory_system.clone(),
         }
     }
 
-    pub(crate) async fn snapshot(src: &DeviceStoreSet<B, T>, store_index: usize) -> Self {
+    pub(crate) async fn snapshot(src: &DeviceStoreSet<T>, store_index: usize) -> Self {
         // We're doing this so you can execute a bit then load more modules, then execute some more.
         // See wizer for the idea origin.
         todo!()
-    }
-
-    pub fn backend(&self) -> Arc<B> {
-        self.backend.clone()
     }
 
     /// Instantiation within a builder moves all of the data to the device. This means that constructing
     /// stores from the builder involves no copying of data from the CPU to the GPU, only within the GPU.
     pub async fn instantiate_module(
         &mut self,
-        module: &Module<B>,
-        imports: Vec<NamedExtern<B, T>>,
-    ) -> anyhow::Result<ModuleInstanceReferences<B, T>> {
+        module: &Module,
+        imports: Vec<NamedExtern<T>>,
+    ) -> anyhow::Result<ModuleInstanceReferences<T>> {
         // Validation
         let validated_imports = module.typecheck_imports(&imports)?;
 
@@ -245,14 +223,17 @@ where
         ));
     }
 
-    pub fn register_function(&mut self, func: Func<B, T>) -> UntypedFuncPtr<B, T> {
+    pub fn register_function(&mut self, func: Func<T>) -> UntypedFuncPtr<T> {
         return self.functions.register(func);
     }
 
     /// Takes this builder and makes it immutable, allowing instances to be created from it
-    pub async fn complete(self) -> CompletedBuilder<B, T> {
+    pub async fn complete(
+        self,
+        queue: &AsyncQueue,
+    ) -> Result<CompletedBuilder<T>, DelayedOutOfMemoryError<Self>> {
         let Self {
-            backend,
+            memory_system,
             tables,
             memories,
             mutable_globals,
@@ -262,14 +243,26 @@ where
             functions,
         } = self;
 
-        let mutable_globals = mutable_globals.unmap().await;
-        let immutable_globals = immutable_globals.unmap().await;
-        let elements = elements.unmap().await;
-        let datas = datas.unmap().await;
-        let tables = tables.unmap().await;
-        let memories = memories.unmap().await;
-        CompletedBuilder {
-            backend,
+        // Todo: Clean this up
+        let mutable_globals = mutable_globals
+            .unmap(queue)
+            .await
+            .map_oom(|mutable_globals| Self {
+                memory_system,
+                tables,
+                memories,
+                mutable_globals,
+                immutable_globals,
+                elements,
+                datas,
+                functions,
+            })?;
+        let immutable_globals = immutable_globals.unmap(queue).await;
+        let elements = elements.unmap(queue).await;
+        let datas = datas.unmap(queue).await;
+        let tables = tables.unmap(queue).await;
+        let memories = memories.unmap(queue).await;
+        Ok(CompletedBuilder {
             tables,
             memories,
             mutable_globals,
@@ -277,40 +270,45 @@ where
             immutable_globals: Arc::new(immutable_globals),
             datas: Arc::new(datas),
             functions: Arc::new(functions),
-        }
+        })
     }
 }
 
-pub struct CompletedBuilder<B: Backend, T> {
-    backend: Arc<B>,
-
+pub struct CompletedBuilder<T> {
     // Move host things to GPU
-    tables: UnmappedTableInstanceSetBuilder<B>,
-    memories: UnmappedMemoryInstanceSetBuilder<B>,
-    mutable_globals: UnmappedMutableGlobalsInstanceBuilder<B>,
-    immutable_globals: Arc<UnmappedImmutableGlobalsInstance<B>>,
-    elements: Arc<UnmappedElementInstance<B>>,
-    datas: Arc<UnmappedDataInstance<B>>,
-    functions: Arc<FuncsInstance<B, T>>,
+    tables: UnmappedTableInstanceSetBuilder,
+    memories: UnmappedMemoryInstanceSetBuilder,
+    mutable_globals: UnmappedMutableGlobalsInstanceBuilder,
+    immutable_globals: Arc<UnmappedImmutableGlobalsInstance>,
+    elements: Arc<UnmappedElementInstance>,
+    datas: Arc<UnmappedDataInstance>,
+    functions: Arc<FuncsInstance<T>>,
 }
 
-impl<B: Backend, T> CompletedBuilder<B, T> {
+impl<T> CompletedBuilder<T> {
     /// Takes the instructions provided to this builder and produces a collection of stores which can
     /// be used to evaluate instructions
-    pub async fn build(&self, values: impl IntoIterator<Item = T>) -> DeviceStoreSet<B, T> {
+    pub async fn build(
+        &self,
+        memory_system: &MemorySystem,
+        queue: &AsyncQueue,
+        values: impl IntoIterator<Item = T>,
+    ) -> DeviceStoreSet<T> {
         // Here we take all of the initialisation that we did that can be shared and spin it into several
         // instances. This shouldn't involve moving any data to the device, instead data that has already
         // been provided to the device should be cloned and specialised as needed for a collection of instances
         let data: Vec<_> = values.into_iter().collect();
 
-        let tables = self.tables.build(data.len()).await;
+        let tables = self.tables.build(memory_system, queue, data.len()).await;
 
-        let memories = self.memories.build(data.len()).await;
+        let memories = self.memories.build(memory_system, queue, data.len()).await;
 
-        let mutable_globals = self.mutable_globals.build(data.len()).await;
+        let mutable_globals = self
+            .mutable_globals
+            .build(memory_system, queue, data.len())
+            .await;
 
         DeviceStoreSet {
-            backend: self.backend.clone(),
             data,
             functions: self.functions.clone(),
             elements: self.elements.clone(),
@@ -343,13 +341,13 @@ mod tests {
 
     #[inline(never)]
     async fn test_data_buffer_populated_correctly(size: usize) {
-        let backend = get_backend().await;
+        let (memory_system, queue) = get_backend().await;
 
         let (expected_data, data_str) = gen_test_memory_string(size, 84637322u32);
 
-        let engine = wasp::Engine::new(backend, Config::default());
+        let engine = wasp::Engine::new(memory_system, queue, Config::default());
 
-        let mut stores_builder = StoreSetBuilder::<_, ()>::new(engine.backend()).await;
+        let mut stores_builder = StoreSetBuilder::<_, ()>::new(&engine).await;
 
         let wat = format!(
             r#"

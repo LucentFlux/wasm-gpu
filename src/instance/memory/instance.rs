@@ -1,81 +1,78 @@
 use crate::capabilities::CapabilityStore;
-use crate::fenwick::FenwickTree;
 use crate::impl_concrete_ptr;
 use crate::instance::memory::builder::AbstractMemoryPtr;
 use futures::future::join_all;
-use lf_hal::backend::Backend;
-use lf_hal::memory::interleaved::{DeviceInterleavedBuffer, HostInterleavedBuffer};
-use lf_hal::memory::{DeviceMemoryBlock, MemoryBlock};
+use wgpu_async::{async_device::OutOfMemoryError, async_queue::AsyncQueue};
+use wgpu_lazybuffers::{MemorySystem, UnmappedLazyBuffer};
+use wgpu_lazybuffers_interleaving::{
+    Interleaveable, InterleavedBufferConfig, MappedInterleavedBuffer, UnmappedInterleavedBuffer,
+};
 
-const STRIDE: usize = 4; // 4 * u32
+const STRIDE: u64 = 16; // 4 * u32
 
 #[derive(Clone)]
 struct Meta {
-    lengths: FenwickTree,
     cap_set: CapabilityStore,
 }
 
-pub struct UnmappedMemoryInstanceSet<B>
-where
-    B: Backend,
-{
-    data: Vec<DeviceInterleavedBuffer<B, STRIDE>>,
+pub struct UnmappedMemoryInstanceSet {
+    data: Vec<UnmappedInterleavedBuffer<STRIDE>>,
     meta: Meta,
 }
 
-impl<B> UnmappedMemoryInstanceSet<B>
-where
-    B: Backend,
-{
+impl UnmappedMemoryInstanceSet {
     pub(crate) async fn new(
-        sources: &Vec<B::DeviceMemoryBlock>,
+        memory_system: &MemorySystem,
+        queue: &AsyncQueue,
+        sources: &Vec<UnmappedLazyBuffer>,
         count: usize,
         cap_set: CapabilityStore,
-    ) -> Self {
-        let memories = sources.iter().map(|source: &B::DeviceMemoryBlock| async {
-            (source.len(), source.interleave(count).await)
+    ) -> Result<Self, OutOfMemoryError> {
+        let memories = sources.iter().map(|source| {
+            source.duplicate_interleave(
+                memory_system,
+                queue,
+                &InterleavedBufferConfig {
+                    repetitions: count,
+                    usages: wgpu::BufferUsages::STORAGE,
+                    locking_size: None,
+                },
+            )
         });
-        let memory_and_infos = join_all(memories).await;
-        let lengths = memory_and_infos.iter().map(|(len, _)| *len);
-        let lengths = FenwickTree::new(lengths);
-        let data: Vec<_> = memory_and_infos
-            .into_iter()
-            .map(|(_, memory)| memory)
-            .collect();
-        Self {
-            data,
-            meta: Meta { lengths, cap_set },
-        }
+
+        let memories: Result<_, _> = join_all(memories).await.into_iter().collect();
+
+        Ok(Self {
+            data: memories?,
+            meta: Meta { cap_set },
+        })
     }
 }
 
-pub struct MappedMemoryInstanceSet<B>
-where
-    B: Backend,
-{
-    data: Vec<HostInterleavedBuffer<B, STRIDE>>,
+pub struct MappedMemoryInstanceSet {
+    data: Vec<MappedInterleavedBuffer<STRIDE>>,
     meta: Meta,
 }
 
 /// A view of a memory for a specific wasm instance
-pub struct MemoryView<'a, B: Backend> {
-    buf: &'a HostInterleavedBuffer<B, STRIDE>,
+pub struct MemoryView<'a> {
+    buf: &'a MappedInterleavedBuffer<STRIDE>,
     index: usize,
 }
 
-impl<'a, B: Backend> MemoryView<'a, B> {
+impl<'a> MemoryView<'a> {
     pub async fn get(&self, index: usize) -> Option<&u8> {
         self.buf.get(self.index, index).await
     }
 }
 
 /// A mutable view of a memory for a specific wasm instance
-pub struct MemoryViewMut<'a, B: Backend> {
-    buf: &'a mut HostInterleavedBuffer<B, STRIDE>,
+pub struct MemoryViewMut<'a> {
+    buf: &'a mut MappedInterleavedBuffer<STRIDE>,
     index: usize,
 }
 
-impl<'a, B: Backend> MemoryViewMut<'a, B> {
+impl<'a> MemoryViewMut<'a> {
     pub async fn get_mut(&'a mut self, index: usize) -> Option<&'a mut u8> {
         self.buf.get_mut(self.index, index).await
     }
@@ -98,8 +95,8 @@ macro_rules! impl_get {
     }};
 }
 
-impl<B: Backend> MappedMemoryInstanceSet<B> {
-    pub fn get<T>(&self, ptr: MemoryPtr<B, T>) -> MemoryView<B> {
+impl MappedMemoryInstanceSet {
+    pub fn get<T>(&self, ptr: MemoryPtr<T>) -> MemoryView {
         return impl_get!(
             with self, ptr
             using get
@@ -107,7 +104,7 @@ impl<B: Backend> MappedMemoryInstanceSet<B> {
         );
     }
 
-    pub fn get_mut<T>(&mut self, ptr: MemoryPtr<B, T>) -> MemoryViewMut<B> {
+    pub fn get_mut<T>(&mut self, ptr: MemoryPtr<T>) -> MemoryViewMut {
         return impl_get!(
             with self, ptr
             using get_mut
@@ -117,7 +114,7 @@ impl<B: Backend> MappedMemoryInstanceSet<B> {
 }
 
 impl_concrete_ptr!(
-    pub struct MemoryPtr<B: Backend, T> {
+    pub struct MemoryPtr<T> {
         data...
-    } with abstract AbstractMemoryPtr<B, T>;
+    } with abstract AbstractMemoryPtr<T>;
 );

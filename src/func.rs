@@ -1,7 +1,6 @@
 pub mod func_ir;
 
 use futures::future::{BoxFuture, FutureExt};
-use lf_hal::backend::Backend;
 use std::marker::PhantomData;
 use wasmparser::{FuncType, ValType};
 
@@ -17,33 +16,29 @@ pub(crate) struct ExportFunction {
     signature: String, // TODO: make this something more reasonable
 }
 
-struct TypedHostFn<F, B, T, Params, Results> {
+struct TypedHostFn<F, T, Params, Results> {
     func: F,
-    _phantom: PhantomData<fn(B, T, Params) -> (B, T, Results)>,
+    _phantom: PhantomData<fn(T, Params) -> (T, Results)>,
 }
 
-trait HostFunc<B, T>: Send + Sync
-where
-    B: Backend,
-{
+trait HostFunc<T>: Send + Sync {
     fn call<'a>(
         &self,
-        caller: Caller<'a, B, T>,
+        caller: Caller<'a, T>,
         args: Vec<Val>,
     ) -> BoxFuture<'a, anyhow::Result<Vec<Val>>>;
 }
 
-impl<F, B, T, Params, Results> HostFunc<B, T> for TypedHostFn<F, B, T, Params, Results>
+impl<F, T, Params, Results> HostFunc<T> for TypedHostFn<F, T, Params, Results>
 where
-    B: Backend,
-    F: 'static + for<'b> Fn(Caller<'b, B, T>, Params) -> BoxFuture<'b, anyhow::Result<Results>>,
+    F: 'static + for<'b> Fn(Caller<'b, T>, Params) -> BoxFuture<'b, anyhow::Result<Results>>,
     Params: WasmTyVec + 'static,
     Results: WasmTyVec + Send + 'static,
-    TypedHostFn<F, B, T, Params, Results>: Send + Sync,
+    TypedHostFn<F, T, Params, Results>: Send + Sync,
 {
     fn call<'a>(
         &self,
-        caller: Caller<'a, B, T>,
+        caller: Caller<'a, T>,
         args: Vec<Val>,
     ) -> BoxFuture<'a, anyhow::Result<Vec<Val>>> {
         let typed_args = match Params::try_from_val_vec(&args) {
@@ -58,26 +53,17 @@ where
     }
 }
 
-enum FuncKind<B, T>
-where
-    B: Backend,
-{
+enum FuncKind<T> {
     Export(ExportFunction),
-    Host(Box<dyn HostFunc<B, T>>),
+    Host(Box<dyn HostFunc<T>>),
 }
 
-pub struct Func<B, T>
-where
-    B: Backend,
-{
-    kind: FuncKind<B, T>,
+pub struct Func<T> {
+    kind: FuncKind<T>,
     ty: FuncType,
 }
 
-impl<B, T> Func<B, T>
-where
-    B: Backend,
-{
+impl<T> Func<T> {
     pub fn params(&self) -> &[ValType] {
         return self.ty.params();
     }
@@ -91,21 +77,20 @@ where
     }
 }
 
-impl<B, T> Func<B, T>
+impl<T> Func<T>
 where
-    B: Backend + 'static,
     T: 'static,
 {
     pub fn wrap<Params, Results, F>(
-        stores: &mut StoreSetBuilder<B, T>,
+        stores: &mut StoreSetBuilder<T>,
         func: F,
-    ) -> TypedFuncPtr<B, T, Params, Results>
+    ) -> TypedFuncPtr<T, Params, Results>
     where
         Params: WasmTyVec + 'static,
         Results: WasmTyVec + Send + 'static,
         for<'b> F: Send
             + Sync
-            + Fn(Caller<'b, B, T>, Params) -> BoxFuture<'b, anyhow::Result<Results>>
+            + Fn(Caller<'b, T>, Params) -> BoxFuture<'b, anyhow::Result<Results>>
             + 'static,
     {
         let func = Self {
@@ -116,7 +101,7 @@ where
             ty: FuncType::new(Vec::from(Params::VAL_TYPES), Vec::from(Results::VAL_TYPES)),
         };
 
-        let fp: UntypedFuncPtr<B, T> = stores.register_function(func);
+        let fp: UntypedFuncPtr<T> = stores.register_function(func);
 
         return fp.typed();
     }
@@ -147,27 +132,21 @@ macro_rules! for_each_function_signature {
 
 /// B is the backend type,
 /// T is the data associated with the store_set
-pub struct Caller<'a, B, T>
-where
-    B: Backend,
-{
+pub struct Caller<'a, T> {
     // Decomposed store
     data: &'a mut Vec<T>,
-    memory: &'a mut MappedMemoryInstanceSet<B>,
+    memory: &'a mut MappedMemoryInstanceSet,
 
     // Info into store data
     index: usize,
-    instance: &'a ModuleInstanceReferences<B, T>,
+    instance: &'a ModuleInstanceReferences<T>,
 }
 
-impl<'a, B, T> Caller<'a, B, T>
-where
-    B: Backend,
-{
+impl<'a, T> Caller<'a, T> {
     pub fn new(
-        stores: &'a mut HostStoreSet<B, T>,
+        stores: &'a mut HostStoreSet<T>,
         index: usize,
-        instance: &'a ModuleInstanceReferences<B, T>,
+        instance: &'a ModuleInstanceReferences<T>,
     ) -> Self {
         Self {
             data: &mut stores.data,
@@ -186,7 +165,7 @@ where
         return self.data.get_mut(self.index).unwrap();
     }
 
-    pub async fn get_memory(&self, name: &str) -> Option<MemoryView<B>> {
+    pub async fn get_memory(&self, name: &str) -> Option<MemoryView> {
         let memptr = self.instance.get_memory_export(name).ok()?;
         let memptr = memptr.concrete(self.index);
 
@@ -195,7 +174,7 @@ where
         Some(view)
     }
 
-    pub async fn get_memory_mut(&mut self, name: &str) -> Option<MemoryViewMut<B>> {
+    pub async fn get_memory_mut(&mut self, name: &str) -> Option<MemoryViewMut> {
         let memptr = self.instance.get_memory_export(name).ok()?;
         let memptr = memptr.concrete(self.index);
 
@@ -224,13 +203,13 @@ mod tests {
 
     #[inline(never)]
     async fn test_host_func_memory_read(size: usize) {
-        let backend = get_backend().await;
+        let (memory_system, queue) = get_backend().await;
 
         let (expected_data, data_str) = gen_test_memory_string(size, 203571423u32);
 
-        let engine = wasp::Engine::new(backend, Config::default());
+        let engine = wasp::Engine::new(memory_system, queue, Config::default());
 
-        let mut stores_builder = StoreSetBuilder::new(engine.backend()).await;
+        let mut stores_builder = StoreSetBuilder::new(&engine).await;
 
         let wat = format!(
             r#"

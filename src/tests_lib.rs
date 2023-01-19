@@ -1,21 +1,44 @@
 #![cfg(test)]
 
-use lf_hal::wgpu::{WgpuBackend, WgpuBackendConfig};
-use lf_hal::BufferRingConfig;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
+use wgpu_async::async_queue::AsyncQueue;
+use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
-pub async fn get_backend() -> WgpuBackend {
-    let conf = WgpuBackendConfig {
-        buffer_ring: BufferRingConfig {
-            // Minimal memory footprint for tests
-            total_mem: 2 * 1024,
-        },
-        ..Default::default()
-    };
-    return WgpuBackend::new(conf, None)
+pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
+    let instance = wgpu::Instance::new(wgpu::Backends::all());
+
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: true,
+            compatible_surface: None,
+        })
         .await
-        .expect("couldn't create default test backend");
+        .expect("could not aquire a test adapter");
+
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                label: None,
+                features: wgpu::Features::empty(),
+                limits: wgpu::Limits::downlevel_webgl2_defaults(),
+            },
+            None,
+        )
+        .await
+        .expect("");
+
+    let (device, queue) = wgpu_async::wrap_wgpu(device, queue);
+
+    let conf = BufferRingConfig {
+        // Minimal memory footprint for tests
+        chunk_size: 1024,
+        total_transfer_buffers: 2,
+    };
+    let memory_system = MemorySystem::new(device, conf);
+
+    return (memory_system, queue);
 }
 
 #[macro_export]

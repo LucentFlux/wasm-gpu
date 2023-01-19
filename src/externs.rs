@@ -4,35 +4,25 @@ use crate::instance::memory::builder::AbstractMemoryPtr;
 use crate::instance::table::builder::AbstractTablePtr;
 use crate::typed::WasmTyVec;
 use itertools::Itertools;
-use lf_hal::backend::Backend;
 use perfect_derive::perfect_derive;
 use wasmparser::{FuncType, GlobalType, TableType};
 
 #[perfect_derive(Clone)]
-pub struct NamedExtern<B, T>
-where
-    B: Backend,
-{
+pub struct NamedExtern<T> {
     pub module: String,
     pub name: String,
-    pub ext: Extern<B, T>,
+    pub ext: Extern<T>,
 }
 
 #[derive(Debug)]
-pub enum Extern<B, T>
-where
-    B: Backend,
-{
-    Func(UntypedFuncPtr<B, T>),
-    Global(AbstractGlobalPtr<B, T>),
-    Table(AbstractTablePtr<B, T>),
-    Memory(AbstractMemoryPtr<B, T>),
+pub enum Extern<T> {
+    Func(UntypedFuncPtr<T>),
+    Global(AbstractGlobalPtr<T>),
+    Table(AbstractTablePtr<T>),
+    Memory(AbstractMemoryPtr<T>),
 }
 
-impl<B, T> Extern<B, T>
-where
-    B: Backend,
-{
+impl<T> Extern<T> {
     pub fn signature(&self) -> String {
         match self {
             Extern::Func(f) => {
@@ -62,10 +52,7 @@ where
     }
 }
 
-impl<B, T> Clone for Extern<B, T>
-where
-    B: Backend,
-{
+impl<T> Clone for Extern<T> {
     fn clone(&self) -> Self {
         match self {
             Self::Func(f) => Self::Func(f.clone()),
@@ -76,49 +63,36 @@ where
     }
 }
 
-impl<B, T> From<UntypedFuncPtr<B, T>> for Extern<B, T>
-where
-    B: Backend,
-{
-    fn from(f: UntypedFuncPtr<B, T>) -> Self {
+impl<T> From<UntypedFuncPtr<T>> for Extern<T> {
+    fn from(f: UntypedFuncPtr<T>) -> Self {
         Self::Func(f)
     }
 }
 
-impl<B, T, Params, Results> From<TypedFuncPtr<B, T, Params, Results>> for Extern<B, T>
+impl<T, Params, Results> From<TypedFuncPtr<T, Params, Results>> for Extern<T>
 where
-    B: Backend,
     Params: WasmTyVec,
     Results: WasmTyVec,
 {
-    fn from(f: TypedFuncPtr<B, T, Params, Results>) -> Self {
+    fn from(f: TypedFuncPtr<T, Params, Results>) -> Self {
         Self::Func(f.as_untyped())
     }
 }
 
-impl<B, T> From<AbstractMemoryPtr<B, T>> for Extern<B, T>
-where
-    B: Backend,
-{
-    fn from(m: AbstractMemoryPtr<B, T>) -> Self {
+impl<T> From<AbstractMemoryPtr<T>> for Extern<T> {
+    fn from(m: AbstractMemoryPtr<T>) -> Self {
         Self::Memory(m)
     }
 }
 
-impl<B, T> From<AbstractGlobalPtr<B, T>> for Extern<B, T>
-where
-    B: Backend,
-{
-    fn from(g: AbstractGlobalPtr<B, T>) -> Self {
+impl<T> From<AbstractGlobalPtr<T>> for Extern<T> {
+    fn from(g: AbstractGlobalPtr<T>) -> Self {
         Self::Global(g)
     }
 }
 
-impl<B, T> From<AbstractTablePtr<B, T>> for Extern<B, T>
-where
-    B: Backend,
-{
-    fn from(t: AbstractTablePtr<B, T>) -> Self {
+impl<T> From<AbstractTablePtr<T>> for Extern<T> {
+    fn from(t: AbstractTablePtr<T>) -> Self {
         Self::Table(t)
     }
 }

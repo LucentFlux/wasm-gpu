@@ -9,38 +9,36 @@ use crate::FuncRef;
 use crate::Ieee32;
 use crate::Ieee64;
 use crate::Val;
-use lf_hal::backend::Backend;
-use lf_hal::memory::{MainMemoryBlock, MemoryBlock};
 use std::mem::size_of;
 use std::sync::Arc;
 use wasmparser::{GlobalType, ValType};
+use wgpu_async::async_queue::AsyncQueue;
+use wgpu_lazybuffers::{
+    DelayedOutOfMemoryError, EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem,
+    UnmappedLazyBuffer,
+};
 
-pub struct UnmappedImmutableGlobalsInstance<B>
-where
-    B: Backend,
-{
-    immutables: B::DeviceMemoryBlock,
+pub struct UnmappedImmutableGlobalsInstance {
+    immutables: UnmappedLazyBuffer,
     cap_set: CapabilityStore,
 }
 
-impl<B: Backend> UnmappedImmutableGlobalsInstance<B> {}
+impl UnmappedImmutableGlobalsInstance {}
 
-pub struct MappedImmutableGlobalsInstance<B>
-where
-    B: Backend,
-{
-    backend: Arc<B>,
-    immutables: B::MainMemoryBlock,
+pub struct MappedImmutableGlobalsInstance {
+    immutables: MappedLazyBuffer,
     cap_set: CapabilityStore,
     head: usize,
 }
 
-impl<B: Backend> MappedImmutableGlobalsInstance<B> {
-    pub async fn new(backend: Arc<B>) -> Self {
+impl MappedImmutableGlobalsInstance {
+    pub fn new(memory_system: &MemorySystem) -> Self {
         let cap_set = CapabilityStore::new(0);
-        let immutables = backend.create_and_map_empty().await;
+        let immutables = memory_system.create_and_map_empty(&EmptyMemoryBlockConfig {
+            usages: wgpu::BufferUsages::STORAGE,
+            locking_size: 1024,
+        });
         Self {
-            backend,
             immutables,
             cap_set,
             head: 0,
@@ -55,7 +53,7 @@ impl<B: Backend> MappedImmutableGlobalsInstance<B> {
         self.cap_set = self.cap_set.resize_ref(self.immutables.len())
     }
 
-    pub async fn push_typed<V, T>(&mut self, v: V) -> GlobalImmutablePtr<B, T>
+    pub async fn push_typed<V, T>(&mut self, v: V) -> GlobalImmutablePtr<T>
     where
         V: WasmTyVal,
     {
@@ -75,10 +73,10 @@ impl<B: Backend> MappedImmutableGlobalsInstance<B> {
     }
 
     impl_global_push! {
-        pub async fn push<T>(&mut self, val: Val) -> GlobalImmutablePtr<B, T>
+        pub async fn push<T>(&mut self, val: Val) -> GlobalImmutablePtr<T>
     }
 
-    pub async fn get_typed<T, V: WasmTyVal>(&mut self, ptr: &GlobalImmutablePtr<B, T>) -> V {
+    pub async fn get_typed<T, V: WasmTyVal>(&mut self, ptr: &GlobalImmutablePtr<T>) -> V {
         assert!(
             self.cap_set.check(&ptr.cap),
             "immutable pointer was not valid for this instance"
@@ -101,33 +99,40 @@ impl<B: Backend> MappedImmutableGlobalsInstance<B> {
     }
 
     impl_global_get! {
-        pub async fn get<T>(&mut self, ptr: &GlobalImmutablePtr<B, T>) -> Val
+        pub async fn get<T>(&mut self, ptr: &GlobalImmutablePtr<T>) -> Val
     }
 
-    pub async fn unmap(self) -> UnmappedImmutableGlobalsInstance<B> {
+    pub async fn unmap(
+        self,
+        queue: &AsyncQueue,
+    ) -> Result<UnmappedImmutableGlobalsInstance, DelayedOutOfMemoryError<Self>> {
         assert_eq!(
             self.head,
             self.immutables.len(),
             "space reserved but not used"
         );
 
-        let immutables = self.immutables.unmap().await;
+        let immutables = self
+            .immutables
+            .unmap(queue)
+            .await
+            .map_oom(|immutables| Self { immutables, ..self })?;
 
-        UnmappedImmutableGlobalsInstance {
+        Ok(UnmappedImmutableGlobalsInstance {
             immutables,
             cap_set: self.cap_set,
-        }
+        })
     }
 }
 
 impl_immutable_ptr!(
-    pub struct GlobalImmutablePtr<B: Backend, T> {
+    pub struct GlobalImmutablePtr<T> {
         data...
         content_type: wasmparser::ValType,
     }
 );
 
-impl<B: Backend, T> GlobalImmutablePtr<B, T> {
+impl<T> GlobalImmutablePtr<T> {
     pub fn is_type(&self, ty: &GlobalType) -> bool {
         return self.content_type.eq(&ty.content_type) && !ty.mutable;
     }

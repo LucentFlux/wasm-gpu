@@ -17,55 +17,40 @@ use crate::typed::{wasm_ty_bytes, FuncRef, Val};
 use crate::Engine;
 use anyhow::{anyhow, Context, Error};
 use itertools::Itertools;
-use lf_hal::backend::Backend;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::slice::Iter;
-use std::sync::Arc;
 use wasmparser::{Type, ValType, Validator};
 
 /// A wasm module that has not been instantiated
-pub struct Module<B>
-where
-    B: Backend,
-{
-    backend: Arc<B>,
+pub struct Module {
     parsed: ParsedModuleUnit,
 }
 
-pub struct ValidatedImports<B, T>
-where
-    B: Backend,
-{
-    functions: Vec<UntypedFuncPtr<B, T>>,
-    globals: Vec<AbstractGlobalPtr<B, T>>,
-    tables: Vec<AbstractTablePtr<B, T>>,
-    memories: Vec<AbstractMemoryPtr<B, T>>,
+pub struct ValidatedImports<T> {
+    functions: Vec<UntypedFuncPtr<T>>,
+    globals: Vec<AbstractGlobalPtr<T>>,
+    tables: Vec<AbstractTablePtr<T>>,
+    memories: Vec<AbstractMemoryPtr<T>>,
 }
 
-impl<B, T> ValidatedImports<B, T>
-where
-    B: Backend,
-{
-    pub fn functions(&self) -> Iter<UntypedFuncPtr<B, T>> {
+impl<T> ValidatedImports<T> {
+    pub fn functions(&self) -> Iter<UntypedFuncPtr<T>> {
         self.functions.iter()
     }
-    pub fn globals(&self) -> Iter<AbstractGlobalPtr<B, T>> {
+    pub fn globals(&self) -> Iter<AbstractGlobalPtr<T>> {
         self.globals.iter()
     }
-    pub fn tables(&self) -> Iter<AbstractTablePtr<B, T>> {
+    pub fn tables(&self) -> Iter<AbstractTablePtr<T>> {
         self.tables.iter()
     }
-    pub fn memories(&self) -> Iter<AbstractMemoryPtr<B, T>> {
+    pub fn memories(&self) -> Iter<AbstractMemoryPtr<T>> {
         self.memories.iter()
     }
 }
 
-impl<B> Module<B>
-where
-    B: Backend,
-{
-    fn parse(engine: &Engine<B>, wasm: Vec<u8>) -> Result<ParsedModuleUnit, Error> {
+impl Module {
+    fn parse(engine: &Engine, wasm: Vec<u8>) -> Result<ParsedModuleUnit, Error> {
         let mut validator = Validator::new_with_features(engine.config().features.clone());
         let parser = wasmparser::Parser::new(0);
         let parsed = ModuleEnviron::new(validator)
@@ -76,7 +61,7 @@ where
     }
 
     pub fn new<'a>(
-        engine: &Engine<B>,
+        engine: &Engine,
         bytes: impl IntoIterator<Item = &'a u8>,
     ) -> Result<Self, Error> {
         let wasm: Vec<_> = bytes.into_iter().map(|v| *v).collect();
@@ -85,18 +70,15 @@ where
 
         let parsed = Self::parse(engine, wasm)?;
 
-        return Ok(Self {
-            backend: engine.backend(),
-            parsed,
-        });
+        return Ok(Self { parsed });
     }
 
     /// See 4.5.4 of WASM spec 2.0
     /// Performs 1-4
     pub fn typecheck_imports<T>(
         &self,
-        provided_imports: &Vec<NamedExtern<B, T>>,
-    ) -> anyhow::Result<ValidatedImports<B, T>> {
+        provided_imports: &Vec<NamedExtern<T>>,
+    ) -> anyhow::Result<ValidatedImports<T>> {
         // 1, 2. ASSERT module is valid, done in Module construction
 
         // 3. Import count matches required imports
@@ -104,7 +86,7 @@ where
 
         // 4. Match imports
         // First link on names
-        let import_by_name: HashMap<(String, String), Extern<B, T>> = provided_imports
+        let import_by_name: HashMap<(String, String), Extern<T>> = provided_imports
             .into_iter()
             .map(|ext| {
                 let NamedExtern { module, name, ext } = ext;
@@ -170,11 +152,11 @@ where
     /// module, then writes the initial values
     pub(crate) async fn initialize_globals<T>(
         &self,
-        mutable_globals_instance: &mut MappedMutableGlobalsInstanceBuilder<B>,
-        immutable_globals_instance: &mut MappedImmutableGlobalsInstance<B>,
-        global_imports: impl Iterator<Item = AbstractGlobalPtr<B, T>>,
-        module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
-    ) -> Vec<AbstractGlobalPtr<B, T>> {
+        mutable_globals_instance: &mut MappedMutableGlobalsInstanceBuilder,
+        immutable_globals_instance: &mut MappedImmutableGlobalsInstance,
+        global_imports: impl Iterator<Item = AbstractGlobalPtr<T>>,
+        module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
+    ) -> Vec<AbstractGlobalPtr<T>> {
         // Calculate space requirements
         let (immutables, mutables): (Vec<_>, Vec<_>) = self
             .parsed
@@ -207,7 +189,7 @@ where
                 &module_func_ptrs,
             )
             .await;
-            let ptr: AbstractGlobalPtr<B, T> = if global.ty.mutable {
+            let ptr: AbstractGlobalPtr<T> = if global.ty.mutable {
                 AbstractGlobalPtr::Mutable(mutable_globals_instance.push(value).await)
             } else {
                 AbstractGlobalPtr::Immutable(immutable_globals_instance.push(value).await)
@@ -220,8 +202,8 @@ where
 
     pub(crate) fn predict_functions<T>(
         &self,
-        functions: &FuncsInstance<B, T>,
-    ) -> Vec<UntypedFuncPtr<B, T>> {
+        functions: &FuncsInstance<T>,
+    ) -> Vec<UntypedFuncPtr<T>> {
         let types = self.parsed.borrow_sections().functions.iter().map(|f| {
             self.parsed
                 .borrow_sections()
@@ -235,13 +217,13 @@ where
     /// Extends elements buffers to be shared by all stores of a set, as passive elements are immutable
     pub(crate) async fn initialize_elements<T>(
         &self,
-        elements: &mut MappedElementInstance<B>,
+        elements: &mut MappedElementInstance,
         // Needed for const expr evaluation
-        module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder<B>,
-        module_immutable_globals: &mut MappedImmutableGlobalsInstance<B>,
-        module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
-        module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
-    ) -> Vec<ElementPtr<B, T>> {
+        module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder,
+        module_immutable_globals: &mut MappedImmutableGlobalsInstance,
+        module_global_ptrs: &Vec<AbstractGlobalPtr<T>>,
+        module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
+    ) -> Vec<ElementPtr<T>> {
         // Reserve space first
         let size: usize = std::mem::size_of::<FuncRef>()
             * self
@@ -284,16 +266,16 @@ where
 
     pub(crate) async fn initialize_tables<T>(
         &self,
-        tables: &mut MappedTableInstanceSetBuilder<B>,
-        imported_tables: Iter<'_, AbstractTablePtr<B, T>>,
-        elements: &mut MappedElementInstance<B>,
-        module_element_ptrs: &Vec<ElementPtr<B, T>>,
+        tables: &mut MappedTableInstanceSetBuilder,
+        imported_tables: Iter<'_, AbstractTablePtr<T>>,
+        elements: &mut MappedElementInstance,
+        module_element_ptrs: &Vec<ElementPtr<T>>,
         // Needed for const expr evaluation
-        module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder<B>,
-        module_immutable_globals: &mut MappedImmutableGlobalsInstance<B>,
-        module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
-        module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
-    ) -> Vec<AbstractTablePtr<B, T>> {
+        module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder,
+        module_immutable_globals: &mut MappedImmutableGlobalsInstance,
+        module_global_ptrs: &Vec<AbstractGlobalPtr<T>>,
+        module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
+    ) -> Vec<AbstractTablePtr<T>> {
         // Pointers starts with imports
         let mut ptrs = imported_tables.map(|tp| tp.clone()).collect_vec();
 
@@ -349,8 +331,8 @@ where
 
     pub(crate) async fn initialize_datas<T>(
         &self,
-        datas: &mut MappedDataInstance<B>,
-    ) -> Vec<DataPtr<B, T>> {
+        datas: &mut MappedDataInstance,
+    ) -> Vec<DataPtr<T>> {
         // Reserve space first
         let size: usize = self
             .parsed
@@ -373,16 +355,16 @@ where
 
     pub(crate) async fn initialize_memories<T>(
         &self,
-        memory_set: &mut MappedMemoryInstanceSetBuilder<B>,
-        imported_memories: Iter<'_, AbstractMemoryPtr<B, T>>,
-        datas: &mut MappedDataInstance<B>,
-        module_data_ptrs: &Vec<DataPtr<B, T>>,
+        memory_set: &mut MappedMemoryInstanceSetBuilder,
+        imported_memories: Iter<'_, AbstractMemoryPtr<T>>,
+        datas: &mut MappedDataInstance,
+        module_data_ptrs: &Vec<DataPtr<T>>,
         // Needed for const expr evaluation
-        module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder<B>,
-        module_immutable_globals: &mut MappedImmutableGlobalsInstance<B>,
-        module_global_ptrs: &Vec<AbstractGlobalPtr<B, T>>,
-        module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
-    ) -> Vec<AbstractMemoryPtr<B, T>> {
+        module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder,
+        module_immutable_globals: &mut MappedImmutableGlobalsInstance,
+        module_global_ptrs: &Vec<AbstractGlobalPtr<T>>,
+        module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
+    ) -> Vec<AbstractMemoryPtr<T>> {
         // Pointers starts with imports
         let mut ptrs = imported_memories.map(|tp| tp.clone()).collect_vec();
 
@@ -440,19 +422,19 @@ where
 
     pub(crate) async fn initialize_functions<T>(
         &self,
-        functions: &mut FuncsInstance<B, T>,
-        func_imports: Iter<'_, UntypedFuncPtr<B, T>>,
-        module_globals: &Vec<AbstractGlobalPtr<B, T>>,
-        module_elements: &Vec<ElementPtr<B, T>>,
-        module_tables: &Vec<AbstractTablePtr<B, T>>,
-        module_datas: &Vec<DataPtr<B, T>>,
-        module_memories: &Vec<AbstractMemoryPtr<B, T>>,
-    ) -> Vec<UntypedFuncPtr<B, T>> {
+        functions: &mut FuncsInstance<T>,
+        func_imports: Iter<'_, UntypedFuncPtr<T>>,
+        module_globals: &Vec<AbstractGlobalPtr<T>>,
+        module_elements: &Vec<ElementPtr<T>>,
+        module_tables: &Vec<AbstractTablePtr<T>>,
+        module_datas: &Vec<DataPtr<T>>,
+        module_memories: &Vec<AbstractMemoryPtr<T>>,
+    ) -> Vec<UntypedFuncPtr<T>> {
         if self.parsed.borrow_sections().functions.is_empty() {
             return vec![];
         }
 
-        let ptrs: Vec<UntypedFuncPtr<B, T>> = func_imports.collect_vec();
+        let ptrs: Vec<UntypedFuncPtr<T>> = func_imports.collect_vec();
 
         let sections = self.parsed.borrow_sections();
         for func in sections.functions {
@@ -468,8 +450,8 @@ where
 
     pub fn start_fn<T>(
         &self,
-        module_func_ptrs: &Vec<UntypedFuncPtr<B, T>>,
-    ) -> Option<UntypedFuncPtr<B, T>> {
+        module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
+    ) -> Option<UntypedFuncPtr<T>> {
         match self.parsed.borrow_sections().start_func {
             None => None,
             Some(i) => {

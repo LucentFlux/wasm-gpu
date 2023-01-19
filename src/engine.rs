@@ -1,6 +1,6 @@
-use lf_hal::backend::Backend;
-use std::sync::Arc;
 use wasmparser::WasmFeatures;
+use wgpu_async::async_queue::AsyncQueue;
+use wgpu_lazybuffers::MemorySystem;
 
 pub struct Tunables {}
 
@@ -35,30 +35,30 @@ impl Default for Config {
     }
 }
 
-pub struct Engine<B>
-where
-    B: Backend,
-{
-    backend: Arc<B>,
+pub struct Engine {
+    memory_system: MemorySystem,
+    queue: AsyncQueue,
     config: Config,
 }
 
-impl<B> Engine<B>
-where
-    B: Backend,
-{
-    pub fn new(backend: B, config: Config) -> Self {
+impl Engine {
+    pub fn new(memory_system: MemorySystem, queue: AsyncQueue, config: Config) -> Self {
         Self {
-            backend: Arc::new(backend),
+            memory_system,
+            queue,
             config,
         }
     }
 
     pub fn config(&self) -> &Config {
-        return &self.config;
+        &self.config
     }
 
-    pub fn backend(&self) -> Arc<B> {
-        return self.backend.clone();
+    pub fn memory_system(&self) -> &MemorySystem {
+        &self.memory_system
+    }
+
+    pub fn queue(&self) -> &AsyncQueue {
+        &self.queue
     }
 }

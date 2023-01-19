@@ -6,7 +6,6 @@ use crate::instance::table::builder::AbstractTablePtr;
 use crate::module::module_environ::ModuleExport;
 use crate::typed::WasmTyVec;
 use anyhow::{anyhow, Context};
-use lf_hal::backend::Backend;
 use std::collections::HashMap;
 
 pub mod data;
@@ -19,29 +18,23 @@ pub mod table;
 
 /// Points into a `StoreSetBuilder`, `CompletedBuilder`, `DeviceStoreSet` or `HostStoreSet` to the
 /// elements given by the module instantiated to produce this object
-pub struct ModuleInstanceReferences<B, T>
-where
-    B: Backend,
-{
-    funcs: Vec<UntypedFuncPtr<B, T>>,
-    tables: Vec<AbstractTablePtr<B, T>>,
-    memories: Vec<AbstractMemoryPtr<B, T>>,
-    globals: Vec<AbstractGlobalPtr<B, T>>,
+pub struct ModuleInstanceReferences<T> {
+    funcs: Vec<UntypedFuncPtr<T>>,
+    tables: Vec<AbstractTablePtr<T>>,
+    memories: Vec<AbstractMemoryPtr<T>>,
+    globals: Vec<AbstractGlobalPtr<T>>,
     exports: HashMap<String, ModuleExport>,
-    start_fn: Option<UntypedFuncPtr<B, T>>,
+    start_fn: Option<UntypedFuncPtr<T>>,
 }
 
-impl<B, T> ModuleInstanceReferences<B, T>
-where
-    B: Backend,
-{
+impl<T> ModuleInstanceReferences<T> {
     pub fn new(
-        funcs: Vec<UntypedFuncPtr<B, T>>,
-        tables: Vec<AbstractTablePtr<B, T>>,
-        memories: Vec<AbstractMemoryPtr<B, T>>,
-        globals: Vec<AbstractGlobalPtr<B, T>>,
+        funcs: Vec<UntypedFuncPtr<T>>,
+        tables: Vec<AbstractTablePtr<T>>,
+        memories: Vec<AbstractMemoryPtr<T>>,
+        globals: Vec<AbstractGlobalPtr<T>>,
         exports: HashMap<String, ModuleExport>,
-        start_fn: Option<UntypedFuncPtr<B, T>>,
+        start_fn: Option<UntypedFuncPtr<T>>,
     ) -> Self {
         Self {
             funcs,
@@ -53,7 +46,7 @@ where
         }
     }
 
-    pub fn get_named_exports(&self, module_name: &str) -> Vec<NamedExtern<B, T>> {
+    pub fn get_named_exports(&self, module_name: &str) -> Vec<NamedExtern<T>> {
         self.exports
             .keys()
             .into_iter()
@@ -68,7 +61,7 @@ where
             .collect()
     }
 
-    pub fn get_export(&self, name: &str) -> Option<Extern<B, T>> {
+    pub fn get_export(&self, name: &str) -> Option<Extern<T>> {
         let mod_exp = self.exports.get(name)?;
         return Some(match &mod_exp {
             ModuleExport::Func(ptr) => Extern::Func(self.funcs.get(*ptr)?.clone()),
@@ -81,7 +74,7 @@ where
     /// Create an exported function that doesn't track its types, useful for runtime imports.
     /// Prefer get_typed_func if possible, and see get_typed_func for detail
     /// about this function.
-    pub fn get_func(&self, name: &str) -> anyhow::Result<UntypedFuncPtr<B, T>> {
+    pub fn get_func(&self, name: &str) -> anyhow::Result<UntypedFuncPtr<T>> {
         self.get_export(name)
             .ok_or(anyhow!("no exported object with name {}", name))
             .and_then(|export| match export {
@@ -95,7 +88,7 @@ where
     pub fn get_typed_func<Params, Results>(
         &self,
         name: &str,
-    ) -> anyhow::Result<TypedFuncPtr<B, T, Params, Results>>
+    ) -> anyhow::Result<TypedFuncPtr<T, Params, Results>>
     where
         Params: WasmTyVec,
         Results: WasmTyVec,
@@ -108,7 +101,7 @@ where
         return Ok(typed);
     }
 
-    pub fn get_memory_export(&self, name: &str) -> anyhow::Result<AbstractMemoryPtr<B, T>> {
+    pub fn get_memory_export(&self, name: &str) -> anyhow::Result<AbstractMemoryPtr<T>> {
         self.get_export(name)
             .ok_or(anyhow!("no exported object with name {}", name))
             .and_then(|export| match export {
