@@ -6,10 +6,13 @@ use wgpu_lazybuffers::{MemorySystem, UnmappedLazyBuffer};
 use wgpu_lazybuffers_interleaving::{
     Interleaveable, InterleavedBufferConfig, MappedInterleavedBuffer, UnmappedInterleavedBuffer,
 };
+use wgpu_lazybuffers_macros::lazy_mappable;
 
 const STRIDE: u64 = 4; // 1 * u32
 
+#[lazy_mappable(MappedMutableGlobalsInstanceSet)]
 pub struct UnmappedMutableGlobalsInstanceSet {
+    #[map(MappedInterleavedBuffer<STRIDE>)]
     mutables: UnmappedInterleavedBuffer<STRIDE>,
 
     cap_set: CapabilityStore,
@@ -39,13 +42,6 @@ impl UnmappedMutableGlobalsInstanceSet {
         })
     }
 }
-
-pub struct MappedMutableGlobalsInstanceSet {
-    mutables: MappedInterleavedBuffer<STRIDE>,
-
-    cap_set: CapabilityStore,
-}
-
 impl_concrete_ptr!(
     pub struct GlobalMutablePtr<T> {
         data...

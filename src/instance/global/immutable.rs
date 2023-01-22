@@ -11,40 +11,24 @@ use std::mem::size_of;
 use wasmparser::{GlobalType, ValType};
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;
-use wgpu_lazybuffers::DelayedOutOfMemoryResult;
 use wgpu_lazybuffers::{
-    DelayedOutOfMemoryError, EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem,
-    UnmappedLazyBuffer,
+    EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem, UnmappedLazyBuffer,
 };
+use wgpu_lazybuffers_macros::lazy_mappable;
 
 #[derive(Debug, Clone)]
-struct Meta {
+struct Meta {}
+
+#[lazy_mappable(MappedImmutableGlobalsInstance)]
+#[derive(Debug)]
+pub struct UnmappedImmutableGlobalsInstance {
+    #[map(MappedLazyBuffer)]
+    immutables: UnmappedLazyBuffer,
     head: usize,
     cap_set: CapabilityStore,
 }
 
-#[derive(Debug)]
-pub struct UnmappedImmutableGlobalsInstance {
-    immutables: UnmappedLazyBuffer,
-    meta: Meta,
-}
-
-impl UnmappedImmutableGlobalsInstance {
-    pub fn map(self) -> MappedImmutableGlobalsInstance {
-        let Self { immutables, meta } = self;
-
-        MappedImmutableGlobalsInstance {
-            immutables: immutables.map(),
-            meta,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct MappedImmutableGlobalsInstance {
-    immutables: MappedLazyBuffer,
-    meta: Meta,
-}
+impl UnmappedImmutableGlobalsInstance {}
 
 impl MappedImmutableGlobalsInstance {
     pub fn new(memory_system: &MemorySystem) -> Self {
@@ -55,7 +39,8 @@ impl MappedImmutableGlobalsInstance {
         });
         Self {
             immutables,
-            meta: Meta { cap_set, head: 0 },
+            cap_set,
+            head: 0,
         }
     }
 
@@ -64,7 +49,7 @@ impl MappedImmutableGlobalsInstance {
     /// values_size is given in units of bytes, so an f64 is 8 bytes
     pub fn reserve(&mut self, values_size: usize) {
         self.immutables.extend(values_size);
-        self.meta.cap_set = self.meta.cap_set.resize_ref(self.immutables.len())
+        self.cap_set = self.cap_set.resize_ref(self.immutables.len())
     }
 
     pub async fn push_typed<V, T>(
@@ -77,7 +62,7 @@ impl MappedImmutableGlobalsInstance {
     {
         let bytes = v.to_bytes();
 
-        let start = self.meta.head;
+        let start = self.head;
         let end = start + bytes.len();
 
         assert!(end <= self.immutables.len(), "index out of bounds");
@@ -86,11 +71,11 @@ impl MappedImmutableGlobalsInstance {
             .write_slice(queue, start..end, bytes.as_slice())
             .await?;
 
-        self.meta.head = end;
+        self.head = end;
 
         return Ok(GlobalImmutablePtr::new(
             start,
-            self.meta.cap_set.get_cap(),
+            self.cap_set.get_cap(),
             V::VAL_TYPE,
         ));
     }
@@ -105,7 +90,7 @@ impl MappedImmutableGlobalsInstance {
         ptr: &GlobalImmutablePtr<T>,
     ) -> Result<V, BufferAsyncError> {
         assert!(
-            self.meta.cap_set.check(&ptr.cap),
+            self.cap_set.check(&ptr.cap),
             "immutable pointer was not valid for this instance"
         );
 
@@ -128,32 +113,6 @@ impl MappedImmutableGlobalsInstance {
     impl_global_get! {
         pub async fn get<T>(&mut self,
             queue: &AsyncQueue,ptr: &GlobalImmutablePtr<T>) -> Result<Val, BufferAsyncError>
-    }
-
-    pub async fn unmap(
-        self,
-        queue: &AsyncQueue,
-    ) -> Result<UnmappedImmutableGlobalsInstance, DelayedOutOfMemoryError<Self>> {
-        assert_eq!(
-            self.meta.head,
-            self.immutables.len(),
-            "space reserved but not used"
-        );
-
-        let immutables = self
-            .immutables
-            .unmap(queue)
-            .await
-            .map_oom(|immutables| Self {
-                immutables,
-                meta: self.meta.clone(),
-                ..self
-            })?;
-
-        Ok(UnmappedImmutableGlobalsInstance {
-            immutables,
-            meta: self.meta,
-        })
     }
 }
 

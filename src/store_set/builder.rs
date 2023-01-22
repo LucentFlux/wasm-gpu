@@ -23,8 +23,8 @@ use wasmparser::{Operator, ValType};
 use wgpu::BufferAsyncError;
 use wgpu_async::async_device::OutOfMemoryError;
 use wgpu_async::async_queue::AsyncQueue;
-use wgpu_lazybuffers::DelayedOutOfMemoryResult;
-use wgpu_lazybuffers::{DelayedOutOfMemoryError, MemorySystem};
+use wgpu_lazybuffers::{DelayedOutOfMemoryError, LazilyUnmappable, MemorySystem};
+use wgpu_lazybuffers_macros::lazy_mappable;
 
 /// Used during instantiation to evaluate an expression in a single pass
 pub(crate) async fn interpret_constexpr<'data, T>(
@@ -93,19 +93,26 @@ pub(crate) async fn interpret_constexpr<'data, T>(
 
 /// Acts like a traditional OOP factory where we initialise modules into this before
 /// creating single Stores after all initialization is done, to amortize the instantiation cost
+#[lazy_mappable(MappedStoreSetBuilder)]
 #[perfect_derive(Debug)]
-pub struct StoreSetBuilder<T> {
-    tables: MappedTableInstanceSetBuilder,
-    memories: MappedMemoryInstanceSetBuilder,
-    mutable_globals: MappedMutableGlobalsInstanceBuilder,
-    // Immutable so don't need to be abstr
-    elements: MappedElementInstance,
-    datas: MappedDataInstance,
+pub struct UnmappedStoreSetBuilder<T> {
+    #[map(MappedTableInstanceSetBuilder)]
+    tables: UnmappedTableInstanceSetBuilder,
+    #[map(MappedMemoryInstanceSetBuilder)]
+    memories: UnmappedMemoryInstanceSetBuilder,
+    #[map(MappedMutableGlobalsInstanceBuilder)]
+    mutable_globals: UnmappedMutableGlobalsInstanceBuilder,
+    #[map(MappedElementInstance)]
+    elements: UnmappedElementInstance,
+    #[map(MappedDataInstance)]
+    datas: UnmappedDataInstance,
+    #[map(MappedImmutableGlobalsInstance)]
+    immutable_globals: UnmappedImmutableGlobalsInstance,
+
     functions: FuncsInstance<T>,
-    immutable_globals: MappedImmutableGlobalsInstance,
 }
 
-impl<T> StoreSetBuilder<T> {
+impl<T> MappedStoreSetBuilder<T> {
     pub fn new(memory_system: &MemorySystem) -> Self {
         Self {
             functions: FuncsInstance::new(),
@@ -245,41 +252,16 @@ impl<T> StoreSetBuilder<T> {
         self,
         queue: &AsyncQueue,
     ) -> Result<CompletedBuilder<T>, DelayedOutOfMemoryError<Self>> {
-        let Self {
+        let UnmappedStoreSetBuilder {
             tables,
             memories,
             mutable_globals,
-            immutable_globals,
             elements,
             datas,
+            immutable_globals,
             functions,
-        } = self;
+        } = self.try_unmap(queue).await?;
 
-        // Todo: Clean this up
-        let (tables, memories, mutable_globals, immutable_globals, elements, datas) =
-            wgpu_lazybuffers::unmap_all!(
-                queue,
-                (
-                    tables,
-                    memories,
-                    mutable_globals,
-                    immutable_globals,
-                    elements,
-                    datas
-                ),
-                |(tables, memories, mutable_globals, immutable_globals, elements, datas)| {
-                    Self {
-                        tables,
-                        memories,
-                        mutable_globals,
-                        immutable_globals,
-                        elements,
-                        datas,
-                        functions,
-                    }
-                }
-            )
-            .await?;
         Ok(CompletedBuilder {
             tables,
             memories,
@@ -293,7 +275,6 @@ impl<T> StoreSetBuilder<T> {
 }
 
 pub struct CompletedBuilder<T> {
-    // Move host things to GPU
     tables: UnmappedTableInstanceSetBuilder,
     memories: UnmappedMemoryInstanceSetBuilder,
     mutable_globals: UnmappedMutableGlobalsInstanceBuilder,
@@ -347,7 +328,7 @@ impl<T> CompletedBuilder<T> {
 #[cfg(test)]
 mod tests {
     use crate::tests_lib::{gen_test_memory_string, get_backend};
-    use crate::{block_test, imports, wasp, Config, StoreSetBuilder};
+    use crate::{block_test, imports, wasp, Config, MappedStoreSetBuilder};
     use anyhow::anyhow;
     use std::sync::Arc;
     macro_rules! data_tests {
@@ -366,7 +347,7 @@ mod tests {
 
         let (expected_data, data_str) = gen_test_memory_string(size, 84637322u32);
 
-        let mut stores_builder = StoreSetBuilder::<()>::new(&memory_system);
+        let mut stores_builder = MappedStoreSetBuilder::<()>::new(&memory_system);
 
         let wat = format!(
             r#"

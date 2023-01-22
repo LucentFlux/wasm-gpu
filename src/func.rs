@@ -12,7 +12,7 @@ use crate::instance::ptrs::AbstractPtr;
 use crate::instance::ModuleInstanceReferences;
 use crate::store_set::HostStoreSet;
 use crate::typed::{Val, WasmTyVec};
-use crate::StoreSetBuilder;
+use crate::MappedStoreSetBuilder;
 
 #[derive(Debug)]
 pub(crate) struct ExportFunction {
@@ -98,7 +98,7 @@ where
     T: 'static,
 {
     pub fn wrap<Params, Results, F>(
-        stores: &mut StoreSetBuilder<T>,
+        stores: &mut MappedStoreSetBuilder<T>,
         func: F,
     ) -> TypedFuncPtr<T, Params, Results>
     where
@@ -219,7 +219,7 @@ mod tests {
 
         let (expected_data, data_str) = gen_test_memory_string(size, 203571423u32);
 
-        let mut stores_builder = StoreSetBuilder::new(&memory_system);
+        let mut stores_builder = MappedStoreSetBuilder::new(&memory_system);
 
         let wat = format!(
             r#"

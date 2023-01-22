@@ -1,6 +1,4 @@
 use wasmparser::WasmFeatures;
-use wgpu_async::async_queue::AsyncQueue;
-use wgpu_lazybuffers::MemorySystem;
 
 pub struct Tunables {}
 

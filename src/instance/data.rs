@@ -1,18 +1,20 @@
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;
-use wgpu_lazybuffers::DelayedOutOfMemoryResult;
 use wgpu_lazybuffers::{
-    DelayedOutOfMemoryError, EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem,
-    UnmappedLazyBuffer,
+    EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem, UnmappedLazyBuffer,
 };
+use wgpu_lazybuffers_macros::lazy_mappable;
 
 use crate::capabilities::CapabilityStore;
 use crate::impl_immutable_ptr;
 
+#[lazy_mappable(MappedDataInstance)]
 #[derive(Debug)]
 pub struct UnmappedDataInstance {
+    #[map(MappedLazyBuffer)]
     datas: UnmappedLazyBuffer,
     cap_set: CapabilityStore,
+    head: usize,
 }
 
 impl UnmappedDataInstance {
@@ -20,13 +22,6 @@ impl UnmappedDataInstance {
     pub(crate) async fn read_all(self, queue: &AsyncQueue) -> Result<Vec<u8>, BufferAsyncError> {
         self.datas.map().read_slice(queue, ..).await
     }
-}
-
-#[derive(Debug)]
-pub struct MappedDataInstance {
-    datas: MappedLazyBuffer,
-    cap_set: CapabilityStore,
-    head: usize,
 }
 
 impl MappedDataInstance {
@@ -82,24 +77,6 @@ impl MappedDataInstance {
     /// Calls `elem.drop` on the element pointed to. May or may not actually free the memory
     pub async fn drop<T>(&mut self, ptr: &DataPtr<T>) {
         //TODO: Use this hint
-    }
-
-    pub async fn unmap(
-        self,
-        queue: &AsyncQueue,
-    ) -> Result<UnmappedDataInstance, DelayedOutOfMemoryError<Self>> {
-        assert_eq!(self.head, self.datas.len(), "space reserved but not used");
-
-        let datas = self.datas.unmap(queue).await.map_oom(|datas| Self {
-            datas,
-            cap_set: self.cap_set.clone(),
-            ..self
-        })?;
-
-        return Ok(UnmappedDataInstance {
-            datas,
-            cap_set: self.cap_set,
-        });
     }
 }
 

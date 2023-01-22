@@ -7,10 +7,13 @@ use wgpu_lazybuffers::{MemorySystem, UnmappedLazyBuffer};
 use wgpu_lazybuffers_interleaving::{
     Interleaveable, InterleavedBufferConfig, MappedInterleavedBuffer, UnmappedInterleavedBuffer,
 };
+use wgpu_lazybuffers_macros::lazy_mappable;
 
 const STRIDE: u64 = 4; // FuncRef is 1 x u32
 
+#[lazy_mappable(MappedTableInstanceSet)]
 pub struct UnmappedTableInstanceSet {
+    #[map(Vec<MappedInterleavedBuffer<STRIDE>>)]
     data: Vec<UnmappedInterleavedBuffer<STRIDE>>,
     cap_set: CapabilityStore,
 }
@@ -39,11 +42,6 @@ impl UnmappedTableInstanceSet {
             cap_set,
         })
     }
-}
-
-pub struct MappedTableInstanceSet {
-    data: MappedInterleavedBuffer<STRIDE>,
-    cap_set: CapabilityStore,
 }
 
 impl_concrete_ptr!(

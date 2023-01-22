@@ -10,7 +10,7 @@ macro_rules! impl_global_get {
 
         $v async fn get<$T>(&mut self, queue: &AsyncQueue, ptr: &$Ptr) -> Result<Val, BufferAsyncError> {
             assert!(
-                self.meta.cap_set.check(&ptr.cap),
+                self.cap_set.check(&ptr.cap),
                 "global pointer was not valid for this instance"
             );
 

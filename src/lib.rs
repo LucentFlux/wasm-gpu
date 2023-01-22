@@ -34,7 +34,7 @@ pub mod wasp {
         pub use crate::externs::NamedExtern;
     }
     // Store
-    pub use store_set::builder::StoreSetBuilder;
+    pub use store_set::builder::MappedStoreSetBuilder; // Don't need to expose the unmapped version
     pub use store_set::DeviceStoreSet;
     // Instance
     pub use instance::ModuleInstanceReferences;

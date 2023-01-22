@@ -9,6 +9,7 @@ wgpu-async = { path = "../wgpu-async" }
 wgpu-lazybuffers = { path = "../wgpu-lazybuffers" }
 wgpu-lazybuffers-operations = { path = "../wgpu-lazybuffers-operations" }
 wgpu-lazybuffers-interleaving = { path = "../wgpu-lazybuffers-interleaving" }
+wgpu-lazybuffers-macros = { path = "../wgpu-lazybuffers-macros" }
 
 wat = "1.0"
 thiserror = "1.0"

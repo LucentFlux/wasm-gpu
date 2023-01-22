@@ -5,25 +5,23 @@ use wasmparser::MemoryType;
 use wgpu::BufferAsyncError;
 use wgpu_async::async_device::OutOfMemoryError;
 use wgpu_async::async_queue::AsyncQueue;
-use wgpu_lazybuffers::DelayedOutOfMemoryResult;
-use wgpu_lazybuffers::MappedLazyBufferIter;
 use wgpu_lazybuffers::{
-    DelayedOutOfMemoryError, EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem,
-    UnmappedLazyBuffer,
+    EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem, UnmappedLazyBuffer,
 };
+use wgpu_lazybuffers_macros::lazy_mappable;
 
 use super::wasm_limits_match;
 
 #[derive(Debug, Clone)]
-struct Meta {
-    cap_set: CapabilityStore,
-    memory_system: MemorySystem,
-}
+struct Meta {}
 
+#[lazy_mappable(MappedMemoryInstanceSetBuilder)]
 #[derive(Debug)]
 pub struct UnmappedMemoryInstanceSetBuilder {
+    #[map(Vec<MappedLazyBuffer>)]
     memories: Vec<UnmappedLazyBuffer>,
-    meta: Meta,
+    cap_set: CapabilityStore,
+    memory_system: MemorySystem,
 }
 
 impl UnmappedMemoryInstanceSetBuilder {
@@ -38,50 +36,32 @@ impl UnmappedMemoryInstanceSetBuilder {
             queue,
             &self.memories,
             count,
-            self.meta.cap_set.clone(),
+            self.cap_set.clone(),
         )
         .await
     }
-
-    pub fn map(self) -> MappedMemoryInstanceSetBuilder {
-        let Self { memories, meta } = self;
-
-        MappedMemoryInstanceSetBuilder {
-            memories: memories.into_iter().map(UnmappedLazyBuffer::map).collect(),
-            meta,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct MappedMemoryInstanceSetBuilder {
-    memories: Vec<MappedLazyBuffer>,
-    meta: Meta,
 }
 
 impl MappedMemoryInstanceSetBuilder {
     pub fn new(memory_system: &MemorySystem) -> Self {
         Self {
             memories: Vec::new(),
-            meta: Meta {
-                cap_set: CapabilityStore::new(0),
-                memory_system: memory_system.clone(),
-            },
+            cap_set: CapabilityStore::new(0),
+            memory_system: memory_system.clone(),
         }
     }
 
     pub fn add_memory<T>(&mut self, plan: &MemoryType) -> AbstractMemoryPtr<T> {
         let ptr = self.memories.len();
         self.memories.push(
-            self.meta
-                .memory_system
+            self.memory_system
                 .create_and_map_empty(&EmptyMemoryBlockConfig {
                     usages: wgpu::BufferUsages::empty(),
                     locking_size: 8192,
                 }),
         );
-        self.meta.cap_set = self.meta.cap_set.resize_ref(self.memories.len());
-        return AbstractMemoryPtr::new(ptr, self.meta.cap_set.get_cap(), plan.clone());
+        self.cap_set = self.cap_set.resize_ref(self.memories.len());
+        return AbstractMemoryPtr::new(ptr, self.cap_set.get_cap(), plan.clone());
     }
 
     /// # Panics
@@ -94,7 +74,7 @@ impl MappedMemoryInstanceSetBuilder {
         offset: usize,
     ) -> Result<(), BufferAsyncError> {
         assert!(
-            self.meta.cap_set.check(&ptr.cap),
+            self.cap_set.check(&ptr.cap),
             "memory pointer was not valid for this instance"
         );
 
@@ -103,26 +83,6 @@ impl MappedMemoryInstanceSetBuilder {
             .expect("Memory builders are append only, so having a pointer implies the item exists")
             .write_slice(queue, offset..offset + data.len(), data)
             .await
-    }
-
-    pub async fn unmap(
-        self,
-        queue: &AsyncQueue,
-    ) -> Result<UnmappedMemoryInstanceSetBuilder, DelayedOutOfMemoryError<Self>> {
-        let memories = self
-            .memories
-            .unmap_all(queue)
-            .await
-            .map_oom(|memories| Self {
-                memories,
-                meta: self.meta.clone(),
-                ..self
-            })?;
-
-        return Ok(UnmappedMemoryInstanceSetBuilder {
-            meta: self.meta,
-            memories,
-        });
     }
 }
 

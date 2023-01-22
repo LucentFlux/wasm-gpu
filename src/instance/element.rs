@@ -4,11 +4,10 @@ use crate::typed::{FuncRef, WasmTyVal, WasmTyVec};
 use itertools::Itertools;
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;
-use wgpu_lazybuffers::DelayedOutOfMemoryResult;
 use wgpu_lazybuffers::{
-    DelayedOutOfMemoryError, EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem,
-    UnmappedLazyBuffer,
+    EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem, UnmappedLazyBuffer,
 };
+use wgpu_lazybuffers_macros::lazy_mappable;
 
 #[derive(Debug, Clone)]
 struct Meta {
@@ -16,19 +15,15 @@ struct Meta {
     cap_set: CapabilityStore,
 }
 
+#[lazy_mappable(MappedElementInstance)]
 #[derive(Debug)]
 pub struct UnmappedElementInstance {
+    #[map(MappedLazyBuffer)]
     references: UnmappedLazyBuffer,
     meta: Meta,
 }
 
 impl UnmappedElementInstance {}
-
-#[derive(Debug)]
-pub struct MappedElementInstance {
-    references: MappedLazyBuffer,
-    meta: Meta,
-}
 
 impl MappedElementInstance {
     pub fn new(memory_system: &MemorySystem) -> Self {
@@ -101,32 +96,6 @@ impl MappedElementInstance {
     /// Calls `elem.drop` on the element pointed to. May or may not actually free the memory
     pub async fn drop<T>(&mut self, ptr: &ElementPtr<T>) {
         //TODO - use this optimisation hint
-    }
-
-    pub async fn unmap(
-        self,
-        queue: &AsyncQueue,
-    ) -> Result<UnmappedElementInstance, DelayedOutOfMemoryError<Self>> {
-        assert_eq!(
-            self.meta.head,
-            self.references.len(),
-            "space reserved but not used"
-        );
-
-        let references = self
-            .references
-            .unmap(queue)
-            .await
-            .map_oom(|references| Self {
-                references,
-                meta: self.meta.clone(),
-                ..self
-            })?;
-
-        Ok(UnmappedElementInstance {
-            references,
-            meta: self.meta,
-        })
     }
 }
 

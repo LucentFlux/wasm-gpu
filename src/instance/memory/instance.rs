@@ -7,17 +7,15 @@ use wgpu_lazybuffers::{MemorySystem, UnmappedLazyBuffer};
 use wgpu_lazybuffers_interleaving::{
     Interleaveable, InterleavedBufferConfig, MappedInterleavedBuffer, UnmappedInterleavedBuffer,
 };
+use wgpu_lazybuffers_macros::lazy_mappable;
 
 const STRIDE: u64 = 16; // 4 * u32
 
-#[derive(Clone)]
-struct Meta {
-    cap_set: CapabilityStore,
-}
-
+#[lazy_mappable(MappedMemoryInstanceSet)]
 pub struct UnmappedMemoryInstanceSet {
+    #[map(Vec<MappedInterleavedBuffer<STRIDE>>)]
     data: Vec<UnmappedInterleavedBuffer<STRIDE>>,
-    meta: Meta,
+    cap_set: CapabilityStore,
 }
 
 impl UnmappedMemoryInstanceSet {
@@ -41,14 +39,9 @@ impl UnmappedMemoryInstanceSet {
 
         Ok(Self {
             data: memories?,
-            meta: Meta { cap_set },
+            cap_set,
         })
     }
-}
-
-pub struct MappedMemoryInstanceSet {
-    data: Vec<MappedInterleavedBuffer<STRIDE>>,
-    meta: Meta,
 }
 
 impl_concrete_ptr!(
