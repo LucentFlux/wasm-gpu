@@ -16,20 +16,25 @@ use crate::instance::table::builder::{
 };
 use crate::instance::ModuleInstanceReferences;
 use crate::store_set::DeviceStoreSetData;
-use crate::{DeviceStoreSet, Engine, ExternRef, Func, FuncRef, Ieee32, Ieee64, Module, Val};
+use crate::{DeviceStoreSet, ExternRef, Func, FuncRef, Ieee32, Ieee64, Module, Val};
+use perfect_derive::perfect_derive;
 use std::sync::Arc;
 use wasmparser::{Operator, ValType};
+use wgpu::BufferAsyncError;
+use wgpu_async::async_device::OutOfMemoryError;
 use wgpu_async::async_queue::AsyncQueue;
+use wgpu_lazybuffers::DelayedOutOfMemoryResult;
 use wgpu_lazybuffers::{DelayedOutOfMemoryError, MemorySystem};
 
 /// Used during instantiation to evaluate an expression in a single pass
 pub(crate) async fn interpret_constexpr<'data, T>(
+    queue: &AsyncQueue,
     constr_expr: &Vec<Operator<'data>>,
     mutable_globals: &mut MappedMutableGlobalsInstanceBuilder,
     immutable_globals: &mut MappedImmutableGlobalsInstance,
     global_ptrs: &Vec<AbstractGlobalPtr<T>>,
     func_ptrs: &Vec<UntypedFuncPtr<T>>,
-) -> Val {
+) -> Result<Val, BufferAsyncError> {
     let mut stack = Vec::new();
 
     let mut iter = constr_expr.into_iter();
@@ -60,11 +65,15 @@ pub(crate) async fn interpret_constexpr<'data, T>(
                     .get(global_index)
                     .expect("global index out of range of module globals");
                 let global_val = match global_ptr {
-                    AbstractGlobalPtr::Immutable(imm_ptr) => immutable_globals.get(imm_ptr).await,
-                    AbstractGlobalPtr::Mutable(mut_ptr) => mutable_globals.get(mut_ptr).await,
+                    AbstractGlobalPtr::Immutable(imm_ptr) => {
+                        immutable_globals.get(queue, imm_ptr).await
+                    }
+                    AbstractGlobalPtr::Mutable(mut_ptr) => {
+                        mutable_globals.get(queue, mut_ptr).await
+                    }
                 };
 
-                stack.push(global_val)
+                stack.push(global_val?)
             }
             Operator::End => {
                 if !iter.next().is_none() {
@@ -79,11 +88,12 @@ pub(crate) async fn interpret_constexpr<'data, T>(
 
     let res = stack.pop().expect("expression did not result in a value");
 
-    return res;
+    return Ok(res);
 }
 
 /// Acts like a traditional OOP factory where we initialise modules into this before
 /// creating single Stores after all initialization is done, to amortize the instantiation cost
+#[perfect_derive(Debug)]
 pub struct StoreSetBuilder<T> {
     tables: MappedTableInstanceSetBuilder,
     memories: MappedMemoryInstanceSetBuilder,
@@ -93,22 +103,18 @@ pub struct StoreSetBuilder<T> {
     datas: MappedDataInstance,
     functions: FuncsInstance<T>,
     immutable_globals: MappedImmutableGlobalsInstance,
-    memory_system: MemorySystem,
 }
 
 impl<T> StoreSetBuilder<T> {
-    pub fn new(engine: &Engine) -> Self {
-        let memory_system = engine.memory_system();
-        let queue = engine.queue();
+    pub fn new(memory_system: &MemorySystem) -> Self {
         Self {
             functions: FuncsInstance::new(),
             tables: MappedTableInstanceSetBuilder::new(memory_system),
             memories: MappedMemoryInstanceSetBuilder::new(memory_system),
             immutable_globals: MappedImmutableGlobalsInstance::new(memory_system),
             mutable_globals: MappedMutableGlobalsInstanceBuilder::new(memory_system),
-            elements: MappedElementInstance::new(memory_system, queue),
-            datas: MappedDataInstance::new(memory_system, queue),
-            memory_system: memory_system.clone(),
+            elements: MappedElementInstance::new(memory_system),
+            datas: MappedDataInstance::new(memory_system),
         }
     }
 
@@ -122,6 +128,8 @@ impl<T> StoreSetBuilder<T> {
     /// stores from the builder involves no copying of data from the CPU to the GPU, only within the GPU.
     pub async fn instantiate_module(
         &mut self,
+        memory_system: &MemorySystem,
+        queue: &AsyncQueue,
         module: &Module,
         imports: Vec<NamedExtern<T>>,
     ) -> anyhow::Result<ModuleInstanceReferences<T>> {
@@ -134,27 +142,30 @@ impl<T> StoreSetBuilder<T> {
         // Globals
         let global_ptrs = module
             .initialize_globals(
+                queue,
                 &mut self.mutable_globals,
                 &mut self.immutable_globals,
                 validated_imports.globals().map(|p| p.clone()),
                 &predicted_func_ptrs,
             )
-            .await;
+            .await?;
 
         // Elements
         let element_ptrs = module
             .initialize_elements(
+                queue,
                 &mut self.elements,
                 &mut self.mutable_globals,
                 &mut self.immutable_globals,
                 &global_ptrs,
                 &predicted_func_ptrs,
             )
-            .await;
+            .await?;
 
         // Tables
         let table_ptrs = module
             .initialize_tables(
+                queue,
                 &mut self.tables,
                 validated_imports.tables(),
                 &mut self.elements,
@@ -164,14 +175,15 @@ impl<T> StoreSetBuilder<T> {
                 &global_ptrs,
                 &predicted_func_ptrs,
             )
-            .await;
+            .await?;
 
         // Datas
-        let data_ptrs = module.initialize_datas(&mut self.datas).await;
+        let data_ptrs = module.initialize_datas(queue, &mut self.datas).await?;
 
         // Memories
         let memory_ptrs = module
             .initialize_memories(
+                queue,
                 &mut self.memories,
                 validated_imports.memories(),
                 &mut self.datas,
@@ -181,11 +193,12 @@ impl<T> StoreSetBuilder<T> {
                 &global_ptrs,
                 &predicted_func_ptrs,
             )
-            .await;
+            .await?;
 
         // Functions - they take everything
         let func_ptrs = module
             .initialize_functions(
+                queue,
                 &mut self.functions,
                 validated_imports.functions(),
                 &global_ptrs,
@@ -194,7 +207,7 @@ impl<T> StoreSetBuilder<T> {
                 &data_ptrs,
                 &memory_ptrs,
             )
-            .await;
+            .await?;
         if predicted_func_ptrs != func_ptrs {
             panic!("predicted function pointers did not match later calculated pointers");
         }
@@ -233,7 +246,6 @@ impl<T> StoreSetBuilder<T> {
         queue: &AsyncQueue,
     ) -> Result<CompletedBuilder<T>, DelayedOutOfMemoryError<Self>> {
         let Self {
-            memory_system,
             tables,
             memories,
             mutable_globals,
@@ -244,24 +256,30 @@ impl<T> StoreSetBuilder<T> {
         } = self;
 
         // Todo: Clean this up
-        let mutable_globals = mutable_globals
-            .unmap(queue)
-            .await
-            .map_oom(|mutable_globals| Self {
-                memory_system,
-                tables,
-                memories,
-                mutable_globals,
-                immutable_globals,
-                elements,
-                datas,
-                functions,
-            })?;
-        let immutable_globals = immutable_globals.unmap(queue).await;
-        let elements = elements.unmap(queue).await;
-        let datas = datas.unmap(queue).await;
-        let tables = tables.unmap(queue).await;
-        let memories = memories.unmap(queue).await;
+        let (tables, memories, mutable_globals, immutable_globals, elements, datas) =
+            wgpu_lazybuffers::unmap_all!(
+                queue,
+                (
+                    tables,
+                    memories,
+                    mutable_globals,
+                    immutable_globals,
+                    elements,
+                    datas
+                ),
+                |(tables, memories, mutable_globals, immutable_globals, elements, datas)| {
+                    Self {
+                        tables,
+                        memories,
+                        mutable_globals,
+                        immutable_globals,
+                        elements,
+                        datas,
+                        functions,
+                    }
+                }
+            )
+            .await?;
         Ok(CompletedBuilder {
             tables,
             memories,
@@ -287,28 +305,31 @@ pub struct CompletedBuilder<T> {
 
 impl<T> CompletedBuilder<T> {
     /// Takes the instructions provided to this builder and produces a collection of stores which can
-    /// be used to evaluate instructions
+    /// be used to evaluate instructions. W take all of the initialisation that we did that can be shared and
+    /// spin it into several instances. This shouldn't involve moving any data to the device, instead data
+    /// that has already been provided to the device should be cloned and specialised as needed for a
+    /// collection of instances.
     pub async fn build(
         &self,
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
         values: impl IntoIterator<Item = T>,
-    ) -> DeviceStoreSet<T> {
-        // Here we take all of the initialisation that we did that can be shared and spin it into several
-        // instances. This shouldn't involve moving any data to the device, instead data that has already
-        // been provided to the device should be cloned and specialised as needed for a collection of instances
+    ) -> Result<DeviceStoreSet<T>, OutOfMemoryError> {
         let data: Vec<_> = values.into_iter().collect();
 
-        let tables = self.tables.build(memory_system, queue, data.len()).await;
+        let tables = self.tables.build(memory_system, queue, data.len()).await?;
 
-        let memories = self.memories.build(memory_system, queue, data.len()).await;
+        let memories = self
+            .memories
+            .build(memory_system, queue, data.len())
+            .await?;
 
         let mutable_globals = self
             .mutable_globals
             .build(memory_system, queue, data.len())
-            .await;
+            .await?;
 
-        DeviceStoreSet {
+        Ok(DeviceStoreSet {
             data,
             functions: self.functions.clone(),
             elements: self.elements.clone(),
@@ -319,7 +340,7 @@ impl<T> CompletedBuilder<T> {
                 memories,
                 mutable_globals,
             },
-        }
+        })
     }
 }
 
@@ -345,9 +366,7 @@ mod tests {
 
         let (expected_data, data_str) = gen_test_memory_string(size, 84637322u32);
 
-        let engine = wasp::Engine::new(memory_system, queue, Config::default());
-
-        let mut stores_builder = StoreSetBuilder::<_, ()>::new(&engine).await;
+        let mut stores_builder = StoreSetBuilder::<()>::new(&memory_system);
 
         let wat = format!(
             r#"
@@ -358,14 +377,14 @@ mod tests {
             data_str
         );
         let wat = wat.into_bytes();
-        let module = wasp::Module::new(&engine, &wat).unwrap();
+        let module = wasp::Module::new(&Config::default(), &wat).unwrap();
 
         let _instance = stores_builder
-            .instantiate_module(&module, imports! {})
+            .instantiate_module(&memory_system, &queue, &module, imports! {})
             .await
             .expect("could not instantiate all modules");
 
-        let set = stores_builder.complete().await;
+        let set = stores_builder.complete(&queue).await.unwrap();
 
         let buffers = Arc::try_unwrap(set.datas)
             .map_err(|_| {
@@ -373,6 +392,6 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(buffers.read_all().await, expected_data)
+        assert_eq!(buffers.read_all(&queue).await.unwrap(), expected_data)
     }
 }

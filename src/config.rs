@@ -34,31 +34,3 @@ impl Default for Config {
         }
     }
 }
-
-pub struct Engine {
-    memory_system: MemorySystem,
-    queue: AsyncQueue,
-    config: Config,
-}
-
-impl Engine {
-    pub fn new(memory_system: MemorySystem, queue: AsyncQueue, config: Config) -> Self {
-        Self {
-            memory_system,
-            queue,
-            config,
-        }
-    }
-
-    pub fn config(&self) -> &Config {
-        &self.config
-    }
-
-    pub fn memory_system(&self) -> &MemorySystem {
-        &self.memory_system
-    }
-
-    pub fn queue(&self) -> &AsyncQueue {
-        &self.queue
-    }
-}

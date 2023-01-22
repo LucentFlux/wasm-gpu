@@ -4,9 +4,8 @@ use std::collections::HashMap;
 use std::ops::Range;
 use wasmparser::{
     BinaryReaderError, DataKind, ElementItem, ElementKind, Encoding, ExternalKind,
-    FuncValidatorAllocations, GlobalType, IndirectNameMap, MemoryType, Name, NameMap,
-    NameSectionReader, Operator, Parser, Payload, SingleName, TableType, Type, TypeRef, ValType,
-    Validator,
+    FuncValidatorAllocations, GlobalType, MemoryType, NameSectionReader, Operator, Parser, Payload,
+    TableType, Type, TypeRef, ValType, Validator,
 };
 
 type WasmResult<T> = Result<T, WasmError>;

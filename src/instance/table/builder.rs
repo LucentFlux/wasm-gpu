@@ -3,15 +3,25 @@ use crate::impl_abstract_ptr;
 use crate::instance::memory::wasm_limits_match;
 use crate::instance::table::instance::{TablePtr, UnmappedTableInstanceSet};
 use wasmparser::TableType;
+use wgpu_async::async_device::OutOfMemoryError;
 use wgpu_async::async_queue::AsyncQueue;
+use wgpu_lazybuffers::DelayedOutOfMemoryResult;
+use wgpu_lazybuffers::MappedLazyBufferIter;
 use wgpu_lazybuffers::{
     DelayedOutOfMemoryError, EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem,
     UnmappedLazyBuffer,
 };
 
-pub struct UnmappedTableInstanceSetBuilder {
+#[derive(Debug, Clone)]
+struct Meta {
     cap_set: CapabilityStore,
+    memory_system: MemorySystem,
+}
+
+#[derive(Debug)]
+pub struct UnmappedTableInstanceSetBuilder {
     tables: Vec<UnmappedLazyBuffer>,
+    meta: Meta,
 }
 
 impl UnmappedTableInstanceSetBuilder {
@@ -20,56 +30,74 @@ impl UnmappedTableInstanceSetBuilder {
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
         count: usize,
-    ) -> UnmappedTableInstanceSet {
+    ) -> Result<UnmappedTableInstanceSet, OutOfMemoryError> {
         UnmappedTableInstanceSet::new(
             memory_system,
             queue,
             &self.tables,
             count,
-            self.cap_set.clone(),
+            self.meta.cap_set.clone(),
         )
         .await
     }
+
+    pub fn map(self) -> MappedTableInstanceSetBuilder {
+        let Self { tables, meta } = self;
+
+        MappedTableInstanceSetBuilder {
+            tables: tables.into_iter().map(UnmappedLazyBuffer::map).collect(),
+            meta,
+        }
+    }
 }
 
+#[derive(Debug)]
 pub struct MappedTableInstanceSetBuilder {
-    cap_set: CapabilityStore,
     tables: Vec<MappedLazyBuffer>,
-    memory_system: MemorySystem,
+    meta: Meta,
 }
 
 impl MappedTableInstanceSetBuilder {
     pub fn new(memory_system: &MemorySystem) -> Self {
         Self {
-            cap_set: CapabilityStore::new(0),
             tables: Vec::new(),
-            memory_system: memory_system.clone(),
+            meta: Meta {
+                cap_set: CapabilityStore::new(0),
+                memory_system: memory_system.clone(),
+            },
         }
     }
 
     pub fn add_table<T>(&mut self, plan: &TableType) -> AbstractTablePtr<T> {
         let ptr = self.tables.len();
         self.tables.push(
-            self.memory_system
+            self.meta
+                .memory_system
                 .create_and_map_empty(&EmptyMemoryBlockConfig {
-                    usages: wgpu::BufferUsages::STORAGE,
-                    locking_size: None,
+                    usages: wgpu::BufferUsages::empty(),
+                    locking_size: 128,
                 }),
         );
-        self.cap_set = self.cap_set.resize_ref(self.tables.len());
-        return AbstractTablePtr::new(ptr, self.cap_set.get_cap(), plan.clone());
+        self.meta.cap_set = self.meta.cap_set.resize_ref(self.tables.len());
+        return AbstractTablePtr::new(ptr, self.meta.cap_set.get_cap(), plan.clone());
     }
 
-    pub async fn initialize<T>(&mut self, ptr: &AbstractTablePtr<T>, data: &[u8], offset: usize) {
+    pub async fn initialize<T>(
+        &mut self,
+        queue: &AsyncQueue,
+        ptr: &AbstractTablePtr<T>,
+        data: &[u8],
+        offset: usize,
+    ) -> Result<(), wgpu::BufferAsyncError> {
         assert!(
-            self.cap_set.check(&ptr.cap),
+            self.meta.cap_set.check(&ptr.cap),
             "table pointer was not valid for this instance"
         );
 
         self.tables
             .get_mut(ptr.ptr)
             .expect("Table builders are append only, so having a pointer implies the item exists")
-            .write(data, offset)
+            .write_slice(queue, offset..offset + data.len(), data)
             .await
     }
 
@@ -77,13 +105,14 @@ impl MappedTableInstanceSetBuilder {
         self,
         queue: &AsyncQueue,
     ) -> Result<UnmappedTableInstanceSetBuilder, DelayedOutOfMemoryError<Self>> {
-        let tables = self
-            .tables
-            .unmap_all(queue)
-            .map_oom(|tables| Self { tables, ..self })?;
+        let tables = self.tables.unmap_all(queue).await.map_oom(|tables| Self {
+            tables,
+            meta: self.meta.clone(),
+            ..self
+        })?;
 
         Ok(UnmappedTableInstanceSetBuilder {
-            cap_set: self.cap_set,
+            meta: self.meta,
             tables,
         })
     }

@@ -1,6 +1,5 @@
 use crate::capabilities::CapabilityStore;
 use crate::impl_abstract_ptr;
-use crate::instance::func::UntypedFuncPtr;
 use crate::instance::global::immutable::GlobalImmutablePtr;
 use crate::instance::global::instance::GlobalMutablePtr;
 use crate::instance::global::instance::UnmappedMutableGlobalsInstanceSet;
@@ -8,17 +7,26 @@ use crate::instance::global::{impl_global_get, impl_global_push};
 use crate::typed::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal};
 use std::mem::size_of;
 use wasmparser::{GlobalType, ValType};
+use wgpu::BufferAsyncError;
 use wgpu_async::async_device::OutOfMemoryError;
 use wgpu_async::async_queue::AsyncQueue;
 use wgpu_lazybuffers::DelayedOutOfMemoryError;
+use wgpu_lazybuffers::DelayedOutOfMemoryResult;
 use wgpu_lazybuffers::{
     EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem, UnmappedLazyBuffer,
 };
 
+#[derive(Debug, Clone)]
+struct Meta {
+    head: usize,
+    cap_set: CapabilityStore,
+}
+
+#[derive(Debug)]
 pub struct UnmappedMutableGlobalsInstanceBuilder {
     pub mutable_values: UnmappedLazyBuffer,
 
-    cap_set: CapabilityStore,
+    meta: Meta,
 }
 
 impl UnmappedMutableGlobalsInstanceBuilder {
@@ -33,65 +41,91 @@ impl UnmappedMutableGlobalsInstanceBuilder {
             queue,
             &self.mutable_values,
             count,
-            self.cap_set.clone(),
+            self.meta.cap_set.clone(),
         )
         .await;
     }
+
+    pub fn map(self) -> MappedMutableGlobalsInstanceBuilder {
+        let Self {
+            mutable_values,
+            meta,
+        } = self;
+
+        MappedMutableGlobalsInstanceBuilder {
+            mutable_values: mutable_values.map(),
+            meta,
+        }
+    }
 }
 
+#[derive(Debug)]
 pub struct MappedMutableGlobalsInstanceBuilder {
     /// Holds values, some mutable and some immutable by the typing information in the pointer
     mutable_values: MappedLazyBuffer,
-    mutable_values_head: usize,
 
-    cap_set: CapabilityStore,
+    meta: Meta,
 }
 
 impl MappedMutableGlobalsInstanceBuilder {
     pub fn new(memory_system: &MemorySystem) -> Self {
-        Ok(Self {
+        Self {
             mutable_values: memory_system.create_and_map_empty(&EmptyMemoryBlockConfig {
-                usages: wgpu::BufferUsages::STORAGE,
+                usages: wgpu::BufferUsages::empty(),
                 locking_size: 1024,
             }),
-            mutable_values_head: 0,
-            cap_set: CapabilityStore::new(0),
-        })
+            meta: Meta {
+                head: 0,
+                cap_set: CapabilityStore::new(0),
+            },
+        }
     }
 
     /// values_count is given in units of bytes, so an f64 is 8 bytes
-    pub async fn reserve(&mut self, values_size: usize) {
-        self.mutable_values.extend(values_size).await;
-        self.cap_set = self.cap_set.resize_ref(self.mutable_values.len())
+    pub fn reserve(&mut self, values_size: usize) {
+        self.mutable_values.extend(values_size);
+        self.meta.cap_set = self.meta.cap_set.resize_ref(self.mutable_values.len())
     }
 
-    async fn push_typed<V, T>(&mut self, v: V) -> AbstractGlobalMutablePtr<T>
+    async fn push_typed<V, T>(
+        &mut self,
+        queue: &AsyncQueue,
+        v: V,
+    ) -> Result<AbstractGlobalMutablePtr<T>, BufferAsyncError>
     where
         V: WasmTyVal,
     {
         let bytes = v.to_bytes();
 
-        let start = self.mutable_values_head;
+        let start = self.meta.head;
         let end = start + bytes.len();
 
         assert!(end <= self.mutable_values.len(), "index out of bounds");
-        let slice = self.mutable_values.as_slice_mut(start..end).await;
+        self.mutable_values
+            .write_slice(queue, start..end, bytes.as_slice())
+            .await?;
 
-        slice.copy_from_slice(bytes.as_slice());
+        self.meta.head = end;
 
-        self.mutable_values_head = end;
-
-        return AbstractGlobalMutablePtr::new(start, self.cap_set.get_cap(), V::VAL_TYPE);
+        return Ok(AbstractGlobalMutablePtr::new(
+            start,
+            self.meta.cap_set.get_cap(),
+            V::VAL_TYPE,
+        ));
     }
 
     impl_global_push! {
-        pub async fn push<T>(&mut self, val: Val) -> AbstractGlobalMutablePtr<T>
+        pub async fn push<T>(&mut self, queue: &AsyncQueue, val: Val) -> Result<AbstractGlobalMutablePtr<T>, BufferAsyncError>
     }
 
     /// A typed version of `get`, panics if types mismatch
-    pub async fn get_typed<T, V: WasmTyVal>(&mut self, ptr: &AbstractGlobalMutablePtr<T>) -> V {
+    pub async fn get_typed<T, V: WasmTyVal>(
+        &mut self,
+        queue: &AsyncQueue,
+        ptr: &AbstractGlobalMutablePtr<T>,
+    ) -> Result<V, BufferAsyncError> {
         assert!(
-            self.cap_set.check(&ptr.cap),
+            self.meta.cap_set.check(&ptr.cap),
             "global mutable pointer was not valid for this instance"
         );
         assert!(ptr.content_type().eq(&V::VAL_TYPE));
@@ -100,20 +134,20 @@ impl MappedMutableGlobalsInstanceBuilder {
         let end = start + size_of::<V>();
 
         assert!(end <= self.mutable_values.len(), "index out of bounds");
-        let slice = self.mutable_values.as_slice(start..end).await;
+        let bytes = self.mutable_values.read_slice(queue, start..end).await?;
 
-        return V::try_from_bytes(slice).expect(
+        return Ok(V::try_from_bytes(&bytes).expect(
             format!(
                 "could not parse memory - invalid state for {}: {:?}",
                 std::any::type_name::<V>(),
-                slice
+                bytes
             )
             .as_str(),
-        );
+        ));
     }
 
     impl_global_get! {
-        pub async fn get<T>(&mut self, ptr: &AbstractGlobalMutablePtr<T>) -> Val
+        pub async fn get<T>(&mut self, queue: &AsyncQueue, ptr: &AbstractGlobalMutablePtr<T>) -> Result<Val, BufferAsyncError>
     }
 
     pub async fn unmap(
@@ -121,7 +155,7 @@ impl MappedMutableGlobalsInstanceBuilder {
         queue: &AsyncQueue,
     ) -> Result<UnmappedMutableGlobalsInstanceBuilder, DelayedOutOfMemoryError<Self>> {
         assert_eq!(
-            self.mutable_values_head,
+            self.meta.head,
             self.mutable_values.len(),
             "mutable space reserved but not used"
         );
@@ -132,12 +166,13 @@ impl MappedMutableGlobalsInstanceBuilder {
             .await
             .map_oom(|mutable_values| Self {
                 mutable_values,
+                meta: self.meta.clone(),
                 ..self
             })?;
 
         Ok(UnmappedMutableGlobalsInstanceBuilder {
             mutable_values,
-            cap_set: self.cap_set,
+            meta: self.meta,
         })
     }
 }

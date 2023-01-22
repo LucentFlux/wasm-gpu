@@ -14,13 +14,15 @@ use crate::module::module_environ::{
 };
 use crate::store_set::builder::interpret_constexpr;
 use crate::typed::{wasm_ty_bytes, FuncRef, Val};
-use crate::Engine;
+use crate::Config;
 use anyhow::{anyhow, Context, Error};
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::slice::Iter;
 use wasmparser::{Type, ValType, Validator};
+use wgpu::BufferAsyncError;
+use wgpu_async::async_queue::AsyncQueue;
 
 /// A wasm module that has not been instantiated
 pub struct Module {
@@ -50,8 +52,8 @@ impl<T> ValidatedImports<T> {
 }
 
 impl Module {
-    fn parse(engine: &Engine, wasm: Vec<u8>) -> Result<ParsedModuleUnit, Error> {
-        let mut validator = Validator::new_with_features(engine.config().features.clone());
+    fn parse(config: &Config, wasm: Vec<u8>) -> Result<ParsedModuleUnit, Error> {
+        let mut validator = Validator::new_with_features(config.features.clone());
         let parser = wasmparser::Parser::new(0);
         let parsed = ModuleEnviron::new(validator)
             .translate(parser, wasm)
@@ -61,14 +63,14 @@ impl Module {
     }
 
     pub fn new<'a>(
-        engine: &Engine,
+        config: &Config,
         bytes: impl IntoIterator<Item = &'a u8>,
     ) -> Result<Self, Error> {
         let wasm: Vec<_> = bytes.into_iter().map(|v| *v).collect();
         let wasm: Cow<'_, [u8]> = wat::parse_bytes(wasm.as_slice())?;
         let wasm = wasm.to_vec();
 
-        let parsed = Self::parse(engine, wasm)?;
+        let parsed = Self::parse(config, wasm)?;
 
         return Ok(Self { parsed });
     }
@@ -152,11 +154,12 @@ impl Module {
     /// module, then writes the initial values
     pub(crate) async fn initialize_globals<T>(
         &self,
+        queue: &AsyncQueue,
         mutable_globals_instance: &mut MappedMutableGlobalsInstanceBuilder,
         immutable_globals_instance: &mut MappedImmutableGlobalsInstance,
         global_imports: impl Iterator<Item = AbstractGlobalPtr<T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
-    ) -> Vec<AbstractGlobalPtr<T>> {
+    ) -> Result<Vec<AbstractGlobalPtr<T>>, BufferAsyncError> {
         // Calculate space requirements
         let (immutables, mutables): (Vec<_>, Vec<_>) = self
             .parsed
@@ -175,29 +178,30 @@ impl Module {
         let mutable_space: usize = mutables.into_iter().map(|(_, v)| v).sum();
 
         // Reserve
-        immutable_globals_instance.reserve(immutable_space).await;
-        mutable_globals_instance.reserve(mutable_space).await;
+        immutable_globals_instance.reserve(immutable_space);
+        mutable_globals_instance.reserve(mutable_space);
 
         // Add the values
         let mut results = global_imports.into_iter().collect_vec();
         for global in self.parsed.borrow_sections().globals.iter() {
             let value = interpret_constexpr(
+                queue,
                 &global.initializer,
                 mutable_globals_instance,
                 immutable_globals_instance,
                 &results,
                 &module_func_ptrs,
             )
-            .await;
+            .await?;
             let ptr: AbstractGlobalPtr<T> = if global.ty.mutable {
-                AbstractGlobalPtr::Mutable(mutable_globals_instance.push(value).await)
+                AbstractGlobalPtr::Mutable(mutable_globals_instance.push(queue, value).await?)
             } else {
-                AbstractGlobalPtr::Immutable(immutable_globals_instance.push(value).await)
+                AbstractGlobalPtr::Immutable(immutable_globals_instance.push(queue, value).await?)
             };
             results.push(ptr);
         }
 
-        return results;
+        return Ok(results);
     }
 
     pub(crate) fn predict_functions<T>(
@@ -217,13 +221,14 @@ impl Module {
     /// Extends elements buffers to be shared by all stores of a set, as passive elements are immutable
     pub(crate) async fn initialize_elements<T>(
         &self,
+        queue: &AsyncQueue,
         elements: &mut MappedElementInstance,
         // Needed for const expr evaluation
         module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder,
         module_immutable_globals: &mut MappedImmutableGlobalsInstance,
         module_global_ptrs: &Vec<AbstractGlobalPtr<T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
-    ) -> Vec<ElementPtr<T>> {
+    ) -> Result<Vec<ElementPtr<T>>, BufferAsyncError> {
         // Reserve space first
         let size: usize = std::mem::size_of::<FuncRef>()
             * self
@@ -233,7 +238,7 @@ impl Module {
                 .iter()
                 .map(|e| e.items.len())
                 .sum::<usize>();
-        elements.reserve(size).await;
+        elements.reserve(size);
 
         // Then add
         let mut ptrs = Vec::new();
@@ -242,13 +247,14 @@ impl Module {
             let mut vals = Vec::new();
             for expr in element.items.iter() {
                 let v = interpret_constexpr(
+                    queue,
                     expr,
                     module_mutable_globals,
                     module_immutable_globals,
                     module_global_ptrs,
                     module_func_ptrs,
                 )
-                .await;
+                .await?;
                 let v = match (v, &element.ty) {
                     (Val::FuncRef(fr), ValType::FuncRef) => fr.as_u32(),
                     (Val::ExternRef(er), ValType::ExternRef) => er.as_u32(),
@@ -257,17 +263,18 @@ impl Module {
                 vals.push(v);
             }
 
-            let ptr = elements.add_element(vals).await;
+            let ptr = elements.add_element(queue, vals).await?;
             ptrs.push(ptr);
         }
 
-        return ptrs;
+        return Ok(ptrs);
     }
 
-    pub(crate) async fn initialize_tables<T>(
-        &self,
+    pub(crate) async fn initialize_tables<'a, T: 'a>(
+        &'a self,
+        queue: &AsyncQueue,
         tables: &mut MappedTableInstanceSetBuilder,
-        imported_tables: Iter<'_, AbstractTablePtr<T>>,
+        imported_tables: impl IntoIterator<Item = &'a AbstractTablePtr<T>>,
         elements: &mut MappedElementInstance,
         module_element_ptrs: &Vec<ElementPtr<T>>,
         // Needed for const expr evaluation
@@ -275,13 +282,16 @@ impl Module {
         module_immutable_globals: &mut MappedImmutableGlobalsInstance,
         module_global_ptrs: &Vec<AbstractGlobalPtr<T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
-    ) -> Vec<AbstractTablePtr<T>> {
+    ) -> Result<Vec<AbstractTablePtr<T>>, BufferAsyncError> {
         // Pointers starts with imports
-        let mut ptrs = imported_tables.map(|tp| tp.clone()).collect_vec();
+        let mut ptrs = imported_tables
+            .into_iter()
+            .map(|tp| tp.clone())
+            .collect_vec();
 
         // Create tables first
         for table_plan in self.parsed.borrow_sections().tables.iter() {
-            let ptr = tables.add_table(table_plan).await;
+            let ptr = tables.add_table(table_plan);
             ptrs.push(ptr);
         }
 
@@ -302,22 +312,23 @@ impl Module {
                         .get((*table_index) as usize)
                         .expect("table index out of range");
                     let v = interpret_constexpr(
+                        queue,
                         offset_expr,
                         module_mutable_globals,
                         module_immutable_globals,
                         module_global_ptrs,
                         module_func_ptrs,
                     )
-                    .await;
+                    .await?;
                     let offset = match v {
                         Val::I32(v) => v as usize,
                         Val::I64(v) => v as usize,
                         _ => unreachable!(),
                     };
 
-                    let data = elements.get(element_ptr).await;
+                    let data = elements.get(queue, element_ptr).await?;
 
-                    tables.initialize(table_ptr, data, offset).await;
+                    tables.initialize(queue, table_ptr, &data, offset).await?;
 
                     // Then we can drop this element
                     elements.drop(element_ptr).await;
@@ -326,13 +337,14 @@ impl Module {
             }
         }
 
-        return ptrs;
+        return Ok(ptrs);
     }
 
     pub(crate) async fn initialize_datas<T>(
         &self,
+        queue: &AsyncQueue,
         datas: &mut MappedDataInstance,
-    ) -> Vec<DataPtr<T>> {
+    ) -> Result<Vec<DataPtr<T>>, BufferAsyncError> {
         // Reserve space first
         let size: usize = self
             .parsed
@@ -341,22 +353,23 @@ impl Module {
             .iter()
             .map(|e| e.data.len())
             .sum();
-        datas.reserve(size).await;
+        datas.reserve(size);
 
         // Then add
         let mut ptrs = Vec::new();
         for data in self.parsed.borrow_sections().datas.iter() {
-            let ptr = datas.add_data(data.data).await;
+            let ptr = datas.add_data(queue, data.data).await?;
             ptrs.push(ptr);
         }
 
-        return ptrs;
+        return Ok(ptrs);
     }
 
-    pub(crate) async fn initialize_memories<T>(
-        &self,
+    pub(crate) async fn initialize_memories<'a, T: 'a>(
+        &'a self,
+        queue: &AsyncQueue,
         memory_set: &mut MappedMemoryInstanceSetBuilder,
-        imported_memories: Iter<'_, AbstractMemoryPtr<T>>,
+        imported_memories: impl IntoIterator<Item = &'a AbstractMemoryPtr<T>>,
         datas: &mut MappedDataInstance,
         module_data_ptrs: &Vec<DataPtr<T>>,
         // Needed for const expr evaluation
@@ -364,13 +377,16 @@ impl Module {
         module_immutable_globals: &mut MappedImmutableGlobalsInstance,
         module_global_ptrs: &Vec<AbstractGlobalPtr<T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
-    ) -> Vec<AbstractMemoryPtr<T>> {
+    ) -> Result<Vec<AbstractMemoryPtr<T>>, BufferAsyncError> {
         // Pointers starts with imports
-        let mut ptrs = imported_memories.map(|tp| tp.clone()).collect_vec();
+        let mut ptrs = imported_memories
+            .into_iter()
+            .map(AbstractMemoryPtr::clone)
+            .collect_vec();
 
         // Create memories first
         for memory_type in self.parsed.borrow_sections().memories.iter() {
-            let ptr = memory_set.add_memory(memory_type).await;
+            let ptr = memory_set.add_memory(memory_type);
             ptrs.push(ptr);
         }
 
@@ -393,22 +409,25 @@ impl Module {
                         .get((*memory_index) as usize)
                         .expect("memory index out of range");
                     let v = interpret_constexpr(
+                        queue,
                         offset_expr,
                         module_mutable_globals,
                         module_immutable_globals,
                         module_global_ptrs,
                         module_func_ptrs,
                     )
-                    .await;
+                    .await?;
                     let offset = match v {
                         Val::I32(v) => v as usize,
                         Val::I64(v) => v as usize,
                         _ => unreachable!(),
                     };
 
-                    let data = datas.get(data_ptr).await;
+                    let data = datas.get(queue, data_ptr).await?;
 
-                    memory_set.initialize(memory_ptr, data, offset).await;
+                    memory_set
+                        .initialize(queue, memory_ptr, &data, offset)
+                        .await;
 
                     // Then we can drop this data
                     datas.drop(data_ptr).await;
@@ -417,35 +436,43 @@ impl Module {
             }
         }
 
-        return ptrs;
+        return Ok(ptrs);
     }
 
-    pub(crate) async fn initialize_functions<T>(
-        &self,
+    pub(crate) async fn initialize_functions<'a, T: 'a>(
+        &'a self,
+        queue: &AsyncQueue,
         functions: &mut FuncsInstance<T>,
-        func_imports: Iter<'_, UntypedFuncPtr<T>>,
+        func_imports: impl IntoIterator<Item = &'a UntypedFuncPtr<T>>,
         module_globals: &Vec<AbstractGlobalPtr<T>>,
         module_elements: &Vec<ElementPtr<T>>,
         module_tables: &Vec<AbstractTablePtr<T>>,
         module_datas: &Vec<DataPtr<T>>,
         module_memories: &Vec<AbstractMemoryPtr<T>>,
-    ) -> Vec<UntypedFuncPtr<T>> {
-        if self.parsed.borrow_sections().functions.is_empty() {
-            return vec![];
-        }
-
-        let ptrs: Vec<UntypedFuncPtr<T>> = func_imports.collect_vec();
+    ) -> Result<Vec<UntypedFuncPtr<T>>, BufferAsyncError> {
+        let ptrs = func_imports
+            .into_iter()
+            .map(UntypedFuncPtr::clone)
+            .collect_vec();
 
         let sections = self.parsed.borrow_sections();
-        for func in sections.functions {
-            let ty = match sections.types.get(func.type_id).unwrap().clone() {
-                Type::FuncType(ty) => ty,
+        for func in &sections.functions {
+            let ty = match sections
+                .types
+                .get(
+                    usize::try_from(func.type_id)
+                        .expect("module cannot reside in memory unless #items <= |word|"),
+                )
+                .unwrap()
+                .clone()
+            {
+                Type::Func(ty) => ty,
             };
 
             // TODO: Compile and add functions
         }
 
-        return ptrs;
+        return Ok(ptrs);
     }
 
     pub fn start_fn<T>(

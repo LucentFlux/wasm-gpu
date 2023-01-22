@@ -9,7 +9,7 @@ pipeline {
 
     stage('Build') {
       steps {
-        sh 'cargo build --package wasm-spirv'
+        sh 'cargo build --package wasm-spirv --verbose'
       }
     }
 

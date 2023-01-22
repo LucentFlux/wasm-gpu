@@ -1,17 +1,20 @@
 pub mod func_ir;
 
 use futures::future::{BoxFuture, FutureExt};
+use perfect_derive::perfect_derive;
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use wasmparser::{FuncType, ValType};
 
 use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
-use crate::instance::memory::instance::{MappedMemoryInstanceSet, MemoryView, MemoryViewMut};
+use crate::instance::memory::instance::MappedMemoryInstanceSet;
 use crate::instance::ptrs::AbstractPtr;
 use crate::instance::ModuleInstanceReferences;
 use crate::store_set::HostStoreSet;
 use crate::typed::{Val, WasmTyVec};
 use crate::StoreSetBuilder;
 
+#[derive(Debug)]
 pub(crate) struct ExportFunction {
     signature: String, // TODO: make this something more reasonable
 }
@@ -58,6 +61,19 @@ enum FuncKind<T> {
     Host(Box<dyn HostFunc<T>>),
 }
 
+impl<T> Debug for FuncKind<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Export(arg0) => f.debug_tuple("Export").field(arg0).finish(),
+            Self::Host(arg0) => f
+                .debug_tuple("Host")
+                .field(&"anonymous dyn host func".to_owned())
+                .finish(),
+        }
+    }
+}
+
+#[perfect_derive(Debug)]
 pub struct Func<T> {
     kind: FuncKind<T>,
     ty: FuncType,
@@ -165,22 +181,18 @@ impl<'a, T> Caller<'a, T> {
         return self.data.get_mut(self.index).unwrap();
     }
 
-    pub async fn get_memory(&self, name: &str) -> Option<MemoryView> {
+    pub async fn get_memory(&self, name: &str) -> Option<()> {
         let memptr = self.instance.get_memory_export(name).ok()?;
         let memptr = memptr.concrete(self.index);
 
-        let view = self.memory.get::<T>(memptr);
-
-        Some(view)
+        todo!()
     }
 
-    pub async fn get_memory_mut(&mut self, name: &str) -> Option<MemoryViewMut> {
+    pub async fn get_memory_mut(&mut self, name: &str) -> Option<()> {
         let memptr = self.instance.get_memory_export(name).ok()?;
         let memptr = memptr.concrete(self.index);
 
-        let view = self.memory.get_mut::<T>(memptr);
-
-        Some(view)
+        todo!()
     }
 }
 
@@ -207,9 +219,7 @@ mod tests {
 
         let (expected_data, data_str) = gen_test_memory_string(size, 203571423u32);
 
-        let engine = wasp::Engine::new(memory_system, queue, Config::default());
-
-        let mut stores_builder = StoreSetBuilder::new(&engine).await;
+        let mut stores_builder = StoreSetBuilder::new(&memory_system);
 
         let wat = format!(
             r#"
@@ -223,11 +233,11 @@ mod tests {
             data_str
         );
         let wat = wat.into_bytes();
-        let module = wasp::Module::new(&engine, &wat).unwrap();
+        let module = wasp::Module::new(&Config::default(), &wat).unwrap();
 
         let host_read = Func::wrap(
             &mut stores_builder,
-            move |caller: Caller<_, u32>, _param: i32| {
+            move |caller: Caller<u32>, _param: i32| {
                 let expected_data = expected_data.clone();
                 Box::pin(async move {
                     let mem = caller
@@ -246,6 +256,8 @@ mod tests {
 
         let instance = stores_builder
             .instantiate_module(
+                &memory_system,
+                &queue,
                 &module,
                 imports! {
                     "host": {
@@ -259,9 +271,12 @@ mod tests {
             .get_typed_func::<(), ()>("read")
             .expect("could not get hello function from all instances");
 
-        let stores_builder = stores_builder.complete().await;
+        let stores_builder = stores_builder.complete(&queue).await.unwrap();
 
-        let mut stores = stores_builder.build(0..10).await;
+        let mut stores = stores_builder
+            .build(&memory_system, &queue, 0..10)
+            .await
+            .unwrap();
 
         module_read
             .call_all(&mut stores, vec![(); 10])

@@ -2,7 +2,7 @@ use crate::capabilities::CapabilityStore;
 use crate::impl_concrete_ptr;
 use crate::instance::table::builder::AbstractTablePtr;
 use futures::future::join_all;
-use wgpu_async::async_queue::AsyncQueue;
+use wgpu_async::{async_device::OutOfMemoryError, async_queue::AsyncQueue};
 use wgpu_lazybuffers::{MemorySystem, UnmappedLazyBuffer};
 use wgpu_lazybuffers_interleaving::{
     Interleaveable, InterleavedBufferConfig, MappedInterleavedBuffer, UnmappedInterleavedBuffer,
@@ -22,25 +22,22 @@ impl UnmappedTableInstanceSet {
         sources: &Vec<UnmappedLazyBuffer>,
         count: usize,
         cap_set: CapabilityStore,
-    ) -> Self {
-        let tables = sources.iter().map(|source| {
-            source.duplicate_interleave(
-                memory_system,
-                queue,
-                &InterleavedBufferConfig {
-                    repetitions: count,
-                    usages: wgpu::BufferUsages::STORAGE,
-                    locking_size: None,
-                },
-            )
-        });
+    ) -> Result<Self, OutOfMemoryError> {
+        let cfg = InterleavedBufferConfig {
+            repetitions: count,
+            usages: wgpu::BufferUsages::STORAGE,
+            locking_size: None,
+        };
+        let tables = sources
+            .iter()
+            .map(|source| source.duplicate_interleave(memory_system, queue, &cfg));
 
         let tables: Result<_, _> = join_all(tables).await.into_iter().collect();
 
-        Self {
+        Ok(Self {
             data: tables?,
             cap_set,
-        }
+        })
     }
 }
 

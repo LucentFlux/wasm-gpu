@@ -2,7 +2,7 @@
 #![feature(async_closure)]
 
 mod atomic_counter;
-mod engine;
+mod config;
 mod externs;
 mod fenwick;
 mod func;
@@ -25,8 +25,7 @@ pub mod wasp {
     pub use panic_on_any::PanicOnAny;
 
     // Engine
-    pub use engine::Config;
-    pub use engine::Engine;
+    pub use config::Config;
     // Module
     pub use module::Module;
     // Externs

@@ -6,8 +6,10 @@ use anyhow::anyhow;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use itertools::Itertools;
+use perfect_derive::perfect_derive;
 use wasmparser::Type;
 
+#[perfect_derive(Debug)]
 pub struct FuncsInstance<T> {
     /// Holds data that can later be copied into memory
     funcs: Vec<Func<T>>,
