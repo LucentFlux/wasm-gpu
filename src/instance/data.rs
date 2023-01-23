@@ -1,7 +1,7 @@
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;
 use wgpu_lazybuffers::{
-    EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem, UnmappedLazyBuffer,
+    EmptyMemoryBlockConfig, LazilyMappable, MappedLazyBuffer, MemorySystem, UnmappedLazyBuffer,
 };
 use wgpu_lazybuffers_macros::lazy_mappable;
 
@@ -19,8 +19,14 @@ pub struct UnmappedDataInstance {
 
 impl UnmappedDataInstance {
     /// Used for unit tests. Consumes and gets the contained bytes
-    pub(crate) async fn read_all(self, queue: &AsyncQueue) -> Result<Vec<u8>, BufferAsyncError> {
-        self.datas.map().read_slice(queue, ..).await
+    pub(crate) async fn try_read_all(
+        self,
+        queue: &AsyncQueue,
+    ) -> Result<Vec<u8>, BufferAsyncError> {
+        self.datas
+            .map_lazy()
+            .try_read_slice_locking(queue, ..)
+            .await
     }
 }
 
@@ -40,11 +46,11 @@ impl MappedDataInstance {
     ///
     /// values_size is given in units of bytes, so an f64 is 8 bytes
     pub fn reserve(&mut self, values_size: usize) {
-        self.datas.resize(values_size);
+        self.datas.resize_lazy(values_size);
         self.cap_set = self.cap_set.resize_ref(self.datas.len())
     }
 
-    pub async fn add_data<T>(
+    pub async fn try_add_data<T>(
         &mut self,
         queue: &AsyncQueue,
         data: &[u8],
@@ -55,11 +61,13 @@ impl MappedDataInstance {
             end <= self.datas.len(),
             "not enough space reserved to insert data to device buffer"
         );
-        self.datas.write_slice(queue, start..end, data).await?;
+        self.datas
+            .try_write_slice_locking(queue, start..end, data)
+            .await?;
         return Ok(DataPtr::new(start, self.cap_set.get_cap(), data.len()));
     }
 
-    pub async fn get<T>(
+    pub async fn try_get<T>(
         &mut self,
         queue: &AsyncQueue,
         ptr: &DataPtr<T>,
@@ -71,11 +79,11 @@ impl MappedDataInstance {
 
         let start = ptr.ptr;
         let end = start + ptr.len;
-        return self.datas.read_slice(queue, start..end).await;
+        return self.datas.try_read_slice_locking(queue, start..end).await;
     }
 
     /// Calls `elem.drop` on the element pointed to. May or may not actually free the memory
-    pub async fn drop<T>(&mut self, ptr: &DataPtr<T>) {
+    pub async fn drop<T>(&mut self, _ptr: &DataPtr<T>) {
         //TODO: Use this hint
     }
 }

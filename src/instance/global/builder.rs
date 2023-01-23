@@ -26,13 +26,13 @@ pub struct UnmappedMutableGlobalsInstanceBuilder {
 }
 
 impl UnmappedMutableGlobalsInstanceBuilder {
-    pub async fn build(
+    pub async fn try_build(
         &self,
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
         count: usize,
     ) -> Result<UnmappedMutableGlobalsInstanceSet, OutOfMemoryError> {
-        return UnmappedMutableGlobalsInstanceSet::new(
+        return UnmappedMutableGlobalsInstanceSet::try_new(
             memory_system,
             queue,
             &self.mutable_values,
@@ -57,11 +57,11 @@ impl MappedMutableGlobalsInstanceBuilder {
 
     /// values_count is given in units of bytes, so an f64 is 8 bytes
     pub fn reserve(&mut self, values_size: usize) {
-        self.mutable_values.extend(values_size);
+        self.mutable_values.extend_lazy(values_size);
         self.cap_set = self.cap_set.resize_ref(self.mutable_values.len())
     }
 
-    async fn push_typed<V, T>(
+    async fn try_push_typed<V, T>(
         &mut self,
         queue: &AsyncQueue,
         v: V,
@@ -76,7 +76,7 @@ impl MappedMutableGlobalsInstanceBuilder {
 
         assert!(end <= self.mutable_values.len(), "index out of bounds");
         self.mutable_values
-            .write_slice(queue, start..end, bytes.as_slice())
+            .try_write_slice_locking(queue, start..end, bytes.as_slice())
             .await?;
 
         self.head = end;
@@ -89,11 +89,11 @@ impl MappedMutableGlobalsInstanceBuilder {
     }
 
     impl_global_push! {
-        pub async fn push<T>(&mut self, queue: &AsyncQueue, val: Val) -> Result<AbstractGlobalMutablePtr<T>, BufferAsyncError>
+        pub async fn try_push<T>(&mut self, queue: &AsyncQueue, val: Val) -> Result<AbstractGlobalMutablePtr<T>, BufferAsyncError>
     }
 
     /// A typed version of `get`, panics if types mismatch
-    pub async fn get_typed<T, V: WasmTyVal>(
+    pub async fn try_get_typed<T, V: WasmTyVal>(
         &mut self,
         queue: &AsyncQueue,
         ptr: &AbstractGlobalMutablePtr<T>,
@@ -108,7 +108,10 @@ impl MappedMutableGlobalsInstanceBuilder {
         let end = start + size_of::<V>();
 
         assert!(end <= self.mutable_values.len(), "index out of bounds");
-        let bytes = self.mutable_values.read_slice(queue, start..end).await?;
+        let bytes = self
+            .mutable_values
+            .try_read_slice_locking(queue, start..end)
+            .await?;
 
         return Ok(V::try_from_bytes(&bytes).expect(
             format!(
@@ -121,7 +124,7 @@ impl MappedMutableGlobalsInstanceBuilder {
     }
 
     impl_global_get! {
-        pub async fn get<T>(&mut self, queue: &AsyncQueue, ptr: &AbstractGlobalMutablePtr<T>) -> Result<Val, BufferAsyncError>
+        pub async fn try_get<T>(&mut self, queue: &AsyncQueue, ptr: &AbstractGlobalMutablePtr<T>) -> Result<Val, BufferAsyncError>
     }
 }
 

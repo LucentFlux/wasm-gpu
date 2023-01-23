@@ -19,7 +19,7 @@ pub enum Extern<T> {
     Func(UntypedFuncPtr<T>),
     Global(AbstractGlobalPtr<T>),
     Table(AbstractTablePtr<T>),
-    Memory(AbstractMemoryPtr<T>),
+    Memory(AbstractMemoryPtr),
 }
 
 impl<T> Extern<T> {
@@ -79,8 +79,8 @@ where
     }
 }
 
-impl<T> From<AbstractMemoryPtr<T>> for Extern<T> {
-    fn from(m: AbstractMemoryPtr<T>) -> Self {
+impl<T> From<AbstractMemoryPtr> for Extern<T> {
+    fn from(m: AbstractMemoryPtr) -> Self {
         Self::Memory(m)
     }
 }

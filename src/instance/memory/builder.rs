@@ -25,13 +25,13 @@ pub struct UnmappedMemoryInstanceSetBuilder {
 }
 
 impl UnmappedMemoryInstanceSetBuilder {
-    pub async fn build(
+    pub async fn try_build(
         &self,
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
         count: usize,
     ) -> Result<UnmappedMemoryInstanceSet, OutOfMemoryError> {
-        UnmappedMemoryInstanceSet::new(
+        UnmappedMemoryInstanceSet::try_new(
             memory_system,
             queue,
             &self.memories,
@@ -51,7 +51,7 @@ impl MappedMemoryInstanceSetBuilder {
         }
     }
 
-    pub fn add_memory<T>(&mut self, plan: &MemoryType) -> AbstractMemoryPtr<T> {
+    pub fn add_memory(&mut self, plan: &MemoryType) -> AbstractMemoryPtr {
         let ptr = self.memories.len();
         self.memories.push(
             self.memory_system
@@ -66,10 +66,10 @@ impl MappedMemoryInstanceSetBuilder {
 
     /// # Panics
     /// Panics if the pointer is not for this abstract memory
-    pub async fn initialize<T>(
+    pub async fn try_initialize(
         &mut self,
         queue: &AsyncQueue,
-        ptr: &AbstractMemoryPtr<T>,
+        ptr: &AbstractMemoryPtr,
         data: &[u8],
         offset: usize,
     ) -> Result<(), BufferAsyncError> {
@@ -81,20 +81,20 @@ impl MappedMemoryInstanceSetBuilder {
         self.memories
             .get_mut(ptr.ptr as usize)
             .expect("Memory builders are append only, so having a pointer implies the item exists")
-            .write_slice(queue, offset..offset + data.len(), data)
+            .try_write_slice_locking(queue, offset..offset + data.len(), data)
             .await
     }
 }
 
 impl_abstract_ptr!(
-    pub struct AbstractMemoryPtr<T> {
+    pub struct AbstractMemoryPtr {
         pub(in crate::instance::memory) data...
         // Copied from Memory
         ty: MemoryType,
-    } with concrete MemoryPtr<T>;
+    } with concrete MemoryPtr;
 );
 
-impl<T> AbstractMemoryPtr<T> {
+impl AbstractMemoryPtr {
     pub fn is_type(&self, ty: &MemoryType) -> bool {
         wasm_limits_match(self.ty.initial, self.ty.maximum, ty.initial, ty.maximum)
     }

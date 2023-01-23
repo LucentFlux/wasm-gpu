@@ -44,11 +44,11 @@ impl MappedElementInstance {
     ///
     /// values_count is given in units of bytes, so an f64 is 8 bytes
     pub fn reserve(&mut self, values_size: usize) {
-        self.references.extend(values_size);
+        self.references.extend_lazy(values_size);
         self.meta.cap_set = self.meta.cap_set.resize_ref(self.references.len());
     }
 
-    pub async fn add_element<T>(
+    pub async fn try_add_element<T>(
         &mut self,
         queue: &AsyncQueue,
         element: Vec<Option<u32>>,
@@ -66,7 +66,7 @@ impl MappedElementInstance {
             .collect_vec();
 
         self.references
-            .write_slice(queue, start..end, &bytes)
+            .try_write_slice_locking(queue, start..end, &bytes)
             .await?;
 
         self.meta.head = end;
@@ -78,7 +78,7 @@ impl MappedElementInstance {
         ));
     }
 
-    pub async fn get<T>(
+    pub async fn try_get<T>(
         &mut self,
         queue: &AsyncQueue,
         ptr: &ElementPtr<T>,
@@ -90,11 +90,14 @@ impl MappedElementInstance {
 
         let start = ptr.ptr;
         let end = start + (ptr.len * std::mem::size_of::<u32>());
-        return self.references.read_slice(queue, start..end).await;
+        return self
+            .references
+            .try_read_slice_locking(queue, start..end)
+            .await;
     }
 
     /// Calls `elem.drop` on the element pointed to. May or may not actually free the memory
-    pub async fn drop<T>(&mut self, ptr: &ElementPtr<T>) {
+    pub async fn drop<T>(&mut self, _ptr: &ElementPtr<T>) {
         //TODO - use this optimisation hint
     }
 }

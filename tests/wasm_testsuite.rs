@@ -1,62 +1,88 @@
 #![feature(iter_array_chunks)]
 
 use itertools::Itertools;
-use lf_hal::wgpu::{WgpuBackend, WgpuBackendConfig};
-use lf_hal::BufferRingConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use wasm_spirv::wasp::externs::NamedExtern;
 use wasm_spirv::{
-    wasp, Config, Engine, Ieee32, Ieee64, ModuleInstanceReferences, StoreSetBuilder, Val,
+    wasp, Config, Ieee32, Ieee64, MappedStoreSetBuilder, ModuleInstanceReferences, Val,
 };
 use wast::core::{HeapType, NanPattern, V128Pattern, WastRetCore};
 use wast::lexer::Lexer;
-use wast::token::{Float32, Float64, Id, Span};
+use wast::token::{Float32, Float64, Id, Index, Span};
 use wast::{
     parser::{parse, ParseBuffer},
     QuoteWat, Wast, WastDirective, WastExecute, WastInvoke, WastRet, Wat,
 };
+use wgpu_async::{wrap_wgpu, AsyncQueue};
+use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
 #[wasm_spirv_test_gen::wast("tests/testsuite/*.wast")]
 fn gen_check(path: &str, test_index: usize) {
     Runtime::new().unwrap().block_on(check(path, test_index))
 }
 
-pub async fn get_backend() -> WgpuBackend {
-    let conf = WgpuBackendConfig {
-        buffer_ring: BufferRingConfig {
-            // Minimal memory footprint for tests
-            total_mem: 2 * 1024,
-        },
-        ..Default::default()
-    };
-    return WgpuBackend::new(conf, None)
+pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
+    let instance = wgpu::Instance::new(wgpu::Backends::all());
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        })
         .await
-        .expect("failed to get backend");
+        .unwrap();
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                features: wgpu::Features::empty(),
+                limits: adapter.limits(),
+                label: None,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    let (device, queue) = wrap_wgpu(device, queue);
+
+    let memory_system = MemorySystem::new(
+        device.clone(),
+        // Low memory footprint
+        BufferRingConfig {
+            chunk_size: 1024,
+            total_transfer_buffers: 2,
+        },
+    );
+
+    return (memory_system, queue);
 }
 
 struct WastState {
-    engine: Engine<WgpuBackend>,
-    store_builder: Option<StoreSetBuilder<WgpuBackend, ()>>, // Taken when invoking
-    named_modules: HashMap<String, Arc<ModuleInstanceReferences<WgpuBackend, ()>>>,
-    latest_module: Option<Arc<ModuleInstanceReferences<WgpuBackend, ()>>>,
-    imports: Vec<NamedExtern<WgpuBackend, ()>>,
+    memory_system: MemorySystem,
+    queue: AsyncQueue,
+    config: Config,
+    store_builder: Option<MappedStoreSetBuilder<()>>, // Taken when invoking
+    named_modules: HashMap<String, Arc<ModuleInstanceReferences<()>>>,
+    latest_module: Option<Arc<ModuleInstanceReferences<()>>>,
+    imports: Vec<NamedExtern<()>>,
 }
 
 const INSTANCE_COUNT: usize = 8;
 
 impl WastState {
     async fn new() -> Self {
-        let backend = get_backend().await;
-        let engine = Engine::new(backend, Config::default());
+        let (memory_system, queue) = get_backend().await;
 
         Self {
-            store_builder: Some(StoreSetBuilder::new(engine.backend()).await),
+            store_builder: Some(MappedStoreSetBuilder::new(&memory_system)),
             named_modules: HashMap::new(),
             latest_module: None,
             imports: Vec::new(),
-            engine,
+            config: Config::default(),
+            memory_system,
+            queue,
         }
     }
 
@@ -64,13 +90,18 @@ impl WastState {
         let bytes = quote_wast
             .encode()
             .expect(&format!("could not encode expected module at {:?}", span));
-        let module = wasp::Module::new(&self.engine, &bytes)
+        let module = wasp::Module::new(&self.config, &bytes)
             .expect(&format!("could not parse module byes at {:?}", span));
         let instance = self
             .store_builder
             .as_mut()
             .unwrap()
-            .instantiate_module(&module, self.imports.clone())
+            .instantiate_module(
+                &self.memory_system,
+                &self.queue,
+                &module,
+                self.imports.clone(),
+            )
             .await
             .expect(&format!("could not instantiate module at {:?}", span));
 
@@ -139,8 +170,17 @@ impl WastState {
         ));
 
         // Build
-        let completed = self.store_builder.take().unwrap().complete().await;
-        let mut instances = completed.build(vec![(); INSTANCE_COUNT]).await;
+        let completed = self
+            .store_builder
+            .take()
+            .unwrap()
+            .complete(&self.queue)
+            .await
+            .unwrap();
+        let mut instances = completed
+            .build(&self.memory_system, &self.queue, vec![(); INSTANCE_COUNT])
+            .await
+            .unwrap();
 
         // Invoke
         let args: Vec<Val> = wast_invoke.args.into_iter().map(|v| Val::from(v)).collect();
@@ -255,7 +295,7 @@ async fn run_assertion(directive: WastDirective<'_>, state: WastState) {
 }
 
 async fn test_assert_malformed_or_invalid(
-    mut state: WastState,
+    state: WastState,
     span: Span,
     mut module: QuoteWat<'_>,
     message: &str,
@@ -265,7 +305,7 @@ async fn test_assert_malformed_or_invalid(
         Err(_) => return, // Failure to encode is fine if malformed
     };
 
-    let module = wasp::Module::new(&state.engine, &bytes);
+    let module = wasp::Module::new(&state.config, &bytes);
 
     let module = match module {
         Err(_) => return, // We want this to fail
@@ -275,7 +315,12 @@ async fn test_assert_malformed_or_invalid(
     let res = state
         .store_builder
         .unwrap()
-        .instantiate_module(&module, state.imports.clone())
+        .instantiate_module(
+            &state.memory_system,
+            &state.queue,
+            &module,
+            state.imports.clone(),
+        )
         .await;
 
     assert!(
@@ -289,7 +334,7 @@ async fn test_assert_malformed_or_invalid(
 async fn test_assert_trap<'a>(
     mut state: WastState,
     span: Span,
-    mut exec: WastExecute<'a>,
+    exec: WastExecute<'a>,
     _message: &'a str,
 ) {
     let ret = state.exec(exec, &span).await;
@@ -353,7 +398,10 @@ fn test_match(got: Val, expected: &WastRetCore) -> bool {
         (WastRetCore::RefNull(Some(HeapType::Func)), Val::FuncRef(r)) => r.is_none(),
         (WastRetCore::RefNull(Some(HeapType::Extern)), Val::ExternRef(r)) => r.is_none(),
         (WastRetCore::RefFunc(None), Val::FuncRef(_)) => true,
-        (WastRetCore::RefFunc(Some(v)), Val::FuncRef(_)) => true,
+        (WastRetCore::RefFunc(Some(Index::Num(v1, _))), Val::FuncRef(v2)) => {
+            v2.as_u32() == Some(*v1)
+        }
+        (WastRetCore::RefFunc(Some(Index::Id(v1))), Val::FuncRef(v2)) => unimplemented!(),
         (WastRetCore::RefExtern(v1), Val::ExternRef(v2)) => v2.as_u32() == Some(*v1),
         (WastRetCore::Either(choices), got) => {
             choices.into_iter().any(|option| test_match(got, option))

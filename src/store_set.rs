@@ -1,3 +1,5 @@
+use wgpu_lazybuffers_macros::lazy_mappable;
+
 use crate::instance::data::UnmappedDataInstance;
 use crate::instance::element::UnmappedElementInstance;
 use crate::instance::func::FuncsInstance;
@@ -7,21 +9,19 @@ use crate::instance::global::instance::{
 };
 use crate::instance::memory::instance::{MappedMemoryInstanceSet, UnmappedMemoryInstanceSet};
 use crate::instance::table::instance::{MappedTableInstanceSet, UnmappedTableInstanceSet};
-use crate::StoreSetBuilder;
+use crate::MappedStoreSetBuilder;
 use std::sync::Arc;
 
 pub mod builder;
 
-pub struct DeviceStoreSetData {
+#[lazy_mappable(MappedStoreSetData)]
+pub struct UnmappedStoreSetData {
+    #[map(MappedTableInstanceSet)]
     pub tables: UnmappedTableInstanceSet,
+    #[map(MappedMemoryInstanceSet)]
     pub memories: UnmappedMemoryInstanceSet,
+    #[map(MappedMutableGlobalsInstanceSet)]
     pub mutable_globals: UnmappedMutableGlobalsInstanceSet,
-}
-
-pub struct HostStoreSetData {
-    pub tables: MappedTableInstanceSet,
-    pub memories: MappedMemoryInstanceSet,
-    pub mutable_globals: MappedMutableGlobalsInstanceSet,
 }
 
 /// All of the state for a collection of active WASM state machines
@@ -35,8 +35,8 @@ pub struct StoreSet<T, O> {
     pub owned: O,
 }
 
-pub type DeviceStoreSet<T> = StoreSet<T, DeviceStoreSetData>;
-pub type HostStoreSet<T> = StoreSet<T, HostStoreSetData>;
+pub type DeviceStoreSet<T> = StoreSet<T, UnmappedStoreSetData>;
+pub type HostStoreSet<T> = StoreSet<T, MappedStoreSetData>;
 
 impl<T> DeviceStoreSet<T> {
     /// Use current module state to form a new store set builder, with all values initialised to the
@@ -48,7 +48,7 @@ impl<T> DeviceStoreSet<T> {
     /// identity on an object of type `StoreSetBuilder` and you will get back to where you started
     /// (with lots of unnecessary memory operations, and as long as the iterator passed into `build`
     /// isn't empty).
-    pub async fn snapshot(&self, store_index: usize) -> StoreSetBuilder<T> {
-        StoreSetBuilder::snapshot(&self, store_index).await
+    pub async fn snapshot(&self, store_index: usize) -> MappedStoreSetBuilder<T> {
+        MappedStoreSetBuilder::snapshot(&self, store_index).await
     }
 }

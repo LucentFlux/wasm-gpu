@@ -19,7 +19,7 @@ pub struct UnmappedMutableGlobalsInstanceSet {
 }
 
 impl UnmappedMutableGlobalsInstanceSet {
-    pub(crate) async fn new(
+    pub(crate) async fn try_new(
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
         mutables_source: &UnmappedLazyBuffer,
@@ -28,7 +28,7 @@ impl UnmappedMutableGlobalsInstanceSet {
     ) -> Result<Self, OutOfMemoryError> {
         Ok(Self {
             mutables: mutables_source
-                .duplicate_interleave(
+                .try_duplicate_interleave(
                     memory_system,
                     queue,
                     &InterleavedBufferConfig {

@@ -23,13 +23,13 @@ pub struct UnmappedTableInstanceSetBuilder {
 }
 
 impl UnmappedTableInstanceSetBuilder {
-    pub async fn build(
+    pub async fn try_build(
         &self,
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
         count: usize,
     ) -> Result<UnmappedTableInstanceSet, OutOfMemoryError> {
-        UnmappedTableInstanceSet::new(
+        UnmappedTableInstanceSet::try_new(
             memory_system,
             queue,
             &self.tables,
@@ -62,7 +62,7 @@ impl MappedTableInstanceSetBuilder {
         return AbstractTablePtr::new(ptr, self.cap_set.get_cap(), plan.clone());
     }
 
-    pub async fn initialize<T>(
+    pub async fn try_initialize<T>(
         &mut self,
         queue: &AsyncQueue,
         ptr: &AbstractTablePtr<T>,
@@ -77,7 +77,7 @@ impl MappedTableInstanceSetBuilder {
         self.tables
             .get_mut(ptr.ptr)
             .expect("Table builders are append only, so having a pointer implies the item exists")
-            .write_slice(queue, offset..offset + data.len(), data)
+            .try_write_slice_locking(queue, offset..offset + data.len(), data)
             .await
     }
 }

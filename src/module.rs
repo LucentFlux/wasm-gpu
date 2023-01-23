@@ -33,7 +33,7 @@ pub struct ValidatedImports<T> {
     functions: Vec<UntypedFuncPtr<T>>,
     globals: Vec<AbstractGlobalPtr<T>>,
     tables: Vec<AbstractTablePtr<T>>,
-    memories: Vec<AbstractMemoryPtr<T>>,
+    memories: Vec<AbstractMemoryPtr>,
 }
 
 impl<T> ValidatedImports<T> {
@@ -46,7 +46,7 @@ impl<T> ValidatedImports<T> {
     pub fn tables(&self) -> Iter<AbstractTablePtr<T>> {
         self.tables.iter()
     }
-    pub fn memories(&self) -> Iter<AbstractMemoryPtr<T>> {
+    pub fn memories(&self) -> Iter<AbstractMemoryPtr> {
         self.memories.iter()
     }
 }
@@ -152,7 +152,7 @@ impl Module {
 
     /// Extends a globals memory buffer and indirection buffer to fit the globals contained in this
     /// module, then writes the initial values
-    pub(crate) async fn initialize_globals<T>(
+    pub(crate) async fn try_initialize_globals<T>(
         &self,
         queue: &AsyncQueue,
         mutable_globals_instance: &mut MappedMutableGlobalsInstanceBuilder,
@@ -194,9 +194,11 @@ impl Module {
             )
             .await?;
             let ptr: AbstractGlobalPtr<T> = if global.ty.mutable {
-                AbstractGlobalPtr::Mutable(mutable_globals_instance.push(queue, value).await?)
+                AbstractGlobalPtr::Mutable(mutable_globals_instance.try_push(queue, value).await?)
             } else {
-                AbstractGlobalPtr::Immutable(immutable_globals_instance.push(queue, value).await?)
+                AbstractGlobalPtr::Immutable(
+                    immutable_globals_instance.try_push(queue, value).await?,
+                )
             };
             results.push(ptr);
         }
@@ -219,7 +221,7 @@ impl Module {
     }
 
     /// Extends elements buffers to be shared by all stores of a set, as passive elements are immutable
-    pub(crate) async fn initialize_elements<T>(
+    pub(crate) async fn try_initialize_elements<T>(
         &self,
         queue: &AsyncQueue,
         elements: &mut MappedElementInstance,
@@ -263,14 +265,14 @@ impl Module {
                 vals.push(v);
             }
 
-            let ptr = elements.add_element(queue, vals).await?;
+            let ptr = elements.try_add_element(queue, vals).await?;
             ptrs.push(ptr);
         }
 
         return Ok(ptrs);
     }
 
-    pub(crate) async fn initialize_tables<'a, T: 'a>(
+    pub(crate) async fn try_initialize_tables<'a, T: 'a>(
         &'a self,
         queue: &AsyncQueue,
         tables: &mut MappedTableInstanceSetBuilder,
@@ -326,9 +328,11 @@ impl Module {
                         _ => unreachable!(),
                     };
 
-                    let data = elements.get(queue, element_ptr).await?;
+                    let data = elements.try_get(queue, element_ptr).await?;
 
-                    tables.initialize(queue, table_ptr, &data, offset).await?;
+                    tables
+                        .try_initialize(queue, table_ptr, &data, offset)
+                        .await?;
 
                     // Then we can drop this element
                     elements.drop(element_ptr).await;
@@ -340,7 +344,7 @@ impl Module {
         return Ok(ptrs);
     }
 
-    pub(crate) async fn initialize_datas<T>(
+    pub(crate) async fn try_initialize_datas<T>(
         &self,
         queue: &AsyncQueue,
         datas: &mut MappedDataInstance,
@@ -358,18 +362,18 @@ impl Module {
         // Then add
         let mut ptrs = Vec::new();
         for data in self.parsed.borrow_sections().datas.iter() {
-            let ptr = datas.add_data(queue, data.data).await?;
+            let ptr = datas.try_add_data(queue, data.data).await?;
             ptrs.push(ptr);
         }
 
         return Ok(ptrs);
     }
 
-    pub(crate) async fn initialize_memories<'a, T: 'a>(
+    pub(crate) async fn try_initialize_memories<'a, T: 'a>(
         &'a self,
         queue: &AsyncQueue,
         memory_set: &mut MappedMemoryInstanceSetBuilder,
-        imported_memories: impl IntoIterator<Item = &'a AbstractMemoryPtr<T>>,
+        imported_memories: impl IntoIterator<Item = &'a AbstractMemoryPtr>,
         datas: &mut MappedDataInstance,
         module_data_ptrs: &Vec<DataPtr<T>>,
         // Needed for const expr evaluation
@@ -377,7 +381,7 @@ impl Module {
         module_immutable_globals: &mut MappedImmutableGlobalsInstance,
         module_global_ptrs: &Vec<AbstractGlobalPtr<T>>,
         module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
-    ) -> Result<Vec<AbstractMemoryPtr<T>>, BufferAsyncError> {
+    ) -> Result<Vec<AbstractMemoryPtr>, BufferAsyncError> {
         // Pointers starts with imports
         let mut ptrs = imported_memories
             .into_iter()
@@ -423,10 +427,10 @@ impl Module {
                         _ => unreachable!(),
                     };
 
-                    let data = datas.get(queue, data_ptr).await?;
+                    let data = datas.try_get(queue, data_ptr).await?;
 
                     memory_set
-                        .initialize(queue, memory_ptr, &data, offset)
+                        .try_initialize(queue, memory_ptr, &data, offset)
                         .await;
 
                     // Then we can drop this data
@@ -439,7 +443,7 @@ impl Module {
         return Ok(ptrs);
     }
 
-    pub(crate) async fn initialize_functions<'a, T: 'a>(
+    pub(crate) async fn try_initialize_functions<'a, T: 'a>(
         &'a self,
         queue: &AsyncQueue,
         functions: &mut FuncsInstance<T>,
@@ -448,7 +452,7 @@ impl Module {
         module_elements: &Vec<ElementPtr<T>>,
         module_tables: &Vec<AbstractTablePtr<T>>,
         module_datas: &Vec<DataPtr<T>>,
-        module_memories: &Vec<AbstractMemoryPtr<T>>,
+        module_memories: &Vec<AbstractMemoryPtr>,
     ) -> Result<Vec<UntypedFuncPtr<T>>, BufferAsyncError> {
         let ptrs = func_imports
             .into_iter()

@@ -19,7 +19,7 @@ pub struct UnmappedTableInstanceSet {
 }
 
 impl UnmappedTableInstanceSet {
-    pub(crate) async fn new(
+    pub(crate) async fn try_new(
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
         sources: &Vec<UnmappedLazyBuffer>,
@@ -33,7 +33,7 @@ impl UnmappedTableInstanceSet {
         };
         let tables = sources
             .iter()
-            .map(|source| source.duplicate_interleave(memory_system, queue, &cfg));
+            .map(|source| source.try_duplicate_interleave(memory_system, queue, &cfg));
 
         let tables: Result<_, _> = join_all(tables).await.into_iter().collect();
 

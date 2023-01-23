@@ -4,10 +4,13 @@ use futures::future::{BoxFuture, FutureExt};
 use perfect_derive::perfect_derive;
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use std::ops::RangeBounds;
 use wasmparser::{FuncType, ValType};
+use wgpu::BufferAsyncError;
+use wgpu_async::AsyncQueue;
 
 use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
-use crate::instance::memory::instance::MappedMemoryInstanceSet;
+use crate::instance::memory::instance::{MappedMemoryInstanceSet, MemoryView};
 use crate::instance::ptrs::AbstractPtr;
 use crate::instance::ModuleInstanceReferences;
 use crate::store_set::HostStoreSet;
@@ -65,7 +68,7 @@ impl<T> Debug for FuncKind<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Export(arg0) => f.debug_tuple("Export").field(arg0).finish(),
-            Self::Host(arg0) => f
+            Self::Host(_) => f
                 .debug_tuple("Host")
                 .field(&"anonymous dyn host func".to_owned())
                 .finish(),
@@ -146,6 +149,29 @@ macro_rules! for_each_function_signature {
     };
 }
 
+pub struct ActiveMemoryView<'a> {
+    view: MemoryView<'a>,
+    queue: &'a AsyncQueue,
+}
+
+impl<'a> ActiveMemoryView<'a> {
+    pub async fn try_read_slice(
+        &self,
+        slice: impl RangeBounds<usize>,
+    ) -> Result<Vec<u8>, BufferAsyncError> {
+        self.view.try_read_slice(self.queue, slice).await
+    }
+
+    pub async fn try_write_slice(
+        &self,
+        queue: &AsyncQueue,
+        slice: impl RangeBounds<usize>,
+        data: &[u8],
+    ) -> Result<(), BufferAsyncError> {
+        self.view.try_write_slice(self.queue, slice, data).await
+    }
+}
+
 /// B is the backend type,
 /// T is the data associated with the store_set
 pub struct Caller<'a, T> {
@@ -156,6 +182,9 @@ pub struct Caller<'a, T> {
     // Info into store data
     index: usize,
     instance: &'a ModuleInstanceReferences<T>,
+
+    // Action data
+    queue: &'a AsyncQueue,
 }
 
 impl<'a, T> Caller<'a, T> {
@@ -163,6 +192,7 @@ impl<'a, T> Caller<'a, T> {
         stores: &'a mut HostStoreSet<T>,
         index: usize,
         instance: &'a ModuleInstanceReferences<T>,
+        queue: &'a AsyncQueue,
     ) -> Self {
         Self {
             data: &mut stores.data,
@@ -170,6 +200,8 @@ impl<'a, T> Caller<'a, T> {
 
             index,
             instance,
+
+            queue,
         }
     }
 
@@ -181,18 +213,15 @@ impl<'a, T> Caller<'a, T> {
         return self.data.get_mut(self.index).unwrap();
     }
 
-    pub async fn get_memory(&self, name: &str) -> Option<()> {
+    pub async fn get_memory<'b>(&'b self, name: &str) -> Option<ActiveMemoryView<'b>> {
         let memptr = self.instance.get_memory_export(name).ok()?;
         let memptr = memptr.concrete(self.index);
 
-        todo!()
-    }
-
-    pub async fn get_memory_mut(&mut self, name: &str) -> Option<()> {
-        let memptr = self.instance.get_memory_export(name).ok()?;
-        let memptr = memptr.concrete(self.index);
-
-        todo!()
+        let view = self.memory.get(&memptr);
+        Some(ActiveMemoryView {
+            view,
+            queue: self.queue,
+        })
     }
 }
 
@@ -245,9 +274,8 @@ mod tests {
                         .await
                         .expect("memory mem not found");
 
-                    for (i, b) in expected_data.iter().enumerate() {
-                        assert_eq!(Some(*b), mem.get(i).await.copied());
-                    }
+                    let got_data = mem.try_read_slice(..).await.expect("mem not read");
+                    assert_eq!(got_data, expected_data);
 
                     Ok(())
                 })

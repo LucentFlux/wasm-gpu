@@ -48,11 +48,11 @@ impl MappedImmutableGlobalsInstance {
     ///
     /// values_size is given in units of bytes, so an f64 is 8 bytes
     pub fn reserve(&mut self, values_size: usize) {
-        self.immutables.extend(values_size);
+        self.immutables.extend_lazy(values_size);
         self.cap_set = self.cap_set.resize_ref(self.immutables.len())
     }
 
-    pub async fn push_typed<V, T>(
+    pub async fn try_push_typed<V, T>(
         &mut self,
         queue: &AsyncQueue,
         v: V,
@@ -66,9 +66,8 @@ impl MappedImmutableGlobalsInstance {
         let end = start + bytes.len();
 
         assert!(end <= self.immutables.len(), "index out of bounds");
-        let slice = self
-            .immutables
-            .write_slice(queue, start..end, bytes.as_slice())
+        self.immutables
+            .try_write_slice_locking(queue, start..end, bytes.as_slice())
             .await?;
 
         self.head = end;
@@ -81,10 +80,10 @@ impl MappedImmutableGlobalsInstance {
     }
 
     impl_global_push! {
-        pub async fn push<T>(&mut self, queue: &AsyncQueue, val: Val) -> Result<GlobalImmutablePtr<T>, BufferAsyncError>
+        pub async fn try_push<T>(&mut self, queue: &AsyncQueue, val: Val) -> Result<GlobalImmutablePtr<T>, BufferAsyncError>
     }
 
-    pub async fn get_typed<T, V: WasmTyVal>(
+    pub async fn try_get_typed<T, V: WasmTyVal>(
         &mut self,
         queue: &AsyncQueue,
         ptr: &GlobalImmutablePtr<T>,
@@ -98,7 +97,10 @@ impl MappedImmutableGlobalsInstance {
         let end = start + size_of::<V>();
 
         assert!(end <= self.immutables.len(), "index out of bounds");
-        let bytes = self.immutables.read_slice(queue, start..end).await?;
+        let bytes = self
+            .immutables
+            .try_read_slice_locking(queue, start..end)
+            .await?;
 
         return Ok(V::try_from_bytes(&bytes).expect(
             format!(
@@ -111,7 +113,7 @@ impl MappedImmutableGlobalsInstance {
     }
 
     impl_global_get! {
-        pub async fn get<T>(&mut self,
+        pub async fn try_get<T>(&mut self,
             queue: &AsyncQueue,ptr: &GlobalImmutablePtr<T>) -> Result<Val, BufferAsyncError>
     }
 }

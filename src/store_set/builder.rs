@@ -15,7 +15,7 @@ use crate::instance::table::builder::{
     MappedTableInstanceSetBuilder, UnmappedTableInstanceSetBuilder,
 };
 use crate::instance::ModuleInstanceReferences;
-use crate::store_set::DeviceStoreSetData;
+use crate::store_set::UnmappedStoreSetData;
 use crate::{DeviceStoreSet, ExternRef, Func, FuncRef, Ieee32, Ieee64, Module, Val};
 use perfect_derive::perfect_derive;
 use std::sync::Arc;
@@ -66,14 +66,14 @@ pub(crate) async fn interpret_constexpr<'data, T>(
                     .expect("global index out of range of module globals");
                 let global_val = match global_ptr {
                     AbstractGlobalPtr::Immutable(imm_ptr) => {
-                        immutable_globals.get(queue, imm_ptr).await
+                        immutable_globals.try_get(queue, imm_ptr).await
                     }
                     AbstractGlobalPtr::Mutable(mut_ptr) => {
-                        mutable_globals.get(queue, mut_ptr).await
+                        mutable_globals.try_get(queue, mut_ptr).await
                     }
-                };
+                }?;
 
-                stack.push(global_val?)
+                stack.push(global_val)
             }
             Operator::End => {
                 if !iter.next().is_none() {
@@ -148,7 +148,7 @@ impl<T> MappedStoreSetBuilder<T> {
 
         // Globals
         let global_ptrs = module
-            .initialize_globals(
+            .try_initialize_globals(
                 queue,
                 &mut self.mutable_globals,
                 &mut self.immutable_globals,
@@ -159,7 +159,7 @@ impl<T> MappedStoreSetBuilder<T> {
 
         // Elements
         let element_ptrs = module
-            .initialize_elements(
+            .try_initialize_elements(
                 queue,
                 &mut self.elements,
                 &mut self.mutable_globals,
@@ -171,7 +171,7 @@ impl<T> MappedStoreSetBuilder<T> {
 
         // Tables
         let table_ptrs = module
-            .initialize_tables(
+            .try_initialize_tables(
                 queue,
                 &mut self.tables,
                 validated_imports.tables(),
@@ -185,11 +185,11 @@ impl<T> MappedStoreSetBuilder<T> {
             .await?;
 
         // Datas
-        let data_ptrs = module.initialize_datas(queue, &mut self.datas).await?;
+        let data_ptrs = module.try_initialize_datas(queue, &mut self.datas).await?;
 
         // Memories
         let memory_ptrs = module
-            .initialize_memories(
+            .try_initialize_memories(
                 queue,
                 &mut self.memories,
                 validated_imports.memories(),
@@ -204,7 +204,7 @@ impl<T> MappedStoreSetBuilder<T> {
 
         // Functions - they take everything
         let func_ptrs = module
-            .initialize_functions(
+            .try_initialize_functions(
                 queue,
                 &mut self.functions,
                 validated_imports.functions(),
@@ -298,16 +298,19 @@ impl<T> CompletedBuilder<T> {
     ) -> Result<DeviceStoreSet<T>, OutOfMemoryError> {
         let data: Vec<_> = values.into_iter().collect();
 
-        let tables = self.tables.build(memory_system, queue, data.len()).await?;
+        let tables = self
+            .tables
+            .try_build(memory_system, queue, data.len())
+            .await?;
 
         let memories = self
             .memories
-            .build(memory_system, queue, data.len())
+            .try_build(memory_system, queue, data.len())
             .await?;
 
         let mutable_globals = self
             .mutable_globals
-            .build(memory_system, queue, data.len())
+            .try_build(memory_system, queue, data.len())
             .await?;
 
         Ok(DeviceStoreSet {
@@ -316,7 +319,7 @@ impl<T> CompletedBuilder<T> {
             elements: self.elements.clone(),
             datas: self.datas.clone(),
             immutable_globals: self.immutable_globals.clone(),
-            owned: DeviceStoreSetData {
+            owned: UnmappedStoreSetData {
                 tables,
                 memories,
                 mutable_globals,
@@ -373,6 +376,6 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(buffers.read_all(&queue).await.unwrap(), expected_data)
+        assert_eq!(buffers.try_read_all(&queue).await.unwrap(), expected_data)
     }
 }

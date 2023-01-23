@@ -21,7 +21,7 @@ pub mod table;
 pub struct ModuleInstanceReferences<T> {
     funcs: Vec<UntypedFuncPtr<T>>,
     tables: Vec<AbstractTablePtr<T>>,
-    memories: Vec<AbstractMemoryPtr<T>>,
+    memories: Vec<AbstractMemoryPtr>,
     globals: Vec<AbstractGlobalPtr<T>>,
     exports: HashMap<String, ModuleExport>,
     start_fn: Option<UntypedFuncPtr<T>>,
@@ -31,7 +31,7 @@ impl<T> ModuleInstanceReferences<T> {
     pub fn new(
         funcs: Vec<UntypedFuncPtr<T>>,
         tables: Vec<AbstractTablePtr<T>>,
-        memories: Vec<AbstractMemoryPtr<T>>,
+        memories: Vec<AbstractMemoryPtr>,
         globals: Vec<AbstractGlobalPtr<T>>,
         exports: HashMap<String, ModuleExport>,
         start_fn: Option<UntypedFuncPtr<T>>,
@@ -101,7 +101,7 @@ impl<T> ModuleInstanceReferences<T> {
         return Ok(typed);
     }
 
-    pub fn get_memory_export(&self, name: &str) -> anyhow::Result<AbstractMemoryPtr<T>> {
+    pub fn get_memory_export(&self, name: &str) -> anyhow::Result<AbstractMemoryPtr> {
         self.get_export(name)
             .ok_or(anyhow!("no exported object with name {}", name))
             .and_then(|export| match export {
