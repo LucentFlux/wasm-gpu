@@ -1,3 +1,5 @@
+mod assemblable;
+pub mod assembled_module;
 pub mod func_ir;
 
 use futures::future::{BoxFuture, FutureExt};
@@ -17,9 +19,11 @@ use crate::store_set::HostStoreSet;
 use crate::typed::{Val, WasmTyVec};
 use crate::MappedStoreSetBuilder;
 
+use self::func_ir::FuncIR;
+
 #[derive(Debug)]
 pub(crate) struct ExportFunction {
-    signature: String, // TODO: make this something more reasonable
+    pub ir: FuncIR,
 }
 
 struct TypedHostFn<F, T, Params, Results> {
@@ -83,6 +87,13 @@ pub struct Func<T> {
 }
 
 impl<T> Func<T> {
+    pub fn from_ir(ty: FuncType, ir: FuncIR) -> Self {
+        Self {
+            kind: FuncKind::Export(ExportFunction { ir }),
+            ty,
+        }
+    }
+
     pub fn params(&self) -> &[ValType] {
         return self.ty.params();
     }
@@ -229,8 +240,8 @@ impl<'a, T> Caller<'a, T> {
 mod tests {
     use super::*;
     use crate::tests_lib::{gen_test_memory_string, get_backend};
-    use crate::wasp;
     use crate::{block_test, imports, Config, PanicOnAny};
+    use crate::{wasp, Engine};
 
     macro_rules! backend_buffer_tests {
         ($($value:expr),* $(,)?) => {
@@ -247,7 +258,7 @@ mod tests {
         let (memory_system, queue) = get_backend().await;
 
         let (expected_data, data_str) = gen_test_memory_string(size, 203571423u32);
-
+        let mut engine = Engine::new(Config::default());
         let mut stores_builder = MappedStoreSetBuilder::new(&memory_system);
 
         let wat = format!(
@@ -262,7 +273,7 @@ mod tests {
             data_str
         );
         let wat = wat.into_bytes();
-        let module = wasp::Module::new(&Config::default(), &wat).unwrap();
+        let module = wasp::Module::new(&engine, &wat, "test_module".to_owned()).unwrap();
 
         let host_read = Func::wrap(
             &mut stores_builder,
@@ -284,6 +295,7 @@ mod tests {
 
         let instance = stores_builder
             .instantiate_module(
+                &mut engine,
                 &memory_system,
                 &queue,
                 &module,

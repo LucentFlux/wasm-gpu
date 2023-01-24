@@ -5,7 +5,7 @@ use wasmparser::ValType;
 use wast::core::{HeapType, WastArgCore};
 use wast::WastArg;
 
-pub const fn wasm_ty_bytes(ty: ValType) -> usize {
+pub const fn wasm_ty_bytes(ty: &ValType) -> usize {
     match ty {
         ValType::I32 => 4,
         ValType::I64 => 8,
@@ -181,7 +181,7 @@ pub trait WasmTyVec: Sized {
     fn byte_count() -> usize {
         Self::VAL_TYPES
             .into_iter()
-            .map(|ty| wasm_ty_bytes(*ty))
+            .map(|ty| wasm_ty_bytes(ty))
             .sum()
     }
 }

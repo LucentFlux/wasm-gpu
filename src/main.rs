@@ -29,6 +29,9 @@ async fn main() -> anyhow::Result<()> {
 
     let (device, queue) = wrap_wgpu(device, queue);
 
+    let config = Config::default();
+    let mut engine = wasp::Engine::new(config);
+
     let chunk_size = 16 * 1024;
     let memory_system = MemorySystem::new(
         device.clone(),
@@ -48,8 +51,7 @@ async fn main() -> anyhow::Result<()> {
                 call $host_hello)
         )
     "#;
-    let config = Config::default();
-    let module = wasp::Module::new(&config, wat.as_bytes())?;
+    let module = wasp::Module::new(&engine, wat.as_bytes(), "main_module".to_owned())?;
 
     let mut store_builder = wasp::MappedStoreSetBuilder::new(&memory_system);
 
@@ -67,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
 
     let instances = store_builder
         .instantiate_module(
+            &mut engine,
             &memory_system,
             &queue,
             &module,

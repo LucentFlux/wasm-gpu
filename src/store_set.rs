@@ -1,5 +1,6 @@
 use wgpu_lazybuffers_macros::lazy_mappable;
 
+use crate::func::assembled_module::AssembledModule;
 use crate::instance::data::UnmappedDataInstance;
 use crate::instance::element::UnmappedElementInstance;
 use crate::instance::func::FuncsInstance;
@@ -32,6 +33,9 @@ pub struct StoreSet<T, O> {
     pub elements: Arc<UnmappedElementInstance>,
     pub datas: Arc<UnmappedDataInstance>,
     pub immutable_globals: Arc<UnmappedImmutableGlobalsInstance>,
+
+    pub assembled_module: Arc<AssembledModule>,
+
     pub owned: O,
 }
 

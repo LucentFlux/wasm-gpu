@@ -27,6 +27,7 @@ ouroboros = "0.15"
 perfect-derive = "0.1"
 tokio = { version = "1.22", features = ["rt", "rt-multi-thread", "macros"] }
 wast = "50.0"
+naga = "0.10"
 
 [dev-dependencies]
 rand = "0.8"

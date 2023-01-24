@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 use wasm_spirv::wasp::externs::NamedExtern;
 use wasm_spirv::{
-    wasp, Config, Ieee32, Ieee64, MappedStoreSetBuilder, ModuleInstanceReferences, Val,
+    wasp, Config, Engine, Ieee32, Ieee64, MappedStoreSetBuilder, ModuleInstanceReferences, Val,
 };
 use wast::core::{HeapType, NanPattern, V128Pattern, WastRetCore};
 use wast::lexer::Lexer;
@@ -60,9 +60,9 @@ pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
 }
 
 struct WastState {
+    engine: Engine,
     memory_system: MemorySystem,
     queue: AsyncQueue,
-    config: Config,
     store_builder: Option<MappedStoreSetBuilder<()>>, // Taken when invoking
     named_modules: HashMap<String, Arc<ModuleInstanceReferences<()>>>,
     latest_module: Option<Arc<ModuleInstanceReferences<()>>>,
@@ -80,23 +80,24 @@ impl WastState {
             named_modules: HashMap::new(),
             latest_module: None,
             imports: Vec::new(),
-            config: Config::default(),
+            engine: Engine::new(Config::default()),
             memory_system,
             queue,
         }
     }
 
-    async fn add_module<'a>(&'a mut self, mut quote_wast: QuoteWat<'a>, span: &Span) {
+    async fn add_module<'a>(&'a mut self, mut quote_wast: QuoteWat<'a>, span: &Span, name: String) {
         let bytes = quote_wast
             .encode()
             .expect(&format!("could not encode expected module at {:?}", span));
-        let module = wasp::Module::new(&self.config, &bytes)
+        let module = wasp::Module::new(&self.engine, &bytes, name)
             .expect(&format!("could not parse module byes at {:?}", span));
         let instance = self
             .store_builder
             .as_mut()
             .unwrap()
             .instantiate_module(
+                &mut self.engine,
                 &self.memory_system,
                 &self.queue,
                 &module,
@@ -236,7 +237,11 @@ async fn check(path: &str, test_offset: usize) {
     for kind in wast.directives {
         let span = kind.span();
         match kind {
-            WastDirective::Wat(quote_wast) => state.add_module(quote_wast, &span).await,
+            WastDirective::Wat(quote_wast) => {
+                state
+                    .add_module(quote_wast, &span, format!("module_{}", span.offset()))
+                    .await
+            }
             WastDirective::Register {
                 span: _,
                 name,
@@ -295,7 +300,7 @@ async fn run_assertion(directive: WastDirective<'_>, state: WastState) {
 }
 
 async fn test_assert_malformed_or_invalid(
-    state: WastState,
+    mut state: WastState,
     span: Span,
     mut module: QuoteWat<'_>,
     message: &str,
@@ -305,7 +310,7 @@ async fn test_assert_malformed_or_invalid(
         Err(_) => return, // Failure to encode is fine if malformed
     };
 
-    let module = wasp::Module::new(&state.config, &bytes);
+    let module = wasp::Module::new(&state.engine, &bytes, "test_module".to_owned());
 
     let module = match module {
         Err(_) => return, // We want this to fail
@@ -316,6 +321,7 @@ async fn test_assert_malformed_or_invalid(
         .store_builder
         .unwrap()
         .instantiate_module(
+            &mut state.engine,
             &state.memory_system,
             &state.queue,
             &module,
@@ -401,7 +407,7 @@ fn test_match(got: Val, expected: &WastRetCore) -> bool {
         (WastRetCore::RefFunc(Some(Index::Num(v1, _))), Val::FuncRef(v2)) => {
             v2.as_u32() == Some(*v1)
         }
-        (WastRetCore::RefFunc(Some(Index::Id(v1))), Val::FuncRef(v2)) => unimplemented!(),
+        (WastRetCore::RefFunc(Some(Index::Id(_))), Val::FuncRef(_)) => unimplemented!(),
         (WastRetCore::RefExtern(v1), Val::ExternRef(v2)) => v2.as_u32() == Some(*v1),
         (WastRetCore::Either(choices), got) => {
             choices.into_iter().any(|option| test_match(got, option))
@@ -413,7 +419,7 @@ fn test_match(got: Val, expected: &WastRetCore) -> bool {
 async fn test_assert_return<'a>(
     mut state: WastState,
     span: Span,
-    mut exec: WastExecute<'a>,
+    exec: WastExecute<'a>,
     results: Vec<WastRet<'a>>,
 ) {
     let ret = state

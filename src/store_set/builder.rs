@@ -1,4 +1,5 @@
 use crate::externs::NamedExtern;
+use crate::func::assembled_module::AssembledModule;
 use crate::instance::data::{MappedDataInstance, UnmappedDataInstance};
 use crate::instance::element::{MappedElementInstance, UnmappedElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
@@ -16,7 +17,7 @@ use crate::instance::table::builder::{
 };
 use crate::instance::ModuleInstanceReferences;
 use crate::store_set::UnmappedStoreSetData;
-use crate::{DeviceStoreSet, ExternRef, Func, FuncRef, Ieee32, Ieee64, Module, Val};
+use crate::{DeviceStoreSet, Engine, ExternRef, Func, FuncRef, Ieee32, Ieee64, Module, Val};
 use perfect_derive::perfect_derive;
 use std::sync::Arc;
 use wasmparser::{Operator, ValType};
@@ -135,6 +136,7 @@ impl<T> MappedStoreSetBuilder<T> {
     /// stores from the builder involves no copying of data from the CPU to the GPU, only within the GPU.
     pub async fn instantiate_module(
         &mut self,
+        engine: &mut Engine,
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
         module: &Module,
@@ -202,18 +204,9 @@ impl<T> MappedStoreSetBuilder<T> {
             )
             .await?;
 
-        // Functions - they take everything
+        // Functions
         let func_ptrs = module
-            .try_initialize_functions(
-                queue,
-                &mut self.functions,
-                validated_imports.functions(),
-                &global_ptrs,
-                &element_ptrs,
-                &table_ptrs,
-                &data_ptrs,
-                &memory_ptrs,
-            )
+            .try_initialize_functions(engine, &mut self.functions, validated_imports.functions())
             .await?;
         if predicted_func_ptrs != func_ptrs {
             panic!("predicted function pointers did not match later calculated pointers");
@@ -262,6 +255,8 @@ impl<T> MappedStoreSetBuilder<T> {
             functions,
         } = self.try_unmap(queue).await?;
 
+        let assembled_module = AssembledModule::assemble(&functions);
+
         Ok(CompletedBuilder {
             tables,
             memories,
@@ -270,6 +265,7 @@ impl<T> MappedStoreSetBuilder<T> {
             immutable_globals: Arc::new(immutable_globals),
             datas: Arc::new(datas),
             functions: Arc::new(functions),
+            assembled_module: Arc::new(assembled_module),
         })
     }
 }
@@ -282,6 +278,11 @@ pub struct CompletedBuilder<T> {
     elements: Arc<UnmappedElementInstance>,
     datas: Arc<UnmappedDataInstance>,
     functions: Arc<FuncsInstance<T>>,
+
+    /// We build the actual spir-v at builder completion, then copy it out to all store sets as they're
+    /// instantiated. However all the information for the module can be rebuilt from the above data, so
+    /// hoisting this is for optimisation reasons.
+    assembled_module: Arc<AssembledModule>,
 }
 
 impl<T> CompletedBuilder<T> {
@@ -319,6 +320,7 @@ impl<T> CompletedBuilder<T> {
             elements: self.elements.clone(),
             datas: self.datas.clone(),
             immutable_globals: self.immutable_globals.clone(),
+            assembled_module: self.assembled_module.clone(),
             owned: UnmappedStoreSetData {
                 tables,
                 memories,
@@ -331,7 +333,7 @@ impl<T> CompletedBuilder<T> {
 #[cfg(test)]
 mod tests {
     use crate::tests_lib::{gen_test_memory_string, get_backend};
-    use crate::{block_test, imports, wasp, Config, MappedStoreSetBuilder};
+    use crate::{block_test, imports, wasp, Config, Engine, MappedStoreSetBuilder};
     use anyhow::anyhow;
     use std::sync::Arc;
     macro_rules! data_tests {
@@ -350,6 +352,8 @@ mod tests {
 
         let (expected_data, data_str) = gen_test_memory_string(size, 84637322u32);
 
+        let mut engine = Engine::new(Config::default());
+
         let mut stores_builder = MappedStoreSetBuilder::<()>::new(&memory_system);
 
         let wat = format!(
@@ -361,10 +365,10 @@ mod tests {
             data_str
         );
         let wat = wat.into_bytes();
-        let module = wasp::Module::new(&Config::default(), &wat).unwrap();
+        let module = wasp::Module::new(&engine, &wat, "test_module".to_owned()).unwrap();
 
         let _instance = stores_builder
-            .instantiate_module(&memory_system, &queue, &module, imports! {})
+            .instantiate_module(&mut engine, &memory_system, &queue, &module, imports! {})
             .await
             .expect("could not instantiate all modules");
 

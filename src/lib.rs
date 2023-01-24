@@ -2,7 +2,9 @@
 #![feature(async_closure)]
 
 mod atomic_counter;
+mod capabilities;
 mod config;
+mod engine;
 mod externs;
 mod fenwick;
 mod func;
@@ -13,7 +15,6 @@ mod session;
 mod store_set;
 mod typed;
 
-mod capabilities;
 #[cfg(test)]
 pub mod tests_lib;
 
@@ -26,6 +27,7 @@ pub mod wasp {
 
     // Engine
     pub use config::Config;
+    pub use engine::Engine;
     // Module
     pub use module::Module;
     // Externs

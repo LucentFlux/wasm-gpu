@@ -2,6 +2,7 @@ pub mod error;
 pub mod module_environ;
 
 use crate::externs::{Extern, NamedExtern};
+use crate::func::func_ir::FuncIR;
 use crate::instance::data::{DataPtr, MappedDataInstance};
 use crate::instance::element::{ElementPtr, MappedElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
@@ -14,7 +15,7 @@ use crate::module::module_environ::{
 };
 use crate::store_set::builder::interpret_constexpr;
 use crate::typed::{wasm_ty_bytes, FuncRef, Val};
-use crate::Config;
+use crate::{Config, Engine, Func};
 use anyhow::{anyhow, Context, Error};
 use itertools::Itertools;
 use std::borrow::Cow;
@@ -27,6 +28,7 @@ use wgpu_async::async_queue::AsyncQueue;
 /// A wasm module that has not been instantiated
 pub struct Module {
     parsed: ParsedModuleUnit,
+    name: String,
 }
 
 pub struct ValidatedImports<T> {
@@ -53,7 +55,7 @@ impl<T> ValidatedImports<T> {
 
 impl Module {
     fn parse(config: &Config, wasm: Vec<u8>) -> Result<ParsedModuleUnit, Error> {
-        let mut validator = Validator::new_with_features(config.features.clone());
+        let validator = Validator::new_with_features(config.features.clone());
         let parser = wasmparser::Parser::new(0);
         let parsed = ModuleEnviron::new(validator)
             .translate(parser, wasm)
@@ -63,16 +65,17 @@ impl Module {
     }
 
     pub fn new<'a>(
-        config: &Config,
+        engine: &Engine,
         bytes: impl IntoIterator<Item = &'a u8>,
+        name: String,
     ) -> Result<Self, Error> {
         let wasm: Vec<_> = bytes.into_iter().map(|v| *v).collect();
         let wasm: Cow<'_, [u8]> = wat::parse_bytes(wasm.as_slice())?;
         let wasm = wasm.to_vec();
 
-        let parsed = Self::parse(config, wasm)?;
+        let parsed = Self::parse(&engine.config, wasm)?;
 
-        return Ok(Self { parsed });
+        return Ok(Self { parsed, name });
     }
 
     /// See 4.5.4 of WASM spec 2.0
@@ -166,7 +169,7 @@ impl Module {
             .borrow_sections()
             .globals
             .iter()
-            .map(|g| (g.ty.mutable, wasm_ty_bytes(g.ty.content_type)))
+            .map(|g| (g.ty.mutable, wasm_ty_bytes(&g.ty.content_type)))
             .partition(|(is_mutable, _)| *is_mutable);
 
         let is_immutable_mutable = immutables.first().unwrap_or(&(false, 0)).0;
@@ -431,7 +434,7 @@ impl Module {
 
                     memory_set
                         .try_initialize(queue, memory_ptr, &data, offset)
-                        .await;
+                        .await?;
 
                     // Then we can drop this data
                     datas.drop(data_ptr).await;
@@ -445,16 +448,11 @@ impl Module {
 
     pub(crate) async fn try_initialize_functions<'a, T: 'a>(
         &'a self,
-        queue: &AsyncQueue,
+        engine: &mut Engine,
         functions: &mut FuncsInstance<T>,
         func_imports: impl IntoIterator<Item = &'a UntypedFuncPtr<T>>,
-        module_globals: &Vec<AbstractGlobalPtr<T>>,
-        module_elements: &Vec<ElementPtr<T>>,
-        module_tables: &Vec<AbstractTablePtr<T>>,
-        module_datas: &Vec<DataPtr<T>>,
-        module_memories: &Vec<AbstractMemoryPtr>,
     ) -> Result<Vec<UntypedFuncPtr<T>>, BufferAsyncError> {
-        let ptrs = func_imports
+        let mut ptrs = func_imports
             .into_iter()
             .map(UntypedFuncPtr::clone)
             .collect_vec();
@@ -473,7 +471,9 @@ impl Module {
                 Type::Func(ty) => ty,
             };
 
-            // TODO: Compile and add functions
+            let ir = FuncIR::from_wasm(engine, &ty, func, self.name.clone());
+            let new_ptr = functions.register(Func::from_ir(ty, ir));
+            ptrs.push(new_ptr)
         }
 
         return Ok(ptrs);
