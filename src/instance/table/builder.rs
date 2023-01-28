@@ -49,7 +49,7 @@ impl MappedTableInstanceSetBuilder {
         }
     }
 
-    pub fn add_table<T>(&mut self, plan: &TableType) -> AbstractTablePtr<T> {
+    pub fn add_table(&mut self, plan: &TableType) -> AbstractTablePtr {
         let ptr = self.tables.len();
         self.tables.push(
             self.memory_system
@@ -62,10 +62,10 @@ impl MappedTableInstanceSetBuilder {
         return AbstractTablePtr::new(ptr, self.cap_set.get_cap(), plan.clone());
     }
 
-    pub async fn try_initialize<T>(
+    pub async fn try_initialize(
         &mut self,
         queue: &AsyncQueue,
-        ptr: &AbstractTablePtr<T>,
+        ptr: &AbstractTablePtr,
         data: &[u8],
         offset: usize,
     ) -> Result<(), wgpu::BufferAsyncError> {
@@ -83,14 +83,14 @@ impl MappedTableInstanceSetBuilder {
 }
 
 impl_abstract_ptr!(
-    pub struct AbstractTablePtr<T> {
+    pub struct AbstractTablePtr {
         pub(in crate::instance::table) data...
         // Copied from Table
         ty: TableType,
-    } with concrete TablePtr<T>;
+    } with concrete TablePtr;
 );
 
-impl<T> AbstractTablePtr<T> {
+impl AbstractTablePtr {
     pub fn is_type(&self, ty: &TableType) -> bool {
         self.ty.element_type.eq(&ty.element_type)
             && wasm_limits_match(self.ty.initial, self.ty.maximum, ty.initial, ty.maximum)

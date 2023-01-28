@@ -20,9 +20,9 @@ pub mod table;
 /// elements given by the module instantiated to produce this object
 pub struct ModuleInstanceReferences<T> {
     funcs: Vec<UntypedFuncPtr<T>>,
-    tables: Vec<AbstractTablePtr<T>>,
+    tables: Vec<AbstractTablePtr>,
     memories: Vec<AbstractMemoryPtr>,
-    globals: Vec<AbstractGlobalPtr<T>>,
+    globals: Vec<AbstractGlobalPtr>,
     exports: HashMap<String, ModuleExport>,
     start_fn: Option<UntypedFuncPtr<T>>,
 }
@@ -30,9 +30,9 @@ pub struct ModuleInstanceReferences<T> {
 impl<T> ModuleInstanceReferences<T> {
     pub fn new(
         funcs: Vec<UntypedFuncPtr<T>>,
-        tables: Vec<AbstractTablePtr<T>>,
+        tables: Vec<AbstractTablePtr>,
         memories: Vec<AbstractMemoryPtr>,
-        globals: Vec<AbstractGlobalPtr<T>>,
+        globals: Vec<AbstractGlobalPtr>,
         exports: HashMap<String, ModuleExport>,
         start_fn: Option<UntypedFuncPtr<T>>,
     ) -> Self {

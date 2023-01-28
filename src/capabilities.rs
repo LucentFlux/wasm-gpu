@@ -6,12 +6,12 @@
 //! give more power to past pointers, and not give new pointers power to dereference invalid memory
 //! in old instances and builders
 
-use crate::atomic_counter::AtomicCounter;
+use crate::atomic_counter::AtomicUsizeCounter;
 use std::collections::HashSet;
 use std::sync::Arc;
 
 // Used for UUID generation
-static COUNTER: AtomicCounter = AtomicCounter::new();
+static COUNTER: AtomicUsizeCounter = AtomicUsizeCounter::new();
 
 /// This stores capability information of a buffer, to then be checked against on pointer dereference.
 /// It must be told when the buffer changes size.

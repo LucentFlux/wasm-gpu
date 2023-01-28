@@ -1,4 +1,4 @@
-use crate::module::error::WasmError;
+use crate::{module::error::WasmError, module::operation::OperatorByProposal};
 use ouroboros::self_referencing;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -32,10 +32,10 @@ pub enum ModuleExport {
     Global(usize),
 }
 
-pub struct ParsedFunc<'data> {
+pub struct ParsedFunc {
     pub type_id: u32,
     pub locals: Vec<(u32, ValType)>,
-    pub operators: Vec<Operator<'data>>,
+    pub operators: Vec<OperatorByProposal>,
 }
 
 pub enum ParsedElementKind<'data> {
@@ -93,7 +93,7 @@ pub struct ParsedModule<'data> {
     pub start_func: Option<u32>,
     pub elements: Vec<ParsedElement<'data>>,
     pub datas: Vec<ParsedData<'data>>,
-    pub functions: Vec<ParsedFunc<'data>>,
+    pub functions: Vec<ParsedFunc>,
 }
 
 #[self_referencing]
@@ -402,7 +402,8 @@ impl ModuleEnviron {
                     func.locals.push(local?);
                 }
                 for operator in body.get_operators_reader()? {
-                    func.operators.push(operator?);
+                    func.operators
+                        .push(OperatorByProposal::from_operator(operator?)?);
                 }
 
                 result.functions.push(func);

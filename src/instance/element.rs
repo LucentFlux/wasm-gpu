@@ -2,6 +2,7 @@ use crate::capabilities::CapabilityStore;
 use crate::impl_immutable_ptr;
 use crate::typed::{FuncRef, WasmTyVal, WasmTyVec};
 use itertools::Itertools;
+use wasmparser::ValType;
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;
 use wgpu_lazybuffers::{
@@ -48,11 +49,12 @@ impl MappedElementInstance {
         self.meta.cap_set = self.meta.cap_set.resize_ref(self.references.len());
     }
 
-    pub async fn try_add_element<T>(
+    pub async fn try_add_element(
         &mut self,
         queue: &AsyncQueue,
+        ty: ValType,
         element: Vec<Option<u32>>,
-    ) -> Result<ElementPtr<T>, BufferAsyncError> {
+    ) -> Result<ElementPtr, BufferAsyncError> {
         let start = self.meta.head;
         let end = start + (element.len() * FuncRef::byte_count());
         assert!(
@@ -74,14 +76,15 @@ impl MappedElementInstance {
         return Ok(ElementPtr::new(
             start,
             self.meta.cap_set.get_cap(),
+            ty,
             element.len(),
         ));
     }
 
-    pub async fn try_get<T>(
+    pub async fn try_get(
         &mut self,
         queue: &AsyncQueue,
-        ptr: &ElementPtr<T>,
+        ptr: &ElementPtr,
     ) -> Result<Vec<u8>, BufferAsyncError> {
         assert!(
             self.meta.cap_set.check(&ptr.cap),
@@ -97,14 +100,15 @@ impl MappedElementInstance {
     }
 
     /// Calls `elem.drop` on the element pointed to. May or may not actually free the memory
-    pub async fn drop<T>(&mut self, _ptr: &ElementPtr<T>) {
+    pub async fn drop(&mut self, _ptr: &ElementPtr) {
         //TODO - use this optimisation hint
     }
 }
 
 impl_immutable_ptr!(
-    pub struct ElementPtr<T> {
+    pub struct ElementPtr {
         data...
+        ty: ValType,
         len: usize,
     }
 );

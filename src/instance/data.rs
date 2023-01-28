@@ -50,11 +50,11 @@ impl MappedDataInstance {
         self.cap_set = self.cap_set.resize_ref(self.datas.len())
     }
 
-    pub async fn try_add_data<T>(
+    pub async fn try_add_data(
         &mut self,
         queue: &AsyncQueue,
         data: &[u8],
-    ) -> Result<DataPtr<T>, BufferAsyncError> {
+    ) -> Result<DataPtr, BufferAsyncError> {
         let start = self.head;
         let end = start + data.len();
         assert!(
@@ -67,10 +67,10 @@ impl MappedDataInstance {
         return Ok(DataPtr::new(start, self.cap_set.get_cap(), data.len()));
     }
 
-    pub async fn try_get<T>(
+    pub async fn try_get(
         &mut self,
         queue: &AsyncQueue,
-        ptr: &DataPtr<T>,
+        ptr: &DataPtr,
     ) -> Result<Vec<u8>, BufferAsyncError> {
         assert!(
             self.cap_set.check(&ptr.cap),
@@ -83,13 +83,13 @@ impl MappedDataInstance {
     }
 
     /// Calls `elem.drop` on the element pointed to. May or may not actually free the memory
-    pub async fn drop<T>(&mut self, _ptr: &DataPtr<T>) {
+    pub async fn drop(&mut self, _ptr: &DataPtr) {
         //TODO: Use this hint
     }
 }
 
 impl_immutable_ptr!(
-    pub struct DataPtr<T> {
+    pub struct DataPtr {
         data...
         len: usize, // In bytes
     }

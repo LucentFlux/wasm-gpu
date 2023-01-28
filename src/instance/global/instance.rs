@@ -43,7 +43,7 @@ impl UnmappedMutableGlobalsInstanceSet {
     }
 }
 impl_concrete_ptr!(
-    pub struct GlobalMutablePtr<T> {
+    pub struct GlobalMutablePtr {
         data...
-    } with abstract AbstractGlobalMutablePtr<T>;
+    } with abstract AbstractGlobalMutablePtr;
 );

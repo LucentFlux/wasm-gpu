@@ -17,7 +17,7 @@ impl Default for Config {
                 reference_types: false,
                 multi_value: false,
                 bulk_memory: false,
-                simd: true, // Silly not to on a GPU
+                simd: false, //TODO: Silly not to on a GPU
                 relaxed_simd: false,
                 threads: false,
                 tail_call: false,

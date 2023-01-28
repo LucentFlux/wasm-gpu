@@ -30,7 +30,6 @@ async fn main() -> anyhow::Result<()> {
     let (device, queue) = wrap_wgpu(device, queue);
 
     let config = Config::default();
-    let mut engine = wasp::Engine::new(config);
 
     let chunk_size = 16 * 1024;
     let memory_system = MemorySystem::new(
@@ -51,26 +50,22 @@ async fn main() -> anyhow::Result<()> {
                 call $host_hello)
         )
     "#;
-    let module = wasp::Module::new(&engine, wat.as_bytes(), "main_module".to_owned())?;
+    let module = wasp::Module::new(&config, wat.as_bytes(), "main_module".to_owned())?;
 
     let mut store_builder = wasp::MappedStoreSetBuilder::new(&memory_system);
 
-    let host_hello = wasp::Func::wrap(
-        &mut store_builder,
-        |caller: wasp::Caller<u32>, param: i32| {
+    let host_hello =
+        store_builder.register_host_function(|caller: wasp::Caller<u32>, param: i32| {
             Box::pin(async move {
                 println!("Got {} from WebAssembly", param);
                 println!("my host state is: {}", caller.data());
 
                 return Ok(());
             })
-        },
-    );
+        });
 
     let instances = store_builder
         .instantiate_module(
-            &mut engine,
-            &memory_system,
             &queue,
             &module,
             imports! {

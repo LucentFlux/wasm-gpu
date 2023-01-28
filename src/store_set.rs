@@ -1,3 +1,6 @@
+pub mod builder;
+pub mod calling;
+
 use wgpu_lazybuffers_macros::lazy_mappable;
 
 use crate::func::assembled_module::AssembledModule;
@@ -12,8 +15,6 @@ use crate::instance::memory::instance::{MappedMemoryInstanceSet, UnmappedMemoryI
 use crate::instance::table::instance::{MappedTableInstanceSet, UnmappedTableInstanceSet};
 use crate::MappedStoreSetBuilder;
 use std::sync::Arc;
-
-pub mod builder;
 
 #[lazy_mappable(MappedStoreSetData)]
 pub struct UnmappedStoreSetData {

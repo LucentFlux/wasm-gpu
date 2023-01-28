@@ -1,8 +1,9 @@
 pub mod error;
 pub mod module_environ;
+pub mod operation;
 
 use crate::externs::{Extern, NamedExtern};
-use crate::func::func_ir::FuncIR;
+use crate::func::{FuncAccessible, FuncData};
 use crate::instance::data::{DataPtr, MappedDataInstance};
 use crate::instance::element::{ElementPtr, MappedElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
@@ -15,12 +16,13 @@ use crate::module::module_environ::{
 };
 use crate::store_set::builder::interpret_constexpr;
 use crate::typed::{wasm_ty_bytes, FuncRef, Val};
-use crate::{Config, Engine, Func};
+use crate::Config;
 use anyhow::{anyhow, Context, Error};
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::slice::Iter;
+use std::sync::Arc;
 use wasmparser::{Type, ValType, Validator};
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;
@@ -33,8 +35,8 @@ pub struct Module {
 
 pub struct ValidatedImports<T> {
     functions: Vec<UntypedFuncPtr<T>>,
-    globals: Vec<AbstractGlobalPtr<T>>,
-    tables: Vec<AbstractTablePtr<T>>,
+    globals: Vec<AbstractGlobalPtr>,
+    tables: Vec<AbstractTablePtr>,
     memories: Vec<AbstractMemoryPtr>,
 }
 
@@ -42,10 +44,10 @@ impl<T> ValidatedImports<T> {
     pub fn functions(&self) -> Iter<UntypedFuncPtr<T>> {
         self.functions.iter()
     }
-    pub fn globals(&self) -> Iter<AbstractGlobalPtr<T>> {
+    pub fn globals(&self) -> Iter<AbstractGlobalPtr> {
         self.globals.iter()
     }
-    pub fn tables(&self) -> Iter<AbstractTablePtr<T>> {
+    pub fn tables(&self) -> Iter<AbstractTablePtr> {
         self.tables.iter()
     }
     pub fn memories(&self) -> Iter<AbstractMemoryPtr> {
@@ -65,7 +67,7 @@ impl Module {
     }
 
     pub fn new<'a>(
-        engine: &Engine,
+        config: &Config,
         bytes: impl IntoIterator<Item = &'a u8>,
         name: String,
     ) -> Result<Self, Error> {
@@ -73,7 +75,7 @@ impl Module {
         let wasm: Cow<'_, [u8]> = wat::parse_bytes(wasm.as_slice())?;
         let wasm = wasm.to_vec();
 
-        let parsed = Self::parse(&engine.config, wasm)?;
+        let parsed = Self::parse(&config, wasm)?;
 
         return Ok(Self { parsed, name });
     }
@@ -160,9 +162,9 @@ impl Module {
         queue: &AsyncQueue,
         mutable_globals_instance: &mut MappedMutableGlobalsInstanceBuilder,
         immutable_globals_instance: &mut MappedImmutableGlobalsInstance,
-        global_imports: impl Iterator<Item = AbstractGlobalPtr<T>>,
+        global_imports: impl Iterator<Item = AbstractGlobalPtr>,
         module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
-    ) -> Result<Vec<AbstractGlobalPtr<T>>, BufferAsyncError> {
+    ) -> Result<Vec<AbstractGlobalPtr>, BufferAsyncError> {
         // Calculate space requirements
         let (immutables, mutables): (Vec<_>, Vec<_>) = self
             .parsed
@@ -196,7 +198,7 @@ impl Module {
                 &module_func_ptrs,
             )
             .await?;
-            let ptr: AbstractGlobalPtr<T> = if global.ty.mutable {
+            let ptr: AbstractGlobalPtr = if global.ty.mutable {
                 AbstractGlobalPtr::Mutable(mutable_globals_instance.try_push(queue, value).await?)
             } else {
                 AbstractGlobalPtr::Immutable(
@@ -209,20 +211,6 @@ impl Module {
         return Ok(results);
     }
 
-    pub(crate) fn predict_functions<T>(
-        &self,
-        functions: &FuncsInstance<T>,
-    ) -> Vec<UntypedFuncPtr<T>> {
-        let types = self.parsed.borrow_sections().functions.iter().map(|f| {
-            self.parsed
-                .borrow_sections()
-                .types
-                .get(f.type_id as usize)
-                .expect("function type index out of range")
-        });
-        functions.predict(types)
-    }
-
     /// Extends elements buffers to be shared by all stores of a set, as passive elements are immutable
     pub(crate) async fn try_initialize_elements<T>(
         &self,
@@ -231,9 +219,9 @@ impl Module {
         // Needed for const expr evaluation
         module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder,
         module_immutable_globals: &mut MappedImmutableGlobalsInstance,
-        module_global_ptrs: &Vec<AbstractGlobalPtr<T>>,
+        module_global_ptrs: &Vec<AbstractGlobalPtr>,
         module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
-    ) -> Result<Vec<ElementPtr<T>>, BufferAsyncError> {
+    ) -> Result<Vec<ElementPtr>, BufferAsyncError> {
         // Reserve space first
         let size: usize = std::mem::size_of::<FuncRef>()
             * self
@@ -268,7 +256,9 @@ impl Module {
                 vals.push(v);
             }
 
-            let ptr = elements.try_add_element(queue, vals).await?;
+            let ptr = elements
+                .try_add_element(queue, element.ty.clone(), vals)
+                .await?;
             ptrs.push(ptr);
         }
 
@@ -279,15 +269,15 @@ impl Module {
         &'a self,
         queue: &AsyncQueue,
         tables: &mut MappedTableInstanceSetBuilder,
-        imported_tables: impl IntoIterator<Item = &'a AbstractTablePtr<T>>,
+        imported_tables: impl IntoIterator<Item = &'a AbstractTablePtr>,
         elements: &mut MappedElementInstance,
-        module_element_ptrs: &Vec<ElementPtr<T>>,
+        module_element_ptrs: &Vec<ElementPtr>,
         // Needed for const expr evaluation
         module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder,
         module_immutable_globals: &mut MappedImmutableGlobalsInstance,
-        module_global_ptrs: &Vec<AbstractGlobalPtr<T>>,
+        module_global_ptrs: &Vec<AbstractGlobalPtr>,
         module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
-    ) -> Result<Vec<AbstractTablePtr<T>>, BufferAsyncError> {
+    ) -> Result<Vec<AbstractTablePtr>, BufferAsyncError> {
         // Pointers starts with imports
         let mut ptrs = imported_tables
             .into_iter()
@@ -347,11 +337,11 @@ impl Module {
         return Ok(ptrs);
     }
 
-    pub(crate) async fn try_initialize_datas<T>(
+    pub(crate) async fn try_initialize_datas(
         &self,
         queue: &AsyncQueue,
         datas: &mut MappedDataInstance,
-    ) -> Result<Vec<DataPtr<T>>, BufferAsyncError> {
+    ) -> Result<Vec<DataPtr>, BufferAsyncError> {
         // Reserve space first
         let size: usize = self
             .parsed
@@ -378,11 +368,11 @@ impl Module {
         memory_set: &mut MappedMemoryInstanceSetBuilder,
         imported_memories: impl IntoIterator<Item = &'a AbstractMemoryPtr>,
         datas: &mut MappedDataInstance,
-        module_data_ptrs: &Vec<DataPtr<T>>,
+        module_data_ptrs: &Vec<DataPtr>,
         // Needed for const expr evaluation
         module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder,
         module_immutable_globals: &mut MappedImmutableGlobalsInstance,
-        module_global_ptrs: &Vec<AbstractGlobalPtr<T>>,
+        module_global_ptrs: &Vec<AbstractGlobalPtr>,
         module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
     ) -> Result<Vec<AbstractMemoryPtr>, BufferAsyncError> {
         // Pointers starts with imports
@@ -446,37 +436,220 @@ impl Module {
         return Ok(ptrs);
     }
 
-    pub(crate) async fn try_initialize_functions<'a, T: 'a>(
+    pub(crate) fn try_initialize_function_definitions<'a, T: 'a>(
         &'a self,
-        engine: &mut Engine,
         functions: &mut FuncsInstance<T>,
         func_imports: impl IntoIterator<Item = &'a UntypedFuncPtr<T>>,
-    ) -> Result<Vec<UntypedFuncPtr<T>>, BufferAsyncError> {
+    ) -> anyhow::Result<Vec<UntypedFuncPtr<T>>> {
         let mut ptrs = func_imports
             .into_iter()
             .map(UntypedFuncPtr::clone)
             .collect_vec();
 
         let sections = self.parsed.borrow_sections();
-        for func in &sections.functions {
-            let ty = match sections
-                .types
-                .get(
-                    usize::try_from(func.type_id)
-                        .expect("module cannot reside in memory unless #items <= |word|"),
-                )
-                .unwrap()
-                .clone()
-            {
-                Type::Func(ty) => ty,
-            };
+        let mut new_ptrs = sections
+            .functions
+            .iter()
+            .map(|func| {
+                match sections
+                    .types
+                    .get(
+                        usize::try_from(func.type_id)
+                            .expect("module cannot reside in memory unless #items <= |word|"),
+                    )
+                    .unwrap()
+                    .clone()
+                {
+                    Type::Func(ty) => FuncData {
+                        ty,
+                        locals: func.locals.clone(),
+                        operators: func.operators.clone(),
+                    },
+                }
+            })
+            .map(|data| functions.register_definition(data))
+            .collect_vec();
 
-            let ir = FuncIR::from_wasm(engine, &ty, func, self.name.clone());
-            let new_ptr = functions.register(Func::from_ir(ty, ir));
-            ptrs.push(new_ptr)
-        }
+        ptrs.append(&mut new_ptrs);
 
         return Ok(ptrs);
+    }
+
+    /// Checks that the types of the given pointers match the expected pointers of the imports + definitions of this module.
+    fn debug_typecheck_func_ptrs<T>(&self, func_ptrs: &Vec<UntypedFuncPtr<T>>) {
+        let sections = self.parsed.borrow_sections();
+
+        let required_imported_functions = sections
+            .imports
+            .iter()
+            .filter_map(|(_, _, import_type)| match import_type {
+                ImportTypeRef::Func(f_ty_id) => Some(
+                    match &sections.types
+                        [usize::try_from(*f_ty_id).expect("16 bit architectures are unsupported")]
+                    {
+                        Type::Func(f_ty) => f_ty.clone(),
+                    },
+                ),
+                _ => None,
+            })
+            .collect_vec();
+        let mut required_defined_functions = sections
+            .functions
+            .iter()
+            .map(|func| {
+                match &sections.types
+                    [usize::try_from(func.type_id).expect("16 bit architectures are unsupported")]
+                {
+                    Type::Func(f_ty) => f_ty.clone(),
+                }
+            })
+            .collect_vec();
+
+        let mut required_functions = required_imported_functions;
+        required_functions.append(&mut required_defined_functions);
+
+        let ptr_types = func_ptrs.iter().map(|ptr| ptr.ty().clone()).collect_vec();
+        debug_assert_eq!(
+            required_functions, ptr_types,
+            "function pointer types did not match required function types"
+        );
+    }
+
+    /// Checks that the types of the given pointers match the expected pointers of the imports + definitions of this module.
+    fn debug_typecheck_global_ptrs(&self, global_ptrs: &Vec<AbstractGlobalPtr>) {
+        let sections = self.parsed.borrow_sections();
+
+        let required_imported_globals = sections
+            .imports
+            .iter()
+            .filter_map(|(_, _, import_type)| match import_type {
+                ImportTypeRef::Global(g_ty) => Some(g_ty.clone()),
+                _ => None,
+            })
+            .collect_vec();
+        let mut required_defined_globals = sections
+            .globals
+            .iter()
+            .map(|global| global.ty)
+            .collect_vec();
+
+        let mut required_globals = required_imported_globals;
+        required_globals.append(&mut required_defined_globals);
+
+        let ptr_types = global_ptrs.iter().map(|ptr| ptr.ty().clone()).collect_vec();
+        debug_assert_eq!(
+            required_globals, ptr_types,
+            "global pointer types did not match required global types"
+        );
+    }
+
+    /// Checks that the types of the given pointers match the expected pointers of the imports + definitions of this module.
+    fn debug_typecheck_element_ptrs(&self, element_ptrs: &Vec<ElementPtr>) {
+        let sections = self.parsed.borrow_sections();
+
+        let required_elements = sections
+            .elements
+            .iter()
+            .map(|element| element.ty)
+            .collect_vec();
+
+        let ptr_types = element_ptrs
+            .iter()
+            .map(|ptr| ptr.ty().clone())
+            .collect_vec();
+        debug_assert_eq!(
+            required_elements, ptr_types,
+            "element pointer types did not match required element types"
+        );
+    }
+
+    /// Checks that the types of the given pointers match the expected pointers of the imports + definitions of this module.
+    fn debug_typecheck_table_ptrs(&self, table_ptrs: &Vec<AbstractTablePtr>) {
+        let sections = self.parsed.borrow_sections();
+
+        let required_imported_tables = sections
+            .imports
+            .iter()
+            .filter_map(|(_, _, import_type)| match import_type {
+                ImportTypeRef::Table(t_ty) => Some(t_ty.clone()),
+                _ => None,
+            })
+            .collect_vec();
+        let mut required_defined_tables = sections.tables.clone();
+
+        let mut required_tables = required_imported_tables;
+        required_tables.append(&mut required_defined_tables);
+
+        let ptr_types = table_ptrs.iter().map(|ptr| ptr.ty().clone()).collect_vec();
+        debug_assert_eq!(
+            required_tables, ptr_types,
+            "table pointer types did not match required table types"
+        );
+    }
+
+    /// Checks that the types of the given pointers match the expected pointers of the imports + definitions of this module.
+    fn debug_typecheck_data_ptrs(&self, data_ptrs: &Vec<DataPtr>) {
+        let sections = self.parsed.borrow_sections();
+
+        debug_assert_eq!(
+            sections.datas.len(),
+            data_ptrs.len(),
+            "insufficient data pointers defined"
+        );
+    }
+
+    /// Checks that the types of the given pointers match the expected pointers of the imports + definitions of this module.
+    fn debug_typecheck_memory_ptrs(&self, memory_ptrs: &Vec<AbstractMemoryPtr>) {
+        let sections = self.parsed.borrow_sections();
+
+        let required_imported_memories = sections
+            .imports
+            .iter()
+            .filter_map(|(_, _, import_type)| match import_type {
+                ImportTypeRef::Memory(m_ty) => Some(m_ty.clone()),
+                _ => None,
+            })
+            .collect_vec();
+        let mut required_defined_memories = sections.memories.clone();
+
+        let mut required_memories = required_imported_memories;
+        required_memories.append(&mut required_defined_memories);
+
+        let ptr_types = memory_ptrs.iter().map(|ptr| ptr.ty().clone()).collect_vec();
+        debug_assert_eq!(
+            required_memories, ptr_types,
+            "memory pointer types did not match required memory types"
+        );
+    }
+
+    /// Takes everything accessable by this module and resolve all function body references
+    pub(crate) fn try_initialize_function_bodies<'a, T: 'a>(
+        &'a self,
+        functions: &mut FuncsInstance<T>,
+        accessible: Arc<FuncAccessible<T>>,
+    ) -> anyhow::Result<()> {
+        // Check that the data we've been given for the initialisation of this module makes sense.
+        // This is a debug check to ensure everything has been implemented properly by us. This method
+        // should not be callable from outside of the crate, so this is more to check our invariants than
+        // input validation.
+        self.debug_typecheck_func_ptrs(&accessible.func_index_lookup);
+        self.debug_typecheck_global_ptrs(&accessible.global_index_lookup);
+        self.debug_typecheck_element_ptrs(&accessible.element_index_lookup);
+        self.debug_typecheck_table_ptrs(&accessible.table_index_lookup);
+        self.debug_typecheck_data_ptrs(&accessible.data_index_lookup);
+        self.debug_typecheck_memory_ptrs(&accessible.memory_index_lookup);
+
+        // Link import data
+        let defined_func_count = self.parsed.borrow_sections().functions.len();
+        let defined_func_start = accessible.func_index_lookup.len() - defined_func_count;
+        let defined_function_ptrs = &accessible.func_index_lookup[defined_func_start..];
+        debug_assert_eq!(defined_function_ptrs.len(), defined_func_count);
+
+        for ptr in defined_function_ptrs {
+            functions.link_function_imports(ptr, Arc::clone(&accessible));
+        }
+
+        return Ok(());
     }
 
     pub fn start_fn<T>(

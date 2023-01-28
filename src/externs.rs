@@ -17,8 +17,8 @@ pub struct NamedExtern<T> {
 #[derive(Debug)]
 pub enum Extern<T> {
     Func(UntypedFuncPtr<T>),
-    Global(AbstractGlobalPtr<T>),
-    Table(AbstractTablePtr<T>),
+    Global(AbstractGlobalPtr),
+    Table(AbstractTablePtr),
     Memory(AbstractMemoryPtr),
 }
 
@@ -75,7 +75,7 @@ where
     Results: WasmTyVec,
 {
     fn from(f: TypedFuncPtr<T, Params, Results>) -> Self {
-        Self::Func(f.as_untyped())
+        Self::Func(f.as_untyped().clone())
     }
 }
 
@@ -85,14 +85,14 @@ impl<T> From<AbstractMemoryPtr> for Extern<T> {
     }
 }
 
-impl<T> From<AbstractGlobalPtr<T>> for Extern<T> {
-    fn from(g: AbstractGlobalPtr<T>) -> Self {
+impl<T> From<AbstractGlobalPtr> for Extern<T> {
+    fn from(g: AbstractGlobalPtr) -> Self {
         Self::Global(g)
     }
 }
 
-impl<T> From<AbstractTablePtr<T>> for Extern<T> {
-    fn from(t: AbstractTablePtr<T>) -> Self {
+impl<T> From<AbstractTablePtr> for Extern<T> {
+    fn from(t: AbstractTablePtr) -> Self {
         Self::Table(t)
     }
 }

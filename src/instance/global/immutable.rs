@@ -52,11 +52,11 @@ impl MappedImmutableGlobalsInstance {
         self.cap_set = self.cap_set.resize_ref(self.immutables.len())
     }
 
-    pub async fn try_push_typed<V, T>(
+    pub async fn try_push_typed<V>(
         &mut self,
         queue: &AsyncQueue,
         v: V,
-    ) -> Result<GlobalImmutablePtr<T>, BufferAsyncError>
+    ) -> Result<GlobalImmutablePtr, BufferAsyncError>
     where
         V: WasmTyVal,
     {
@@ -80,13 +80,13 @@ impl MappedImmutableGlobalsInstance {
     }
 
     impl_global_push! {
-        pub async fn try_push<T>(&mut self, queue: &AsyncQueue, val: Val) -> Result<GlobalImmutablePtr<T>, BufferAsyncError>
+        pub async fn try_push(&mut self, queue: &AsyncQueue, val: Val) -> Result<GlobalImmutablePtr, BufferAsyncError>
     }
 
-    pub async fn try_get_typed<T, V: WasmTyVal>(
+    pub async fn try_get_typed<V: WasmTyVal>(
         &mut self,
         queue: &AsyncQueue,
-        ptr: &GlobalImmutablePtr<T>,
+        ptr: &GlobalImmutablePtr,
     ) -> Result<V, BufferAsyncError> {
         assert!(
             self.cap_set.check(&ptr.cap),
@@ -113,19 +113,19 @@ impl MappedImmutableGlobalsInstance {
     }
 
     impl_global_get! {
-        pub async fn try_get<T>(&mut self,
-            queue: &AsyncQueue,ptr: &GlobalImmutablePtr<T>) -> Result<Val, BufferAsyncError>
+        pub async fn try_get(&mut self,
+            queue: &AsyncQueue,ptr: &GlobalImmutablePtr) -> Result<Val, BufferAsyncError>
     }
 }
 
 impl_immutable_ptr!(
-    pub struct GlobalImmutablePtr<T> {
+    pub struct GlobalImmutablePtr {
         data...
         content_type: wasmparser::ValType,
     }
 );
 
-impl<T> GlobalImmutablePtr<T> {
+impl GlobalImmutablePtr {
     pub fn is_type(&self, ty: &GlobalType) -> bool {
         return self.content_type.eq(&ty.content_type) && !ty.mutable;
     }

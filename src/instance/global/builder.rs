@@ -61,11 +61,11 @@ impl MappedMutableGlobalsInstanceBuilder {
         self.cap_set = self.cap_set.resize_ref(self.mutable_values.len())
     }
 
-    async fn try_push_typed<V, T>(
+    async fn try_push_typed<V>(
         &mut self,
         queue: &AsyncQueue,
         v: V,
-    ) -> Result<AbstractGlobalMutablePtr<T>, BufferAsyncError>
+    ) -> Result<AbstractGlobalMutablePtr, BufferAsyncError>
     where
         V: WasmTyVal,
     {
@@ -89,14 +89,14 @@ impl MappedMutableGlobalsInstanceBuilder {
     }
 
     impl_global_push! {
-        pub async fn try_push<T>(&mut self, queue: &AsyncQueue, val: Val) -> Result<AbstractGlobalMutablePtr<T>, BufferAsyncError>
+        pub async fn try_push(&mut self, queue: &AsyncQueue, val: Val) -> Result<AbstractGlobalMutablePtr, BufferAsyncError>
     }
 
     /// A typed version of `get`, panics if types mismatch
-    pub async fn try_get_typed<T, V: WasmTyVal>(
+    pub async fn try_get_typed<V: WasmTyVal>(
         &mut self,
         queue: &AsyncQueue,
-        ptr: &AbstractGlobalMutablePtr<T>,
+        ptr: &AbstractGlobalMutablePtr,
     ) -> Result<V, BufferAsyncError> {
         assert!(
             self.cap_set.check(&ptr.cap),
@@ -124,30 +124,30 @@ impl MappedMutableGlobalsInstanceBuilder {
     }
 
     impl_global_get! {
-        pub async fn try_get<T>(&mut self, queue: &AsyncQueue, ptr: &AbstractGlobalMutablePtr<T>) -> Result<Val, BufferAsyncError>
+        pub async fn try_get(&mut self, queue: &AsyncQueue, ptr: &AbstractGlobalMutablePtr) -> Result<Val, BufferAsyncError>
     }
 }
 
 impl_abstract_ptr!(
-    pub struct AbstractGlobalMutablePtr<T> {
+    pub struct AbstractGlobalMutablePtr {
         pub(in crate::instance::global) data...
         content_type: ValType,
-    } with concrete GlobalMutablePtr<T>;
+    } with concrete GlobalMutablePtr;
 );
 
-impl<T> AbstractGlobalMutablePtr<T> {
+impl AbstractGlobalMutablePtr {
     pub fn is_type(&self, ty: &GlobalType) -> bool {
         return self.content_type.eq(&ty.content_type) && ty.mutable;
     }
 }
 
 #[derive(Debug)]
-pub enum AbstractGlobalPtr<T> {
-    Immutable(GlobalImmutablePtr<T>),
-    Mutable(AbstractGlobalMutablePtr<T>),
+pub enum AbstractGlobalPtr {
+    Immutable(GlobalImmutablePtr),
+    Mutable(AbstractGlobalMutablePtr),
 }
 
-impl<T> AbstractGlobalPtr<T> {
+impl AbstractGlobalPtr {
     pub fn is_type(&self, ty: &GlobalType) -> bool {
         match self {
             AbstractGlobalPtr::Immutable(ptr) => ptr.is_type(ty),
@@ -177,7 +177,7 @@ impl<T> AbstractGlobalPtr<T> {
     }
 }
 
-impl<T> Clone for AbstractGlobalPtr<T> {
+impl Clone for AbstractGlobalPtr {
     fn clone(&self) -> Self {
         match self {
             AbstractGlobalPtr::Immutable(ptr) => AbstractGlobalPtr::Immutable(ptr.clone()),

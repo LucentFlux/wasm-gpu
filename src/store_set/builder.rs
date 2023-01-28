@@ -1,5 +1,6 @@
 use crate::externs::NamedExtern;
-use crate::func::assembled_module::AssembledModule;
+use crate::func::assembled_module::{AssembledModule, BuildError};
+use crate::func::FuncAccessible;
 use crate::instance::data::{MappedDataInstance, UnmappedDataInstance};
 use crate::instance::element::{MappedElementInstance, UnmappedElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
@@ -17,7 +18,8 @@ use crate::instance::table::builder::{
 };
 use crate::instance::ModuleInstanceReferences;
 use crate::store_set::UnmappedStoreSetData;
-use crate::{DeviceStoreSet, Engine, ExternRef, Func, FuncRef, Ieee32, Ieee64, Module, Val};
+use crate::{DeviceStoreSet, ExternRef, FuncRef, Ieee32, Ieee64, Module, Val, WasmTyVec};
+use futures::future::BoxFuture;
 use perfect_derive::perfect_derive;
 use std::sync::Arc;
 use wasmparser::{Operator, ValType};
@@ -27,13 +29,15 @@ use wgpu_async::async_queue::AsyncQueue;
 use wgpu_lazybuffers::{DelayedOutOfMemoryError, LazilyUnmappable, MemorySystem};
 use wgpu_lazybuffers_macros::lazy_mappable;
 
+use super::calling::Caller;
+
 /// Used during instantiation to evaluate an expression in a single pass
 pub(crate) async fn interpret_constexpr<'data, T>(
     queue: &AsyncQueue,
     constr_expr: &Vec<Operator<'data>>,
     mutable_globals: &mut MappedMutableGlobalsInstanceBuilder,
     immutable_globals: &mut MappedImmutableGlobalsInstance,
-    global_ptrs: &Vec<AbstractGlobalPtr<T>>,
+    global_ptrs: &Vec<AbstractGlobalPtr>,
     func_ptrs: &Vec<UntypedFuncPtr<T>>,
 ) -> Result<Val, BufferAsyncError> {
     let mut stack = Vec::new();
@@ -92,6 +96,14 @@ pub(crate) async fn interpret_constexpr<'data, T>(
     return Ok(res);
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum BuilderCompleteError<T> {
+    #[error("could not map memory as gpu was out of space")]
+    OoM(DelayedOutOfMemoryError<MappedStoreSetBuilder<T>>),
+    #[error("could not build SPIR-V module")]
+    BuildError(BuildError),
+}
+
 /// Acts like a traditional OOP factory where we initialise modules into this before
 /// creating single Stores after all initialization is done, to amortize the instantiation cost
 #[lazy_mappable(MappedStoreSetBuilder)]
@@ -116,28 +128,27 @@ pub struct UnmappedStoreSetBuilder<T> {
 impl<T> MappedStoreSetBuilder<T> {
     pub fn new(memory_system: &MemorySystem) -> Self {
         Self {
-            functions: FuncsInstance::new(),
             tables: MappedTableInstanceSetBuilder::new(memory_system),
             memories: MappedMemoryInstanceSetBuilder::new(memory_system),
             immutable_globals: MappedImmutableGlobalsInstance::new(memory_system),
             mutable_globals: MappedMutableGlobalsInstanceBuilder::new(memory_system),
             elements: MappedElementInstance::new(memory_system),
             datas: MappedDataInstance::new(memory_system),
+
+            functions: FuncsInstance::new(),
         }
     }
 
     pub(crate) async fn snapshot(src: &DeviceStoreSet<T>, store_index: usize) -> Self {
         // We're doing this so you can execute a bit then load more modules, then execute some more.
         // See wizer for the idea origin.
-        todo!()
+        unimplemented!()
     }
 
     /// Instantiation within a builder moves all of the data to the device. This means that constructing
     /// stores from the builder involves no copying of data from the CPU to the GPU, only within the GPU.
     pub async fn instantiate_module(
         &mut self,
-        engine: &mut Engine,
-        memory_system: &MemorySystem,
         queue: &AsyncQueue,
         module: &Module,
         imports: Vec<NamedExtern<T>>,
@@ -145,8 +156,11 @@ impl<T> MappedStoreSetBuilder<T> {
         // Validation
         let validated_imports = module.typecheck_imports(&imports)?;
 
-        // Predict the function pointers that we *will* be creating, for ref evaluation
-        let predicted_func_ptrs = module.predict_functions(&self.functions);
+        // Function definitions, registering their locations but not their bodies
+        let func_ptrs = module.try_initialize_function_definitions(
+            &mut self.functions,
+            validated_imports.functions(),
+        )?;
 
         // Globals
         let global_ptrs = module
@@ -155,7 +169,7 @@ impl<T> MappedStoreSetBuilder<T> {
                 &mut self.mutable_globals,
                 &mut self.immutable_globals,
                 validated_imports.globals().map(|p| p.clone()),
-                &predicted_func_ptrs,
+                &func_ptrs,
             )
             .await?;
 
@@ -167,7 +181,7 @@ impl<T> MappedStoreSetBuilder<T> {
                 &mut self.mutable_globals,
                 &mut self.immutable_globals,
                 &global_ptrs,
-                &predicted_func_ptrs,
+                &func_ptrs,
             )
             .await?;
 
@@ -182,7 +196,7 @@ impl<T> MappedStoreSetBuilder<T> {
                 &mut self.mutable_globals,
                 &mut self.immutable_globals,
                 &global_ptrs,
-                &predicted_func_ptrs,
+                &func_ptrs,
             )
             .await?;
 
@@ -200,17 +214,20 @@ impl<T> MappedStoreSetBuilder<T> {
                 &mut self.mutable_globals,
                 &mut self.immutable_globals,
                 &global_ptrs,
-                &predicted_func_ptrs,
+                &func_ptrs,
             )
             .await?;
 
-        // Functions
-        let func_ptrs = module
-            .try_initialize_functions(engine, &mut self.functions, validated_imports.functions())
-            .await?;
-        if predicted_func_ptrs != func_ptrs {
-            panic!("predicted function pointers did not match later calculated pointers");
-        }
+        // Function bodies, where imports matter
+        let function_accessibles = Arc::new(FuncAccessible {
+            func_index_lookup: func_ptrs.clone(),
+            global_index_lookup: global_ptrs.clone(),
+            element_index_lookup: element_ptrs.clone(),
+            table_index_lookup: table_ptrs.clone(),
+            data_index_lookup: data_ptrs.clone(),
+            memory_index_lookup: memory_ptrs.clone(),
+        });
+        module.try_initialize_function_bodies(&mut self.functions, function_accessibles)?;
 
         // Final setup, consisting of the Start function, must be performed in the build step if it
         // calls any host functions
@@ -236,15 +253,23 @@ impl<T> MappedStoreSetBuilder<T> {
         ));
     }
 
-    pub fn register_function(&mut self, func: Func<T>) -> UntypedFuncPtr<T> {
-        return self.functions.register(func);
+    pub fn register_host_function<Params, Results, F>(&mut self, func: F) -> UntypedFuncPtr<T>
+    where
+        Params: WasmTyVec + 'static,
+        Results: WasmTyVec + Send + 'static,
+        for<'b> F: Send
+            + Sync
+            + Fn(Caller<'b, T>, Params) -> BoxFuture<'b, anyhow::Result<Results>>
+            + 'static,
+    {
+        return self.functions.register_host(func);
     }
 
     /// Takes this builder and makes it immutable, allowing instances to be created from it
     pub async fn complete(
         self,
         queue: &AsyncQueue,
-    ) -> Result<CompletedBuilder<T>, DelayedOutOfMemoryError<Self>> {
+    ) -> Result<CompletedBuilder<T>, BuilderCompleteError<T>> {
         let UnmappedStoreSetBuilder {
             tables,
             memories,
@@ -252,10 +277,15 @@ impl<T> MappedStoreSetBuilder<T> {
             elements,
             datas,
             immutable_globals,
-            functions,
-        } = self.try_unmap(queue).await?;
 
-        let assembled_module = AssembledModule::assemble(&functions);
+            functions,
+        } = self
+            .try_unmap(queue)
+            .await
+            .map_err(BuilderCompleteError::OoM)?;
+
+        let assembled_module =
+            AssembledModule::assemble(&functions).map_err(BuilderCompleteError::BuildError)?;
 
         Ok(CompletedBuilder {
             tables,
@@ -333,7 +363,7 @@ impl<T> CompletedBuilder<T> {
 #[cfg(test)]
 mod tests {
     use crate::tests_lib::{gen_test_memory_string, get_backend};
-    use crate::{block_test, imports, wasp, Config, Engine, MappedStoreSetBuilder};
+    use crate::{block_test, imports, wasp, Config, MappedStoreSetBuilder};
     use anyhow::anyhow;
     use std::sync::Arc;
     macro_rules! data_tests {
@@ -352,7 +382,7 @@ mod tests {
 
         let (expected_data, data_str) = gen_test_memory_string(size, 84637322u32);
 
-        let mut engine = Engine::new(Config::default());
+        let config = Config::default();
 
         let mut stores_builder = MappedStoreSetBuilder::<()>::new(&memory_system);
 
@@ -365,10 +395,10 @@ mod tests {
             data_str
         );
         let wat = wat.into_bytes();
-        let module = wasp::Module::new(&engine, &wat, "test_module".to_owned()).unwrap();
+        let module = wasp::Module::new(&config, &wat, "test_module".to_owned()).unwrap();
 
         let _instance = stores_builder
-            .instantiate_module(&mut engine, &memory_system, &queue, &module, imports! {})
+            .instantiate_module(&queue, &module, imports! {})
             .await
             .expect("could not instantiate all modules");
 

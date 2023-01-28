@@ -45,7 +45,7 @@ impl UnmappedTableInstanceSet {
 }
 
 impl_concrete_ptr!(
-    pub struct TablePtr<T> {
+    pub struct TablePtr {
         data...
-    } with abstract AbstractTablePtr<T>;
+    } with abstract AbstractTablePtr;
 );
