@@ -86,7 +86,7 @@ impl<'a, T> Caller<'a, T> {
 mod tests {
     use super::*;
     use crate::tests_lib::{gen_test_memory_string, get_backend};
-    use crate::{block_test, imports, Config, PanicOnAny};
+    use crate::{block_test, imports, PanicOnAny};
     use crate::{wasp, MappedStoreSetBuilder};
 
     macro_rules! backend_buffer_tests {
@@ -104,8 +104,7 @@ mod tests {
         let (memory_system, queue) = get_backend().await;
 
         let (expected_data, data_str) = gen_test_memory_string(size, 203571423u32);
-        let config = Config::default();
-        let mut stores_builder = MappedStoreSetBuilder::new(&memory_system);
+        let mut stores_builder = MappedStoreSetBuilder::new(&memory_system, Default::default());
 
         let wat = format!(
             r#"
@@ -119,7 +118,12 @@ mod tests {
             data_str
         );
         let wat = wat.into_bytes();
-        let module = wasp::Module::new(&config, &wat, "test_module".to_owned()).unwrap();
+        let module = wasp::Module::new(
+            &wasmparser::WasmFeatures::default(),
+            &wat,
+            "test_module".to_owned(),
+        )
+        .unwrap();
 
         let host_read =
             stores_builder.register_host_function(move |caller: Caller<u32>, _param: i32| {

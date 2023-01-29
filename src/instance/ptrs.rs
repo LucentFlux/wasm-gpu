@@ -18,7 +18,7 @@ macro_rules! impl_immutable_ptr {
             $($e_vis:vis $e_ident:ident : $e_type:ty),* $(,)?
         }
     ) => {
-        #[perfect_derive::perfect_derive(Clone, Hash, Eq, PartialEq, Debug)]
+        #[perfect_derive::perfect_derive(Clone, Debug)]
         #[doc="Since all stores in a concrete store_set set are instantiated from a builder, \
         this pointer actually points to a collection of locations, \
         i.e. all locations that correspond to the same logical WASM location \
@@ -50,21 +50,6 @@ macro_rules! impl_immutable_ptr {
                     &self.$e_ident
                 }
             )*
-        }
-
-        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* PartialOrd<Self> for $name$(<$($lt),*>)*
-        {
-            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                let success = match self.cap.cmp(&other.cap) {
-                    std::cmp::Ordering::Equal => match self.ptr.cmp(&other.ptr) {
-                        std::cmp::Ordering::Equal => return None,
-                        v => v,
-                    }
-                    v => v,
-                };
-
-                return Some(success)
-            }
         }
     };
 }
@@ -111,7 +96,7 @@ macro_rules! impl_concrete_ptr {
             $($e_vis:vis $e_ident:ident : $e_type:ty),* $(,)?
         } with abstract $abst:ident $(<$($at:tt),* $(,)?>)?;
     ) => {
-        #[perfect_derive::perfect_derive(Clone, Hash, Eq, PartialEq, Debug)]
+        #[perfect_derive::perfect_derive(Clone, Debug)]
         pub struct $name $(<$($lt $(: $clt $(+ $dlt)*)*),*>)*
         {
             #[doc="The abstract version of this pointer, pointing to the same place in every instance"]
@@ -132,22 +117,6 @@ macro_rules! impl_concrete_ptr {
                     &self.$e_ident
                 }
             )*
-        }
-
-        impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* PartialOrd<Self> for $name$(<$($lt),*>)*
-        {
-            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                let success = match self.src.partial_cmp(&other.src) {
-                    None => return None,
-                    Some(std::cmp::Ordering::Equal) => match self.index.cmp(&other.index) {
-                        std::cmp::Ordering::Equal => return None,
-                        v => v,
-                    }
-                    Some(v) => v,
-                };
-
-                return Some(success)
-            }
         }
 
         impl$(<$($lt $(: $clt $(+ $dlt)*)*),*>)* crate::instance::ptrs::ConcretePtr for $name $(<$($lt),*>)*

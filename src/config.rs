@@ -1,34 +1,14 @@
-use wasmparser::WasmFeatures;
-
-pub struct Tunables {}
-
-pub struct Config {
-    pub features: WasmFeatures,
-    pub tunables: Tunables,
+#[derive(Debug, Copy, Clone)]
+pub struct Tuneables {
+    /// If set to true, the translator will output f64 instructions. If false,
+    /// a polyfill will be used
+    pub hardware_supports_f64: bool,
 }
 
-impl Default for Config {
+impl Default for Tuneables {
     fn default() -> Self {
         Self {
-            features: WasmFeatures {
-                mutable_global: false,
-                saturating_float_to_int: false,
-                sign_extension: false,
-                reference_types: false,
-                multi_value: false,
-                bulk_memory: false,
-                simd: false, //TODO: Silly not to on a GPU
-                relaxed_simd: false,
-                threads: false,
-                tail_call: false,
-                deterministic_only: false,
-                multi_memory: false,
-                exceptions: false,
-                memory64: false,
-                extended_const: false,
-                component_model: false,
-            },
-            tunables: Tunables {},
+            hardware_supports_f64: false,
         }
     }
 }

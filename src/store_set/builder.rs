@@ -18,7 +18,9 @@ use crate::instance::table::builder::{
 };
 use crate::instance::ModuleInstanceReferences;
 use crate::store_set::UnmappedStoreSetData;
-use crate::{DeviceStoreSet, ExternRef, FuncRef, Ieee32, Ieee64, Module, Val, WasmTyVec};
+use crate::{
+    DeviceStoreSet, ExternRef, FuncRef, Ieee32, Ieee64, Module, Tuneables, Val, WasmTyVec,
+};
 use futures::future::BoxFuture;
 use perfect_derive::perfect_derive;
 use std::sync::Arc;
@@ -123,10 +125,11 @@ pub struct UnmappedStoreSetBuilder<T> {
     immutable_globals: UnmappedImmutableGlobalsInstance,
 
     functions: FuncsInstance<T>,
+    tuneables: Tuneables,
 }
 
 impl<T> MappedStoreSetBuilder<T> {
-    pub fn new(memory_system: &MemorySystem) -> Self {
+    pub fn new(memory_system: &MemorySystem, tuneables: Tuneables) -> Self {
         Self {
             tables: MappedTableInstanceSetBuilder::new(memory_system),
             memories: MappedMemoryInstanceSetBuilder::new(memory_system),
@@ -136,6 +139,7 @@ impl<T> MappedStoreSetBuilder<T> {
             datas: MappedDataInstance::new(memory_system),
 
             functions: FuncsInstance::new(),
+            tuneables,
         }
     }
 
@@ -253,18 +257,6 @@ impl<T> MappedStoreSetBuilder<T> {
         ));
     }
 
-    pub fn register_host_function<Params, Results, F>(&mut self, func: F) -> UntypedFuncPtr<T>
-    where
-        Params: WasmTyVec + 'static,
-        Results: WasmTyVec + Send + 'static,
-        for<'b> F: Send
-            + Sync
-            + Fn(Caller<'b, T>, Params) -> BoxFuture<'b, anyhow::Result<Results>>
-            + 'static,
-    {
-        return self.functions.register_host(func);
-    }
-
     /// Takes this builder and makes it immutable, allowing instances to be created from it
     pub async fn complete(
         self,
@@ -279,13 +271,14 @@ impl<T> MappedStoreSetBuilder<T> {
             immutable_globals,
 
             functions,
+            tuneables,
         } = self
             .try_unmap(queue)
             .await
             .map_err(BuilderCompleteError::OoM)?;
 
-        let assembled_module =
-            AssembledModule::assemble(&functions).map_err(BuilderCompleteError::BuildError)?;
+        let assembled_module = AssembledModule::assemble(&functions, &tuneables)
+            .map_err(BuilderCompleteError::BuildError)?;
 
         Ok(CompletedBuilder {
             tables,
@@ -297,6 +290,20 @@ impl<T> MappedStoreSetBuilder<T> {
             functions: Arc::new(functions),
             assembled_module: Arc::new(assembled_module),
         })
+    }
+}
+
+impl<T: 'static> MappedStoreSetBuilder<T> {
+    pub fn register_host_function<Params, Results, F>(&mut self, func: F) -> UntypedFuncPtr<T>
+    where
+        Params: WasmTyVec + 'static,
+        Results: WasmTyVec + Send + 'static,
+        for<'b> F: Send
+            + Sync
+            + Fn(Caller<'b, T>, Params) -> BoxFuture<'b, anyhow::Result<Results>>
+            + 'static,
+    {
+        return self.functions.register_host(func);
     }
 }
 
@@ -316,6 +323,14 @@ pub struct CompletedBuilder<T> {
 }
 
 impl<T> CompletedBuilder<T> {
+    pub fn get_module(&self) -> &naga::Module {
+        self.assembled_module.get_module()
+    }
+
+    pub fn get_module_info(&self) -> &naga::valid::ModuleInfo {
+        self.assembled_module.get_module_info()
+    }
+
     /// Takes the instructions provided to this builder and produces a collection of stores which can
     /// be used to evaluate instructions. W take all of the initialisation that we did that can be shared and
     /// spin it into several instances. This shouldn't involve moving any data to the device, instead data
@@ -363,7 +378,7 @@ impl<T> CompletedBuilder<T> {
 #[cfg(test)]
 mod tests {
     use crate::tests_lib::{gen_test_memory_string, get_backend};
-    use crate::{block_test, imports, wasp, Config, MappedStoreSetBuilder};
+    use crate::{block_test, imports, wasp, MappedStoreSetBuilder};
     use anyhow::anyhow;
     use std::sync::Arc;
     macro_rules! data_tests {
@@ -381,10 +396,8 @@ mod tests {
         let (memory_system, queue) = get_backend().await;
 
         let (expected_data, data_str) = gen_test_memory_string(size, 84637322u32);
-
-        let config = Config::default();
-
-        let mut stores_builder = MappedStoreSetBuilder::<()>::new(&memory_system);
+        let mut stores_builder =
+            MappedStoreSetBuilder::<()>::new(&memory_system, Default::default());
 
         let wat = format!(
             r#"
@@ -395,7 +408,12 @@ mod tests {
             data_str
         );
         let wat = wat.into_bytes();
-        let module = wasp::Module::new(&config, &wat, "test_module".to_owned()).unwrap();
+        let module = wasp::Module::new(
+            &wasmparser::WasmFeatures::default(),
+            &wat,
+            "test_module".to_owned(),
+        )
+        .unwrap();
 
         let _instance = stores_builder
             .instantiate_module(&queue, &module, imports! {})

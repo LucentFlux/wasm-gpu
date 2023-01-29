@@ -6,7 +6,8 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 use wasm_spirv::wasp::externs::NamedExtern;
 use wasm_spirv::{
-    wasp, Config, Ieee32, Ieee64, MappedStoreSetBuilder, ModuleInstanceReferences, Val,
+    wasp, Ieee32, Ieee64, MappedStoreSetBuilder, ModuleInstanceReferences, Tuneables, Val,
+    WasmFeatures,
 };
 use wast::core::{HeapType, NanPattern, V128Pattern, WastRetCore};
 use wast::lexer::Lexer;
@@ -62,7 +63,7 @@ pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
 struct WastState {
     memory_system: MemorySystem,
     queue: AsyncQueue,
-    config: Config,
+    features: WasmFeatures,
     store_builder: Option<MappedStoreSetBuilder<()>>, // Taken when invoking
     named_modules: HashMap<String, Arc<ModuleInstanceReferences<()>>>,
     latest_module: Option<Arc<ModuleInstanceReferences<()>>>,
@@ -76,11 +77,32 @@ impl WastState {
         let (memory_system, queue) = get_backend().await;
 
         Self {
-            store_builder: Some(MappedStoreSetBuilder::new(&memory_system)),
+            store_builder: Some(MappedStoreSetBuilder::new(
+                &memory_system,
+                Tuneables::default(),
+            )),
             named_modules: HashMap::new(),
             latest_module: None,
             imports: Vec::new(),
-            config: Config::default(),
+            features: WasmFeatures {
+                mutable_global: true,
+                saturating_float_to_int: true,
+                sign_extension: true,
+                reference_types: true,
+                multi_value: true,
+                bulk_memory: true,
+                simd: true,
+                relaxed_simd: true,
+                threads: true,
+                tail_call: true,
+                multi_memory: true,
+                exceptions: true,
+                memory64: true,
+                extended_const: true,
+                component_model: true,
+
+                deterministic_only: false,
+            },
             memory_system,
             queue,
         }
@@ -90,7 +112,7 @@ impl WastState {
         let bytes = quote_wast
             .encode()
             .expect(&format!("could not encode expected module at {:?}", span));
-        let module = wasp::Module::new(&self.config, &bytes, name)
+        let module = wasp::Module::new(&self.features, &bytes, name)
             .expect(&format!("could not parse module byes at {:?}", span));
         let instance = self
             .store_builder
@@ -304,7 +326,7 @@ async fn test_assert_malformed_or_invalid(
         Err(_) => return, // Failure to encode is fine if malformed
     };
 
-    let module = wasp::Module::new(&state.config, &bytes, "test_module".to_owned());
+    let module = wasp::Module::new(&state.features, &bytes, "test_module".to_owned());
 
     let module = match module {
         Err(_) => return, // We want this to fail

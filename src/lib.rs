@@ -26,8 +26,9 @@ pub mod wasp {
     // Utilities
     pub use panic_on_any::PanicOnAny;
 
-    // Engine
-    pub use config::Config;
+    // Configs
+    pub use config::Tuneables;
+    pub use wasmparser::WasmFeatures;
     // Module
     pub use module::Module;
     // Externs

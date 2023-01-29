@@ -4,7 +4,40 @@ This module deals with representing web assembly functions as naga IR. This naga
 
 Unfortunately, SPIR-V (and by extension naga) have some requirements on functions that make this mapping difficult. Mainly, GPUs do not support recursion and the call graph of a shader must be a DAG.
 
-To accommodate this, we do not convert always wasm functions to naga functions one-to-one. When a loop is found in the call graph, we instead simulate a stack in a main brain function, which calls out to portions of translated wasm code. These child functions do not themselves call other child functions; they instead modify the stack in a way that causes the brain function to call the other child functions. We call this construction, for some co-dependent wasm functions, the functions' WASM-Machine.
+To accommodate this, we do not convert always wasm functions to naga functions one-to-one. When a loop is found in the call graph, we instead simulate a stack in a main brain function, which calls out to portions of translated wasm code. These child functions do not themselves call other child functions; they instead modify the stack in a way that causes the brain function to call the other child functions. We call this construction a WASM-Machine.
+
+This brain function must be the entry point for every invocation that wishes to recurse, so that any function call can call another function (without a direct call in the call graph) by returning down to the brain function. However most functions would suffer from the overhead of this construction -- especially on a GPU, where the fragmentation of a warp would lead to huge performance hits. Therefore we duplicate every function, and construct both a 'regular' and a 'stack machine' variant.
+
+This duplication, combined with a total order on the functions calculated from the direct call graph, allows a compile-time cycle-free version of the module to be generated, where non-recursive code is translated as expected but recursive code can be called into.
+
+```
+         ┌─────────────┐      ┌──────────────────┐      ┌─────────────┐
+         │             │      │                  │      │             │
+         │  Function1  │      │                  ├─────►│  Function1  │
+         │             │      │                  │      │             │
+         └──────┬──────┘      │                  │      └────┬────────┘
+Calling 'down'  │             │                  │           : ▲ Pseudo-calling through
+the total order ▼             │                  │           ▼ : the brain method
+         ┌─────────────┐      │                  │      ┌──────┴──────┐
+         │             │      │                  │      │             │
+         │  Function2  ├─────►│                  ├─────►│  Function2  │
+         │             │      │                  │      │             │
+         └─────────────┘      │                  │      └─────────────┘
+                              │   Brain Method   │             ▲
+                              │                  │             :
+         ┌─────────────┐      │                  │      ┌──────┴──────┐
+         │             │      │                  │      │             │
+         │  Function3  ├─────►│                  ├─────►│  Function3  │
+         │             │      │                  │      │             │
+         └──────┬──────┘      │                  │      └────┬────────┘
+                │             │                  │           : ▲
+                ▼             │                  │           ▼ :
+         ┌─────────────┐      │                  │      ┌──────┴──────┐
+         │             │      │                  │      │             │
+         │  Function4  ├─────►│                  ├─────►│  Function4  │
+         │             │      │                  │      │             │
+         └─────────────┘      └──────────────────┘      └─────────────┘
+```
 
 ## Child functions
 
@@ -19,3 +52,6 @@ The stack consists of 32-bit words, and grows upwards within the stack buffer. T
 ## Host functions
 
 Only the first 2^31 values of BID space are reserved for BIDs of blocks generated from WASM. The other 2^31 values (with the MSB set) are reserved for host functions, so that exiting the shader (virtaul machine) early allows the engine to notice a non-empty stack (non-zero stack pointer) and execute some host function before restarting.
+
+## Resuming
+

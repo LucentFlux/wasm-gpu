@@ -16,7 +16,6 @@ use crate::module::module_environ::{
 };
 use crate::store_set::builder::interpret_constexpr;
 use crate::typed::{wasm_ty_bytes, FuncRef, Val};
-use crate::Config;
 use anyhow::{anyhow, Context, Error};
 use itertools::Itertools;
 use std::borrow::Cow;
@@ -56,8 +55,11 @@ impl<T> ValidatedImports<T> {
 }
 
 impl Module {
-    fn parse(config: &Config, wasm: Vec<u8>) -> Result<ParsedModuleUnit, Error> {
-        let validator = Validator::new_with_features(config.features.clone());
+    fn parse(
+        features: &wasmparser::WasmFeatures,
+        wasm: Vec<u8>,
+    ) -> Result<ParsedModuleUnit, Error> {
+        let validator = Validator::new_with_features(features.clone());
         let parser = wasmparser::Parser::new(0);
         let parsed = ModuleEnviron::new(validator)
             .translate(parser, wasm)
@@ -67,7 +69,7 @@ impl Module {
     }
 
     pub fn new<'a>(
-        config: &Config,
+        features: &wasmparser::WasmFeatures,
         bytes: impl IntoIterator<Item = &'a u8>,
         name: String,
     ) -> Result<Self, Error> {
@@ -75,7 +77,7 @@ impl Module {
         let wasm: Cow<'_, [u8]> = wat::parse_bytes(wasm.as_slice())?;
         let wasm = wasm.to_vec();
 
-        let parsed = Self::parse(&config, wasm)?;
+        let parsed = Self::parse(features, wasm)?;
 
         return Ok(Self { parsed, name });
     }
@@ -447,6 +449,7 @@ impl Module {
             .collect_vec();
 
         let sections = self.parsed.borrow_sections();
+        functions.reserve(sections.functions.len());
         let mut new_ptrs = sections
             .functions
             .iter()
