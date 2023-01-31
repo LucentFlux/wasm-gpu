@@ -8,21 +8,21 @@ use perfect_derive::perfect_derive;
 use wasmparser::{FuncType, GlobalType, TableType};
 
 #[perfect_derive(Clone)]
-pub struct NamedExtern<T> {
+pub struct NamedExtern {
     pub module: String,
     pub name: String,
-    pub ext: Extern<T>,
+    pub ext: Extern,
 }
 
 #[derive(Debug)]
-pub enum Extern<T> {
-    Func(UntypedFuncPtr<T>),
+pub enum Extern {
+    Func(UntypedFuncPtr),
     Global(AbstractGlobalPtr),
     Table(AbstractTablePtr),
     Memory(AbstractMemoryPtr),
 }
 
-impl<T> Extern<T> {
+impl Extern {
     pub fn signature(&self) -> String {
         match self {
             Extern::Func(f) => {
@@ -52,7 +52,7 @@ impl<T> Extern<T> {
     }
 }
 
-impl<T> Clone for Extern<T> {
+impl Clone for Extern {
     fn clone(&self) -> Self {
         match self {
             Self::Func(f) => Self::Func(f.clone()),
@@ -63,35 +63,35 @@ impl<T> Clone for Extern<T> {
     }
 }
 
-impl<T> From<UntypedFuncPtr<T>> for Extern<T> {
-    fn from(f: UntypedFuncPtr<T>) -> Self {
+impl From<UntypedFuncPtr> for Extern {
+    fn from(f: UntypedFuncPtr) -> Self {
         Self::Func(f)
     }
 }
 
-impl<T, Params, Results> From<TypedFuncPtr<T, Params, Results>> for Extern<T>
+impl<Params, Results> From<TypedFuncPtr<Params, Results>> for Extern
 where
     Params: WasmTyVec,
     Results: WasmTyVec,
 {
-    fn from(f: TypedFuncPtr<T, Params, Results>) -> Self {
+    fn from(f: TypedFuncPtr<Params, Results>) -> Self {
         Self::Func(f.as_untyped().clone())
     }
 }
 
-impl<T> From<AbstractMemoryPtr> for Extern<T> {
+impl From<AbstractMemoryPtr> for Extern {
     fn from(m: AbstractMemoryPtr) -> Self {
         Self::Memory(m)
     }
 }
 
-impl<T> From<AbstractGlobalPtr> for Extern<T> {
+impl From<AbstractGlobalPtr> for Extern {
     fn from(g: AbstractGlobalPtr) -> Self {
         Self::Global(g)
     }
 }
 
-impl<T> From<AbstractTablePtr> for Extern<T> {
+impl From<AbstractTablePtr> for Extern {
     fn from(t: AbstractTablePtr) -> Self {
         Self::Table(t)
     }

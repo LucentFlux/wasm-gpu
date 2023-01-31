@@ -12,15 +12,15 @@ pub struct SessionProperties {
 /// benefit of this library comes from SIMD, so a session aims to track the execution progress
 /// of a collection of commands and schedule them in batches. This comes with some heuristics,
 /// which can be adjusted through SessionProperties objects.
-pub struct Session<'a, T> {
-    stores: &'a mut DeviceStoreSet<T>,
-    tasks: Vec<(UntypedFuncPtr<T>, Vec<Val>)>,
+pub struct Session<'a> {
+    stores: &'a mut DeviceStoreSet,
+    tasks: Vec<(UntypedFuncPtr, Vec<Val>)>,
 }
 
-impl<'a, T> Session<'a, T> {
+impl<'a> Session<'a> {
     pub fn new(
-        stores: &'a mut DeviceStoreSet<T>,
-        entry_func: UntypedFuncPtr<T>, // We want to enter at the same point
+        stores: &'a mut DeviceStoreSet,
+        entry_func: UntypedFuncPtr, // We want to enter at the same point
         args: Vec<Vec<Val>>,
     ) -> Self {
         let tasks = args.into_iter().map(|s| (entry_func.clone(), s)).collect();

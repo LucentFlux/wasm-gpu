@@ -64,10 +64,10 @@ struct WastState {
     memory_system: MemorySystem,
     queue: AsyncQueue,
     features: WasmFeatures,
-    store_builder: Option<MappedStoreSetBuilder<()>>, // Taken when invoking
-    named_modules: HashMap<String, Arc<ModuleInstanceReferences<()>>>,
-    latest_module: Option<Arc<ModuleInstanceReferences<()>>>,
-    imports: Vec<NamedExtern<()>>,
+    store_builder: Option<MappedStoreSetBuilder>, // Taken when invoking
+    named_modules: HashMap<String, Arc<ModuleInstanceReferences>>,
+    latest_module: Option<Arc<ModuleInstanceReferences>>,
+    imports: Vec<NamedExtern>,
 }
 
 const INSTANCE_COUNT: usize = 8;
@@ -195,7 +195,7 @@ impl WastState {
             .await
             .unwrap();
         let mut instances = completed
-            .build(&self.memory_system, &self.queue, vec![(); INSTANCE_COUNT])
+            .build(&self.memory_system, &self.queue, INSTANCE_COUNT)
             .await
             .unwrap();
 

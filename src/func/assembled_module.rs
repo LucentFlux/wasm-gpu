@@ -32,8 +32,8 @@ impl AssembledModule {
             .expect("internal compile error in wasm-spirv")
     }
 
-    pub(crate) fn assemble<T>(
-        functions: &FuncsInstance<T>,
+    pub(crate) fn assemble(
+        functions: &FuncsInstance,
         tuneables: &Tuneables,
     ) -> Result<AssembledModule, BuildError> {
         let module = naga::Module::default();

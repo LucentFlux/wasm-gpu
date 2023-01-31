@@ -24,6 +24,7 @@ pub mod wasp {
     use super::*;
 
     // Utilities
+    pub use super::imports;
     pub use panic_on_any::PanicOnAny;
 
     // Configs

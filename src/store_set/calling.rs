@@ -31,28 +31,26 @@ impl<'a> ActiveMemoryView<'a> {
 
 /// B is the backend type,
 /// T is the data associated with the store_set
-pub struct Caller<'a, T> {
+pub struct Caller<'a> {
     // Decomposed store
-    data: &'a mut Vec<T>,
     memory: &'a mut MappedMemoryInstanceSet,
 
     // Info into store data
     index: usize,
-    instance: &'a ModuleInstanceReferences<T>,
+    instance: &'a ModuleInstanceReferences,
 
     // Action data
     queue: &'a AsyncQueue,
 }
 
-impl<'a, T> Caller<'a, T> {
+impl<'a> Caller<'a> {
     pub fn new(
-        stores: &'a mut HostStoreSet<T>,
+        stores: &'a mut HostStoreSet,
         index: usize,
-        instance: &'a ModuleInstanceReferences<T>,
+        instance: &'a ModuleInstanceReferences,
         queue: &'a AsyncQueue,
     ) -> Self {
         Self {
-            data: &mut stores.data,
             memory: &mut stores.owned.memories,
 
             index,
@@ -60,14 +58,6 @@ impl<'a, T> Caller<'a, T> {
 
             queue,
         }
-    }
-
-    pub fn data(&self) -> &T {
-        return self.data.get(self.index).unwrap();
-    }
-
-    pub fn data_mut(&mut self) -> &mut T {
-        return self.data.get_mut(self.index).unwrap();
     }
 
     pub async fn get_memory<'b>(&'b self, name: &str) -> Option<ActiveMemoryView<'b>> {

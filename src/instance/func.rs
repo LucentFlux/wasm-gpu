@@ -10,12 +10,12 @@ use itertools::Itertools;
 use perfect_derive::perfect_derive;
 
 #[perfect_derive(Debug)]
-pub struct FuncsInstance<T> {
-    wasm_functions: Vec<FuncUnit<T>>,
+pub struct FuncsInstance {
+    wasm_functions: Vec<FuncUnit>,
     cap_set: CapabilityStore,
 }
 
-impl<T> FuncsInstance<T> {
+impl FuncsInstance {
     pub fn new() -> Self {
         Self {
             wasm_functions: Vec::new(),
@@ -28,7 +28,7 @@ impl<T> FuncsInstance<T> {
         self.cap_set = self.cap_set.resize_ref(self.wasm_functions.capacity())
     }
 
-    pub fn register_definition(&mut self, func_data: FuncData) -> UntypedFuncPtr<T> {
+    pub fn register_definition(&mut self, func_data: FuncData) -> UntypedFuncPtr {
         let ptr = self.wasm_functions.len();
         let ty = func_data.ty.clone();
         self.wasm_functions
@@ -42,11 +42,7 @@ impl<T> FuncsInstance<T> {
         return UntypedFuncPtr::new(ptr, self.cap_set.get_cap(), ty);
     }
 
-    pub fn link_function_imports(
-        &mut self,
-        ptr: &UntypedFuncPtr<T>,
-        accessible: Arc<FuncAccessible<T>>,
-    ) {
+    pub fn link_function_imports(&mut self, ptr: &UntypedFuncPtr, accessible: Arc<FuncAccessible>) {
         assert!(self.cap_set.check(&ptr.cap));
 
         let instance = self
@@ -59,7 +55,7 @@ impl<T> FuncsInstance<T> {
         }
     }
 
-    pub fn all_ptrs(&self) -> Vec<UntypedFuncPtr<T>> {
+    pub fn all_ptrs(&self) -> Vec<UntypedFuncPtr> {
         self.wasm_functions
             .iter()
             .enumerate()
@@ -72,7 +68,7 @@ impl<T> FuncsInstance<T> {
             .collect_vec()
     }
 
-    pub fn get(&self, ptr: &UntypedFuncPtr<T>) -> &FuncUnit<T> {
+    pub fn get(&self, ptr: &UntypedFuncPtr) -> &FuncUnit {
         assert!(self.cap_set.check(&ptr.cap));
 
         self.wasm_functions
@@ -82,20 +78,20 @@ impl<T> FuncsInstance<T> {
 }
 
 impl_immutable_ptr!(
-pub struct UntypedFuncPtr<T> {
-        data...
+pub struct UntypedFuncPtr {
+    data...
     ty: wasmparser::FuncType,
 }
 );
 
-impl<T> UntypedFuncPtr<T> {
+impl UntypedFuncPtr {
     pub fn to_func_ref(&self) -> FuncRef {
         FuncRef::from_u32(self.ptr as u32)
     }
 
     pub fn try_typed<Params: WasmTyVec, Results: WasmTyVec>(
         self,
-    ) -> anyhow::Result<TypedFuncPtr<T, Params, Results>> {
+    ) -> anyhow::Result<TypedFuncPtr<Params, Results>> {
         if !Params::VAL_TYPES.eq(self.ty.params()) {
             return Err(anyhow::anyhow!(
                 "function pointer parameters were not the correct type, expected {:?} but got {:?}",
@@ -113,16 +109,17 @@ impl<T> UntypedFuncPtr<T> {
         Ok(TypedFuncPtr::new(self.ptr, self.cap, self.ty))
     }
 
-    pub fn typed<Params: WasmTyVec, Results: WasmTyVec>(self) -> TypedFuncPtr<T, Params, Results> {
+    pub fn typed<Params: WasmTyVec, Results: WasmTyVec>(self) -> TypedFuncPtr<Params, Results> {
         self.try_typed().unwrap()
     }
 
     /// # Panics
     /// This function panics if:
-    ///  - the function pointer does not refer to a store set that the function is in
+    ///  - this function is not in the given store set
+    ///  - the arguments given don't match the arguments that the function takes
     pub fn call_all<'a>(
         &self,
-        stores: &'a mut DeviceStoreSet<T>,
+        stores: &'a mut DeviceStoreSet,
         args: impl IntoIterator<Item = Vec<Val>>,
     ) -> BoxFuture<'a, Vec<anyhow::Result<Vec<Val>>>> {
         let args = args.into_iter().collect();
@@ -134,23 +131,23 @@ impl<T> UntypedFuncPtr<T> {
 
 // Typed function pointers should have their types checked before construction
 impl_immutable_ptr!(
-pub struct TypedFuncPtr<T, Params: WasmTyVec, Results: WasmTyVec> {
-        data...
-        ty: wasmparser::FuncType,
+pub struct TypedFuncPtr<Params: WasmTyVec, Results: WasmTyVec> {
+    data...
+    ty: wasmparser::FuncType,
 }
 );
 
-impl<T, Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<T, Params, Results> {
-    pub fn as_untyped(&self) -> UntypedFuncPtr<T> {
+impl<Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<Params, Results> {
+    pub fn as_untyped(&self) -> UntypedFuncPtr {
         UntypedFuncPtr::new(self.ptr, self.cap, self.ty.clone())
     }
 
     /// # Panics
     /// This function panics if:
-    ///  - the function pointer does not refer to the store_set set
+    ///  - this function is not in the given store set
     pub fn call_all<'a>(
         &self,
-        stores: &'a mut DeviceStoreSet<T>,
+        stores: &'a mut DeviceStoreSet,
         args: impl IntoIterator<Item = Params>,
     ) -> BoxFuture<'a, Vec<anyhow::Result<Results>>> {
         let args = args.into_iter().map(|v| v.to_val_vec()).collect();

@@ -32,15 +32,15 @@ pub struct Module {
     name: String,
 }
 
-pub struct ValidatedImports<T> {
-    functions: Vec<UntypedFuncPtr<T>>,
+pub struct ValidatedImports {
+    functions: Vec<UntypedFuncPtr>,
     globals: Vec<AbstractGlobalPtr>,
     tables: Vec<AbstractTablePtr>,
     memories: Vec<AbstractMemoryPtr>,
 }
 
-impl<T> ValidatedImports<T> {
-    pub fn functions(&self) -> Iter<UntypedFuncPtr<T>> {
+impl ValidatedImports {
+    pub fn functions(&self) -> Iter<UntypedFuncPtr> {
         self.functions.iter()
     }
     pub fn globals(&self) -> Iter<AbstractGlobalPtr> {
@@ -84,10 +84,10 @@ impl Module {
 
     /// See 4.5.4 of WASM spec 2.0
     /// Performs 1-4
-    pub fn typecheck_imports<T>(
+    pub fn typecheck_imports(
         &self,
-        provided_imports: &Vec<NamedExtern<T>>,
-    ) -> anyhow::Result<ValidatedImports<T>> {
+        provided_imports: &Vec<NamedExtern>,
+    ) -> anyhow::Result<ValidatedImports> {
         // 1, 2. ASSERT module is valid, done in Module construction
 
         // 3. Import count matches required imports
@@ -95,7 +95,7 @@ impl Module {
 
         // 4. Match imports
         // First link on names
-        let import_by_name: HashMap<(String, String), Extern<T>> = provided_imports
+        let import_by_name: HashMap<(String, String), Extern> = provided_imports
             .into_iter()
             .map(|ext| {
                 let NamedExtern { module, name, ext } = ext;
@@ -159,13 +159,13 @@ impl Module {
 
     /// Extends a globals memory buffer and indirection buffer to fit the globals contained in this
     /// module, then writes the initial values
-    pub(crate) async fn try_initialize_globals<T>(
+    pub(crate) async fn try_initialize_globals(
         &self,
         queue: &AsyncQueue,
         mutable_globals_instance: &mut MappedMutableGlobalsInstanceBuilder,
         immutable_globals_instance: &mut MappedImmutableGlobalsInstance,
         global_imports: impl Iterator<Item = AbstractGlobalPtr>,
-        module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
+        module_func_ptrs: &Vec<UntypedFuncPtr>,
     ) -> Result<Vec<AbstractGlobalPtr>, BufferAsyncError> {
         // Calculate space requirements
         let (immutables, mutables): (Vec<_>, Vec<_>) = self
@@ -214,7 +214,7 @@ impl Module {
     }
 
     /// Extends elements buffers to be shared by all stores of a set, as passive elements are immutable
-    pub(crate) async fn try_initialize_elements<T>(
+    pub(crate) async fn try_initialize_elements(
         &self,
         queue: &AsyncQueue,
         elements: &mut MappedElementInstance,
@@ -222,7 +222,7 @@ impl Module {
         module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder,
         module_immutable_globals: &mut MappedImmutableGlobalsInstance,
         module_global_ptrs: &Vec<AbstractGlobalPtr>,
-        module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
+        module_func_ptrs: &Vec<UntypedFuncPtr>,
     ) -> Result<Vec<ElementPtr>, BufferAsyncError> {
         // Reserve space first
         let size: usize = std::mem::size_of::<FuncRef>()
@@ -267,7 +267,7 @@ impl Module {
         return Ok(ptrs);
     }
 
-    pub(crate) async fn try_initialize_tables<'a, T: 'a>(
+    pub(crate) async fn try_initialize_tables<'a>(
         &'a self,
         queue: &AsyncQueue,
         tables: &mut MappedTableInstanceSetBuilder,
@@ -278,7 +278,7 @@ impl Module {
         module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder,
         module_immutable_globals: &mut MappedImmutableGlobalsInstance,
         module_global_ptrs: &Vec<AbstractGlobalPtr>,
-        module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
+        module_func_ptrs: &Vec<UntypedFuncPtr>,
     ) -> Result<Vec<AbstractTablePtr>, BufferAsyncError> {
         // Pointers starts with imports
         let mut ptrs = imported_tables
@@ -364,7 +364,7 @@ impl Module {
         return Ok(ptrs);
     }
 
-    pub(crate) async fn try_initialize_memories<'a, T: 'a>(
+    pub(crate) async fn try_initialize_memories<'a>(
         &'a self,
         queue: &AsyncQueue,
         memory_set: &mut MappedMemoryInstanceSetBuilder,
@@ -375,7 +375,7 @@ impl Module {
         module_mutable_globals: &mut MappedMutableGlobalsInstanceBuilder,
         module_immutable_globals: &mut MappedImmutableGlobalsInstance,
         module_global_ptrs: &Vec<AbstractGlobalPtr>,
-        module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
+        module_func_ptrs: &Vec<UntypedFuncPtr>,
     ) -> Result<Vec<AbstractMemoryPtr>, BufferAsyncError> {
         // Pointers starts with imports
         let mut ptrs = imported_memories
@@ -438,11 +438,11 @@ impl Module {
         return Ok(ptrs);
     }
 
-    pub(crate) fn try_initialize_function_definitions<'a, T: 'a>(
+    pub(crate) fn try_initialize_function_definitions<'a>(
         &'a self,
-        functions: &mut FuncsInstance<T>,
-        func_imports: impl IntoIterator<Item = &'a UntypedFuncPtr<T>>,
-    ) -> anyhow::Result<Vec<UntypedFuncPtr<T>>> {
+        functions: &mut FuncsInstance,
+        func_imports: impl IntoIterator<Item = &'a UntypedFuncPtr>,
+    ) -> anyhow::Result<Vec<UntypedFuncPtr>> {
         let mut ptrs = func_imports
             .into_iter()
             .map(UntypedFuncPtr::clone)
@@ -479,7 +479,7 @@ impl Module {
     }
 
     /// Checks that the types of the given pointers match the expected pointers of the imports + definitions of this module.
-    fn debug_typecheck_func_ptrs<T>(&self, func_ptrs: &Vec<UntypedFuncPtr<T>>) {
+    fn debug_typecheck_func_ptrs(&self, func_ptrs: &Vec<UntypedFuncPtr>) {
         let sections = self.parsed.borrow_sections();
 
         let required_imported_functions = sections
@@ -626,10 +626,10 @@ impl Module {
     }
 
     /// Takes everything accessable by this module and resolve all function body references
-    pub(crate) fn try_initialize_function_bodies<'a, T: 'a>(
+    pub(crate) fn try_initialize_function_bodies<'a>(
         &'a self,
-        functions: &mut FuncsInstance<T>,
-        accessible: Arc<FuncAccessible<T>>,
+        functions: &mut FuncsInstance,
+        accessible: Arc<FuncAccessible>,
     ) -> anyhow::Result<()> {
         // Check that the data we've been given for the initialisation of this module makes sense.
         // This is a debug check to ensure everything has been implemented properly by us. This method
@@ -655,10 +655,7 @@ impl Module {
         return Ok(());
     }
 
-    pub fn start_fn<T>(
-        &self,
-        module_func_ptrs: &Vec<UntypedFuncPtr<T>>,
-    ) -> Option<UntypedFuncPtr<T>> {
+    pub fn start_fn(&self, module_func_ptrs: &Vec<UntypedFuncPtr>) -> Option<UntypedFuncPtr> {
         match self.parsed.borrow_sections().start_func {
             None => None,
             Some(i) => {

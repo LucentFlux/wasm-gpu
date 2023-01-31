@@ -29,13 +29,13 @@ use wgpu_lazybuffers::{DelayedOutOfMemoryError, LazilyUnmappable, MemorySystem};
 use wgpu_lazybuffers_macros::lazy_mappable;
 
 /// Used during instantiation to evaluate an expression in a single pass
-pub(crate) async fn interpret_constexpr<'data, T>(
+pub(crate) async fn interpret_constexpr<'data>(
     queue: &AsyncQueue,
     constr_expr: &Vec<Operator<'data>>,
     mutable_globals: &mut MappedMutableGlobalsInstanceBuilder,
     immutable_globals: &mut MappedImmutableGlobalsInstance,
     global_ptrs: &Vec<AbstractGlobalPtr>,
-    func_ptrs: &Vec<UntypedFuncPtr<T>>,
+    func_ptrs: &Vec<UntypedFuncPtr>,
 ) -> Result<Val, BufferAsyncError> {
     let mut stack = Vec::new();
 
@@ -94,9 +94,9 @@ pub(crate) async fn interpret_constexpr<'data, T>(
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum BuilderCompleteError<T> {
+pub enum BuilderCompleteError {
     #[error("could not map memory as gpu was out of space")]
-    OoM(DelayedOutOfMemoryError<MappedStoreSetBuilder<T>>),
+    OoM(DelayedOutOfMemoryError<MappedStoreSetBuilder>),
     #[error("could not build SPIR-V module")]
     BuildError(BuildError),
 }
@@ -105,7 +105,7 @@ pub enum BuilderCompleteError<T> {
 /// creating single Stores after all initialization is done, to amortize the instantiation cost
 #[lazy_mappable(MappedStoreSetBuilder)]
 #[perfect_derive(Debug)]
-pub struct UnmappedStoreSetBuilder<T> {
+pub struct UnmappedStoreSetBuilder {
     #[map(MappedTableInstanceSetBuilder)]
     tables: UnmappedTableInstanceSetBuilder,
     #[map(MappedMemoryInstanceSetBuilder)]
@@ -119,11 +119,11 @@ pub struct UnmappedStoreSetBuilder<T> {
     #[map(MappedImmutableGlobalsInstance)]
     immutable_globals: UnmappedImmutableGlobalsInstance,
 
-    functions: FuncsInstance<T>,
+    functions: FuncsInstance,
     tuneables: Tuneables,
 }
 
-impl<T> MappedStoreSetBuilder<T> {
+impl MappedStoreSetBuilder {
     pub fn new(memory_system: &MemorySystem, tuneables: Tuneables) -> Self {
         Self {
             tables: MappedTableInstanceSetBuilder::new(memory_system),
@@ -138,7 +138,7 @@ impl<T> MappedStoreSetBuilder<T> {
         }
     }
 
-    pub(crate) async fn snapshot(src: &DeviceStoreSet<T>, store_index: usize) -> Self {
+    pub(crate) async fn snapshot(src: &DeviceStoreSet, store_index: usize) -> Self {
         // We're doing this so you can execute a bit then load more modules, then execute some more.
         // See wizer for the idea origin.
         unimplemented!()
@@ -150,8 +150,8 @@ impl<T> MappedStoreSetBuilder<T> {
         &mut self,
         queue: &AsyncQueue,
         module: &Module,
-        imports: Vec<NamedExtern<T>>,
-    ) -> anyhow::Result<ModuleInstanceReferences<T>> {
+        imports: Vec<NamedExtern>,
+    ) -> anyhow::Result<ModuleInstanceReferences> {
         // Validation
         let validated_imports = module.typecheck_imports(&imports)?;
 
@@ -256,7 +256,7 @@ impl<T> MappedStoreSetBuilder<T> {
     pub async fn complete(
         self,
         queue: &AsyncQueue,
-    ) -> Result<CompletedBuilder<T>, BuilderCompleteError<T>> {
+    ) -> Result<CompletedBuilder, BuilderCompleteError> {
         let UnmappedStoreSetBuilder {
             tables,
             memories,
@@ -288,14 +288,14 @@ impl<T> MappedStoreSetBuilder<T> {
     }
 }
 
-pub struct CompletedBuilder<T> {
+pub struct CompletedBuilder {
     tables: UnmappedTableInstanceSetBuilder,
     memories: UnmappedMemoryInstanceSetBuilder,
     mutable_globals: UnmappedMutableGlobalsInstanceBuilder,
     immutable_globals: Arc<UnmappedImmutableGlobalsInstance>,
     elements: Arc<UnmappedElementInstance>,
     datas: Arc<UnmappedDataInstance>,
-    functions: Arc<FuncsInstance<T>>,
+    functions: Arc<FuncsInstance>,
 
     /// We build the actual spir-v at builder completion, then copy it out to all store sets as they're
     /// instantiated. However all the information for the module can be rebuilt from the above data, so
@@ -303,7 +303,7 @@ pub struct CompletedBuilder<T> {
     assembled_module: Arc<AssembledModule>,
 }
 
-impl<T> CompletedBuilder<T> {
+impl CompletedBuilder {
     pub fn get_module(&self) -> &naga::Module {
         self.assembled_module.get_module()
     }
@@ -313,7 +313,7 @@ impl<T> CompletedBuilder<T> {
     }
 
     /// Takes the instructions provided to this builder and produces a collection of stores which can
-    /// be used to evaluate instructions. W take all of the initialisation that we did that can be shared and
+    /// be used to evaluate instructions. We take all of the initialisation that we did that can be shared and
     /// spin it into several instances. This shouldn't involve moving any data to the device, instead data
     /// that has already been provided to the device should be cloned and specialised as needed for a
     /// collection of instances.
@@ -321,27 +321,18 @@ impl<T> CompletedBuilder<T> {
         &self,
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
-        values: impl IntoIterator<Item = T>,
-    ) -> Result<DeviceStoreSet<T>, OutOfMemoryError> {
-        let data: Vec<_> = values.into_iter().collect();
+        count: usize,
+    ) -> Result<DeviceStoreSet, OutOfMemoryError> {
+        let tables = self.tables.try_build(memory_system, queue, count).await?;
 
-        let tables = self
-            .tables
-            .try_build(memory_system, queue, data.len())
-            .await?;
-
-        let memories = self
-            .memories
-            .try_build(memory_system, queue, data.len())
-            .await?;
+        let memories = self.memories.try_build(memory_system, queue, count).await?;
 
         let mutable_globals = self
             .mutable_globals
-            .try_build(memory_system, queue, data.len())
+            .try_build(memory_system, queue, count)
             .await?;
 
         Ok(DeviceStoreSet {
-            data,
             functions: self.functions.clone(),
             elements: self.elements.clone(),
             datas: self.datas.clone(),
@@ -377,8 +368,7 @@ mod tests {
         let (memory_system, queue) = get_backend().await;
 
         let (expected_data, data_str) = gen_test_memory_string(size, 84637322u32);
-        let mut stores_builder =
-            MappedStoreSetBuilder::<()>::new(&memory_system, Default::default());
+        let mut stores_builder = MappedStoreSetBuilder::new(&memory_system, Default::default());
 
         let wat = format!(
             r#"

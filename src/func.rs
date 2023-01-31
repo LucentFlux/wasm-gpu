@@ -24,8 +24,8 @@ pub struct FuncData {
 }
 
 #[perfect_derive(Debug)]
-pub struct FuncAccessible<T> {
-    pub func_index_lookup: Vec<UntypedFuncPtr<T>>,
+pub struct FuncAccessible {
+    pub func_index_lookup: Vec<UntypedFuncPtr>,
     pub global_index_lookup: Vec<AbstractGlobalPtr>,
     pub element_index_lookup: Vec<ElementPtr>,
     pub table_index_lookup: Vec<AbstractTablePtr>,
@@ -35,13 +35,13 @@ pub struct FuncAccessible<T> {
 
 /// All data for each function in the module, including all module objects that the function can access
 #[perfect_derive(Debug)]
-pub struct FuncInstance<T> {
+pub struct FuncInstance {
     pub func_data: FuncData,
-    pub accessible: Option<Arc<FuncAccessible<T>>>,
+    pub accessible: Option<Arc<FuncAccessible>>,
 }
 
-impl<T> FuncInstance<T> {
-    pub fn accessible(&self) -> &FuncAccessible<T> {
+impl FuncInstance {
+    pub fn accessible(&self) -> &FuncAccessible {
         self.accessible
             .as_ref()
             .expect("accessible values should be populated at module link time")
@@ -51,7 +51,7 @@ impl<T> FuncInstance<T> {
 /// Something that can be called, either an instance to be converted to shader code,
 /// or an injected custom function
 #[perfect_derive(Debug)]
-pub enum FuncUnit<T> {
-    LocalFunction(FuncInstance<T>),
+pub enum FuncUnit {
+    LocalFunction(FuncInstance),
     //CustomFunction {},
 }

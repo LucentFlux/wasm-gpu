@@ -33,3 +33,5 @@ petgraph = "0.6"
 [dev-dependencies]
 rand = "0.8"
 wasm-spirv-test-gen = { path = "test_gen" }
+wasmtime = { version = "1", features = ["wat"] }
+pollster = "0.2"

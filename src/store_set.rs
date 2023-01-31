@@ -27,10 +27,8 @@ pub struct UnmappedStoreSetData {
 }
 
 /// All of the state for a collection of active WASM state machines
-pub struct StoreSet<T, O> {
-    pub data: Vec<T>,
-
-    pub functions: Arc<FuncsInstance<T>>,
+pub struct StoreSet<O> {
+    pub functions: Arc<FuncsInstance>,
     pub elements: Arc<UnmappedElementInstance>,
     pub datas: Arc<UnmappedDataInstance>,
     pub immutable_globals: Arc<UnmappedImmutableGlobalsInstance>,
@@ -40,10 +38,10 @@ pub struct StoreSet<T, O> {
     pub owned: O,
 }
 
-pub type DeviceStoreSet<T> = StoreSet<T, UnmappedStoreSetData>;
-pub type HostStoreSet<T> = StoreSet<T, MappedStoreSetData>;
+pub type DeviceStoreSet = StoreSet<UnmappedStoreSetData>;
+pub type HostStoreSet = StoreSet<MappedStoreSetData>;
 
-impl<T> DeviceStoreSet<T> {
+impl DeviceStoreSet {
     /// Use current module state to form a new store set builder, with all values initialised to the
     /// parts contained in this. This is similar to the [Wizer](https://github.com/bytecodealliance/wizer)
     /// project, except the idea of snapshots is more important here since this is the mechanism
@@ -53,7 +51,7 @@ impl<T> DeviceStoreSet<T> {
     /// identity on an object of type `StoreSetBuilder` and you will get back to where you started
     /// (with lots of unnecessary memory operations, and as long as the iterator passed into `build`
     /// isn't empty).
-    pub async fn snapshot(&self, store_index: usize) -> MappedStoreSetBuilder<T> {
+    pub async fn snapshot(&self, store_index: usize) -> MappedStoreSetBuilder {
         MappedStoreSetBuilder::snapshot(&self, store_index).await
     }
 }

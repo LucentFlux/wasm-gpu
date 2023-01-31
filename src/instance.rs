@@ -18,23 +18,23 @@ pub mod table;
 
 /// Points into a `StoreSetBuilder`, `CompletedBuilder`, `DeviceStoreSet` or `HostStoreSet` to the
 /// elements given by the module instantiated to produce this object
-pub struct ModuleInstanceReferences<T> {
-    funcs: Vec<UntypedFuncPtr<T>>,
+pub struct ModuleInstanceReferences {
+    funcs: Vec<UntypedFuncPtr>,
     tables: Vec<AbstractTablePtr>,
     memories: Vec<AbstractMemoryPtr>,
     globals: Vec<AbstractGlobalPtr>,
     exports: HashMap<String, ModuleExport>,
-    start_fn: Option<UntypedFuncPtr<T>>,
+    start_fn: Option<UntypedFuncPtr>,
 }
 
-impl<T> ModuleInstanceReferences<T> {
+impl ModuleInstanceReferences {
     pub fn new(
-        funcs: Vec<UntypedFuncPtr<T>>,
+        funcs: Vec<UntypedFuncPtr>,
         tables: Vec<AbstractTablePtr>,
         memories: Vec<AbstractMemoryPtr>,
         globals: Vec<AbstractGlobalPtr>,
         exports: HashMap<String, ModuleExport>,
-        start_fn: Option<UntypedFuncPtr<T>>,
+        start_fn: Option<UntypedFuncPtr>,
     ) -> Self {
         Self {
             funcs,
@@ -46,7 +46,7 @@ impl<T> ModuleInstanceReferences<T> {
         }
     }
 
-    pub fn get_named_exports(&self, module_name: &str) -> Vec<NamedExtern<T>> {
+    pub fn get_named_exports(&self, module_name: &str) -> Vec<NamedExtern> {
         self.exports
             .keys()
             .into_iter()
@@ -61,7 +61,7 @@ impl<T> ModuleInstanceReferences<T> {
             .collect()
     }
 
-    pub fn get_export(&self, name: &str) -> Option<Extern<T>> {
+    pub fn get_export(&self, name: &str) -> Option<Extern> {
         let mod_exp = self.exports.get(name)?;
         return Some(match &mod_exp {
             ModuleExport::Func(ptr) => Extern::Func(self.funcs.get(*ptr)?.clone()),
@@ -74,7 +74,7 @@ impl<T> ModuleInstanceReferences<T> {
     /// Create an exported function that doesn't track its types, useful for runtime imports.
     /// Prefer get_typed_func if possible, and see get_typed_func for detail
     /// about this function.
-    pub fn get_func(&self, name: &str) -> anyhow::Result<UntypedFuncPtr<T>> {
+    pub fn get_func(&self, name: &str) -> anyhow::Result<UntypedFuncPtr> {
         self.get_export(name)
             .ok_or(anyhow!("no exported object with name {}", name))
             .and_then(|export| match export {
@@ -88,7 +88,7 @@ impl<T> ModuleInstanceReferences<T> {
     pub fn get_typed_func<Params, Results>(
         &self,
         name: &str,
-    ) -> anyhow::Result<TypedFuncPtr<T, Params, Results>>
+    ) -> anyhow::Result<TypedFuncPtr<Params, Results>>
     where
         Params: WasmTyVec,
         Results: WasmTyVec,

@@ -9,16 +9,16 @@ use petgraph::{graph::NodeIndex, Graph};
 
 use super::{FuncInstance, FuncUnit};
 
-pub struct CallGraph<T> {
-    calls: Graph<UntypedFuncPtr<T>, ()>,
+pub struct CallGraph {
+    calls: Graph<UntypedFuncPtr, ()>,
 }
 
-impl<T> CallGraph<T> {
+impl CallGraph {
     fn add_local_function(
-        calls: &mut Graph<UntypedFuncPtr<T>, ()>,
+        calls: &mut Graph<UntypedFuncPtr, ()>,
         nodes: &HashMap<FuncRef, NodeIndex>,
         src_node: &NodeIndex,
-        function: &FuncInstance<T>,
+        function: &FuncInstance,
     ) {
         for operator in &function.func_data.operators {
             let dst_ref = match operator {
@@ -44,7 +44,7 @@ impl<T> CallGraph<T> {
         }
     }
 
-    pub fn calculate(functions: &FuncsInstance<T>) -> Self {
+    pub fn calculate(functions: &FuncsInstance) -> Self {
         let mut calls = Graph::new();
 
         // Add all nodes
