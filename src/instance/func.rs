@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use crate::capabilities::CapabilityStore;
-use crate::func::{FuncAccessible, FuncData, FuncInstance, FuncUnit, HostFunc, TypedHostFn};
+use crate::func::{FuncAccessible, FuncData, FuncInstance, FuncUnit};
 use crate::session::Session;
-use crate::{impl_immutable_ptr, Caller, DeviceStoreSet, FuncRef, Val, WasmTyVec};
+use crate::{impl_immutable_ptr, DeviceStoreSet, FuncRef, Val, WasmTyVec};
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use itertools::Itertools;
@@ -11,7 +11,6 @@ use perfect_derive::perfect_derive;
 
 #[perfect_derive(Debug)]
 pub struct FuncsInstance<T> {
-    host_funcs: naga::Arena<Box<dyn HostFunc<T>>>,
     wasm_functions: Vec<FuncUnit<T>>,
     cap_set: CapabilityStore,
 }
@@ -19,7 +18,6 @@ pub struct FuncsInstance<T> {
 impl<T> FuncsInstance<T> {
     pub fn new() -> Self {
         Self {
-            host_funcs: naga::Arena::new(),
             wasm_functions: Vec::new(),
             cap_set: CapabilityStore::new(0),
         }
@@ -58,9 +56,6 @@ impl<T> FuncsInstance<T> {
 
         match instance {
             FuncUnit::LocalFunction(instance) => instance.accessible = Some(accessible),
-            FuncUnit::HostFunction { .. } => {
-                panic!("can't link imports of host function - host functions don't have a module")
-            }
         }
     }
 
@@ -71,11 +66,6 @@ impl<T> FuncsInstance<T> {
             .map(|(ptr, func)| {
                 let ty = match func {
                     FuncUnit::LocalFunction(instance) => instance.func_data.ty.clone(),
-                    FuncUnit::HostFunction { host_handle } => self
-                        .host_funcs
-                        .try_get(host_handle.clone())
-                        .expect("every registered host function should exist in memory")
-                        .ty(),
                 };
                 UntypedFuncPtr::new(ptr, self.cap_set.get_cap(), ty)
             })
@@ -88,31 +78,6 @@ impl<T> FuncsInstance<T> {
         self.wasm_functions
             .get(ptr.ptr)
             .expect("if ptr was valid, since `wasm_functions` is append only, item must exist")
-    }
-}
-
-impl<T: 'static> FuncsInstance<T> {
-    pub fn register_host<Params, Results, F>(&mut self, func: F) -> UntypedFuncPtr<T>
-    where
-        Params: WasmTyVec + 'static,
-        Results: WasmTyVec + Send + 'static,
-        for<'b> F: Send
-            + Sync
-            + Fn(Caller<'b, T>, Params) -> BoxFuture<'b, anyhow::Result<Results>>
-            + 'static,
-    {
-        self.reserve(1);
-
-        let func = Box::new(TypedHostFn::from(func));
-        let ty = func.ty();
-        let host_handle = self.host_funcs.append(func, naga::Span::UNDEFINED);
-
-        let ptr = self.wasm_functions.len();
-        self.wasm_functions
-            .push_within_capacity(FuncUnit::HostFunction { host_handle })
-            .expect("a call is made to reserve");
-
-        return UntypedFuncPtr::new(ptr, self.cap_set.get_cap(), ty);
     }
 }
 

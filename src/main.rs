@@ -55,31 +55,10 @@ async fn main() -> anyhow::Result<()> {
     let mut store_builder =
         wasp::MappedStoreSetBuilder::<()>::new(&memory_system, Tuneables::default());
 
-    /*let host_hello =
-    store_builder.register_host_function(|caller: wasp::Caller<u32>, param: i32| {
-        Box::pin(async move {
-            println!("Got {} from WebAssembly", param);
-            println!("my host state is: {}", caller.data());
-
-            return Ok(());
-        })
-    });*/
-
     let instances = store_builder
-        .instantiate_module(
-            &queue,
-            &module,
-            imports! {
-                /*"host": {
-                    "hello": host_hello
-                }*/
-            },
-        )
+        .instantiate_module(&queue, &module, imports! {})
         .await
         .expect("could not instantiate all modules");
-    /*let hellos = instances
-    .get_typed_func::<(), ()>("hello")
-    .expect("could not get hello function from all instances");*/
 
     let store_source = store_builder
         .complete(&queue)

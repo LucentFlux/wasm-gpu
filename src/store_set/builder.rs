@@ -18,10 +18,7 @@ use crate::instance::table::builder::{
 };
 use crate::instance::ModuleInstanceReferences;
 use crate::store_set::UnmappedStoreSetData;
-use crate::{
-    DeviceStoreSet, ExternRef, FuncRef, Ieee32, Ieee64, Module, Tuneables, Val, WasmTyVec,
-};
-use futures::future::BoxFuture;
+use crate::{DeviceStoreSet, ExternRef, FuncRef, Ieee32, Ieee64, Module, Tuneables, Val};
 use perfect_derive::perfect_derive;
 use std::sync::Arc;
 use wasmparser::{Operator, ValType};
@@ -30,8 +27,6 @@ use wgpu_async::async_device::OutOfMemoryError;
 use wgpu_async::async_queue::AsyncQueue;
 use wgpu_lazybuffers::{DelayedOutOfMemoryError, LazilyUnmappable, MemorySystem};
 use wgpu_lazybuffers_macros::lazy_mappable;
-
-use super::calling::Caller;
 
 /// Used during instantiation to evaluate an expression in a single pass
 pub(crate) async fn interpret_constexpr<'data, T>(
@@ -290,20 +285,6 @@ impl<T> MappedStoreSetBuilder<T> {
             functions: Arc::new(functions),
             assembled_module: Arc::new(assembled_module),
         })
-    }
-}
-
-impl<T: 'static> MappedStoreSetBuilder<T> {
-    pub fn register_host_function<Params, Results, F>(&mut self, func: F) -> UntypedFuncPtr<T>
-    where
-        Params: WasmTyVec + 'static,
-        Results: WasmTyVec + Send + 'static,
-        for<'b> F: Send
-            + Sync
-            + Fn(Caller<'b, T>, Params) -> BoxFuture<'b, anyhow::Result<Results>>
-            + 'static,
-    {
-        return self.functions.register_host(func);
     }
 }
 
