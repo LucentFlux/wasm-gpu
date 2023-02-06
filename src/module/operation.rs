@@ -28,7 +28,7 @@ for_each_operator!(define_opcode);
 
 /// Defines a new macro that filters operations by a proposal
 macro_rules! filter_operators {
-    ($macro_name:ident (@ $filter_token:tt $(, !$filter_op:tt)*) | $called_macro:ident($($args:tt)*)) => {
+    ($macro_name:ident (@ $filter_token:tt $(, !$filter_op:tt)* $(,)?) | $called_macro:ident($($args:tt)*)) => {
         macro_rules! $macro_name {
             ((munch) { $$($$filtered:tt)* }) => {
                 $called_macro!{$($args)* $$($$filtered)*}
@@ -51,17 +51,24 @@ macro_rules! filter_operators {
     }
 }
 
+macro_rules! define_make_operator_fn {
+    ($enum_name:ident( $struct_name:ident :: $op:ident $({ $($field:ident : $field_ty:ty),* $(,)? })? )) => {
+        paste::paste!{
+            fn [< make_op_by_proposal_ $op:snake >] <'a> ( $($($field : $field_ty),* )* ) -> Result<OperatorByProposal, wasmparser::BinaryReaderError> {
+                Ok(OperatorByProposal::$enum_name(
+                    $struct_name::$op {$($($field),* )*}
+                ))
+            }
+        }
+    }
+}
+
 /// Defines a struct with some identity, to be used with the filter to have a set of only some opcodes
 macro_rules! define_proposal_operator {
-    ($struct_name:ident $({ $($predef_op:ident { $($predef_field:ident : $predef_field_ty:ty),* $(,)? }),* $(,)? })?, $enum_name:ident $(@$proposal:ident $op:ident $({ $($field:ident : $field_ty:ty),* $(,)? })? => $visit:ident)*) => {
+    ($struct_name:ident, $enum_name:ident $(@$proposal:ident $op:ident $({ $($field:ident : $field_ty:ty),* $(,)? })? => $visit:ident)*) => {
         #[derive(Clone, Debug)]
         #[allow(missing_docs)]
         pub enum $struct_name {
-            $(
-                $(
-                    $predef_op { $($predef_field : $predef_field_ty),* },
-                )*
-            )*
             $(
                 $op $({ $($field : $field_ty,)* })?,
             )*
@@ -71,11 +78,6 @@ macro_rules! define_proposal_operator {
             pub fn opcode(&self) -> OpCode {
                 match &self {
                     $(
-                        $(
-                            Self::$predef_op { .. } => OpCode::$predef_op,
-                        )*
-                    )*
-                    $(
                         Self::$op { .. } => OpCode::$op,
                     )*
                 }
@@ -83,17 +85,76 @@ macro_rules! define_proposal_operator {
         }
 
         $(
-            paste::paste!{
-                fn [< make_op_by_proposal_ $op:snake >] <'a> ( $($($field : $field_ty),* )* ) -> Result<OperatorByProposal, wasmparser::BinaryReaderError> {
-                    Ok(OperatorByProposal::$enum_name(
-                        $struct_name::$op {$($($field),* )*}
-                    ))
-                }
-            }
+            define_make_operator_fn! { $enum_name ( $struct_name :: $op $({ $($field : $field_ty),* })* ) }
         )*
     }
 }
-filter_operators!(filter_define_mvp(@mvp, !BrTable) | define_proposal_operator(MVPOperator{BrTable{default_target: u32, targets: Vec<u32>}}, MVP));
+
+#[derive(Clone, Debug)]
+pub enum ControlFlowOperator {
+    End,
+    Block {
+        blockty: wasmparser::BlockType,
+    },
+    Loop {
+        blockty: wasmparser::BlockType,
+    },
+    If {
+        blockty: wasmparser::BlockType,
+    },
+    Else,
+    Br {
+        relative_depth: u32,
+    },
+    BrIf {
+        relative_depth: u32,
+    },
+    BrTable {
+        targets: Vec<u32>,
+        default_target: u32,
+    },
+    Return,
+    Call {
+        function_index: u32,
+    },
+    CallIndirect {
+        type_index: u32,
+        table_index: u32,
+        table_byte: u8,
+    },
+}
+
+impl ControlFlowOperator {
+    pub fn opcode(&self) -> OpCode {
+        match self {
+            ControlFlowOperator::End => OpCode::End,
+            ControlFlowOperator::Block { .. } => OpCode::Block,
+            ControlFlowOperator::Loop { .. } => OpCode::Loop,
+            ControlFlowOperator::If { .. } => OpCode::If,
+            ControlFlowOperator::Else => OpCode::Else,
+            ControlFlowOperator::Br { .. } => OpCode::Br,
+            ControlFlowOperator::BrIf { .. } => OpCode::BrIf,
+            ControlFlowOperator::BrTable { .. } => OpCode::BrTable,
+            ControlFlowOperator::Return => OpCode::Return,
+            ControlFlowOperator::Call { .. } => OpCode::Call,
+            ControlFlowOperator::CallIndirect { .. } => OpCode::CallIndirect,
+        }
+    }
+}
+
+filter_operators!(filter_define_mvp(@mvp, 
+    !End,
+    !Block,
+    !Loop,
+    !If,
+    !Else,
+    !Br,
+    !BrIf,
+    !BrTable,
+    !Return,
+    !Call,
+    !CallIndirect,
+) | define_proposal_operator(MVPOperator, MVP));
 for_each_operator!(filter_define_mvp);
 filter_operators!(filter_define_exceptions(@exceptions) | define_proposal_operator(ExceptionsOperator, Exceptions));
 for_each_operator!(filter_define_exceptions);
@@ -117,6 +178,7 @@ for_each_operator!(filter_define_relaxed_simd);
 /// Used both as a way to make code easier to read, as well as a wway to remove the data lifetime of operators
 #[derive(Clone, Debug)]
 pub enum OperatorByProposal {
+    ControlFlow(ControlFlowOperator),
     MVP(MVPOperator),
     Exceptions(ExceptionsOperator),
     TailCall(TailCallOperator),
@@ -132,6 +194,7 @@ pub enum OperatorByProposal {
 impl OperatorByProposal {
     pub fn opcode(&self) -> OpCode {
         match self {
+            Self::ControlFlow(op) => op.opcode(),
             Self::MVP(op) => op.opcode(),
             Self::Exceptions(op) => op.opcode(),
             Self::TailCall(op) => op.opcode(),
@@ -146,16 +209,44 @@ impl OperatorByProposal {
     }
 }
 
-// Custom add operations that require more parsing (which is dumb)
+// Custom add control flow operations to make processing easier
+define_make_operator_fn! {ControlFlow(ControlFlowOperator::End)}
+define_make_operator_fn! {ControlFlow(ControlFlowOperator::Block {
+    blockty: wasmparser::BlockType,
+})}
+define_make_operator_fn! {ControlFlow(ControlFlowOperator::Loop {
+    blockty: wasmparser::BlockType,
+})}
+define_make_operator_fn! {ControlFlow(ControlFlowOperator::If {
+    blockty: wasmparser::BlockType,
+})}
+define_make_operator_fn! {ControlFlow(ControlFlowOperator::Else)}
+define_make_operator_fn! {ControlFlow(ControlFlowOperator::Br {
+    relative_depth: u32,
+})}
+define_make_operator_fn! {ControlFlow(ControlFlowOperator::BrIf {
+    relative_depth: u32,
+})}
+define_make_operator_fn! {ControlFlow(ControlFlowOperator::Return)}
+define_make_operator_fn! {ControlFlow(ControlFlowOperator::Call {
+    function_index: u32,
+})}
+define_make_operator_fn! {ControlFlow(ControlFlowOperator::CallIndirect {
+    type_index: u32,
+    table_index: u32,
+    table_byte: u8,
+})}
 fn make_op_by_proposal_br_table<'a>(
     targets: wasmparser::BrTable<'a>,
 ) -> Result<OperatorByProposal, wasmparser::BinaryReaderError> {
     let default_target = targets.default();
     let targets: Vec<u32> = targets.targets().collect::<Result<_, _>>()?;
-    Ok(OperatorByProposal::MVP(MVPOperator::BrTable {
-        default_target,
-        targets,
-    }))
+    Ok(OperatorByProposal::ControlFlow(
+        ControlFlowOperator::BrTable {
+            default_target,
+            targets,
+        },
+    ))
 }
 
 macro_rules! impl_op_by_proposal {

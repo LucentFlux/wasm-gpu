@@ -3,7 +3,7 @@ pub mod module_environ;
 pub mod operation;
 
 use crate::externs::{Extern, NamedExtern};
-use crate::func::{FuncAccessible, FuncData};
+use crate::func::{FuncAccessible, FuncData, FunctionModuleData};
 use crate::instance::data::{DataPtr, MappedDataInstance};
 use crate::instance::element::{ElementPtr, MappedElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
@@ -173,7 +173,7 @@ impl Module {
             .borrow_sections()
             .globals
             .iter()
-            .map(|g| (g.ty.mutable, wasm_ty_bytes(&g.ty.content_type)))
+            .map(|g| (g.ty.mutable, wasm_ty_bytes(g.ty.content_type)))
             .partition(|(is_mutable, _)| *is_mutable);
 
         let is_immutable_mutable = immutables.first().unwrap_or(&(false, 0)).0;
@@ -181,8 +181,8 @@ impl Module {
         assert!(!is_immutable_mutable);
         assert!(is_mutable_mutable);
 
-        let immutable_space: usize = immutables.into_iter().map(|(_, v)| v).sum();
-        let mutable_space: usize = mutables.into_iter().map(|(_, v)| v).sum();
+        let immutable_space: usize = immutables.into_iter().map(|(_, v)| usize::from(v)).sum();
+        let mutable_space: usize = mutables.into_iter().map(|(_, v)| usize::from(v)).sum();
 
         // Reserve
         immutable_globals_instance.reserve(immutable_space);
@@ -449,6 +449,11 @@ impl Module {
             .collect_vec();
 
         let sections = self.parsed.borrow_sections();
+
+        let module_data = Arc::new(FunctionModuleData {
+            types: sections.types.clone(),
+        });
+
         functions.reserve(sections.functions.len());
         let mut new_ptrs = sections
             .functions
@@ -467,6 +472,7 @@ impl Module {
                         ty,
                         locals: func.locals.clone(),
                         operators: func.operators.clone(),
+                        module_data: Arc::clone(&module_data),
                     },
                 }
             })

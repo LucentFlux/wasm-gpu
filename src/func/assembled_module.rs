@@ -1,8 +1,13 @@
+use itertools::Itertools;
+
 use crate::instance::func::FuncsInstance;
 use crate::module::operation::OpCode;
 use crate::Tuneables;
 
+use super::bindings_gen::BindingHandles;
 use super::call_graph::CallGraph;
+use super::func_gen::{make_entry_function, populate_base_function};
+use super::function_collection::FunctionCollection;
 
 #[derive(thiserror::Error, Debug)]
 pub enum BuildError {
@@ -35,13 +40,47 @@ impl AssembledModule {
     pub(crate) fn assemble(
         functions: &FuncsInstance,
         tuneables: &Tuneables,
-    ) -> Result<AssembledModule, BuildError> {
-        let module = naga::Module::default();
+    ) -> Result<Self, BuildError> {
+        let mut module = naga::Module::default();
+
+        // Generate bindings used for all wasm things like globals
+        let bindings = BindingHandles::new(&mut module);
 
         // Calculate direct call graph to figure out if two functions are directly corecursive
         let call_graph = CallGraph::calculate(functions);
+        let call_order = call_graph.to_call_order();
 
-        // Generate
+        // Generate function objects
+        let refs = functions
+            .all_ptrs()
+            .into_iter()
+            .map(|ptr| ptr.to_func_ref())
+            .collect_vec();
+        let base_functions = FunctionCollection::new(&mut module.functions, refs.clone());
+        let stack_functions = FunctionCollection::new(&mut module.functions, refs.clone());
+        let brain_function = module
+            .functions
+            .append(naga::Function::default(), naga::Span::UNDEFINED);
+
+        // Populate function bodies
+        for ptr in functions.all_ptrs() {
+            let function_data = functions.get(&ptr);
+
+            // Generate function bodies
+            let base_handle = base_functions.lookup(&ptr.to_func_ref());
+            populate_base_function(
+                &mut module,
+                function_data,
+                &call_order,
+                base_handle,
+                brain_function,
+                &bindings,
+            )?;
+            //populate_stack_function(&mut module, function_data, &call_order, stack_functions.lookup(&ptr.to_func_ref()))?;
+
+            // Generate entry function that points into base
+            make_entry_function(&mut module, ptr, base_handle, &bindings)?;
+        }
 
         Ok(Self {
             module_info: Self::validate(&module, tuneables),

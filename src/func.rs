@@ -12,18 +12,27 @@ use crate::{instance::global::builder::AbstractGlobalPtr, UntypedFuncPtr};
 use crate::module::operation::OperatorByProposal;
 
 pub mod assembled_module;
+mod bindings_gen;
 mod call_graph;
-pub mod func_gen;
+mod func_gen;
+mod function_collection;
+
+/// Data from the parsed module shared by all functions, e.g. function types
+#[derive(Debug)]
+pub struct FunctionModuleData {
+    pub types: Vec<wasmparser::Type>,
+}
 
 /// All data for each function in the module, without imports
-#[perfect_derive(Debug)]
+#[derive(Debug)]
 pub struct FuncData {
     pub ty: FuncType,
     pub locals: Vec<(u32, ValType)>,
     pub operators: Vec<OperatorByProposal>,
+    pub module_data: Arc<FunctionModuleData>,
 }
 
-#[perfect_derive(Debug)]
+#[derive(Debug)]
 pub struct FuncAccessible {
     pub func_index_lookup: Vec<UntypedFuncPtr>,
     pub global_index_lookup: Vec<AbstractGlobalPtr>,
@@ -37,6 +46,7 @@ pub struct FuncAccessible {
 #[perfect_derive(Debug)]
 pub struct FuncInstance {
     pub func_data: FuncData,
+    /// Pointers into the instantiated module set of all accessible objects
     pub accessible: Option<Arc<FuncAccessible>>,
 }
 

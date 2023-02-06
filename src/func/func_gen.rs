@@ -1,5 +1,6 @@
-//! This file handles parsing wasm functions to generate naga functions
-
+mod basic_block_gen;
+mod block_gen;
+mod body_gen;
 mod mvp;
 
 use std::collections::HashMap;
@@ -8,17 +9,18 @@ use itertools::Itertools;
 use naga::{Handle, UniqueArena};
 use wasmparser::{FuncType, ValType};
 
-use crate::{
-    atomic_counter::AtomicUsizeCounter,
-    module::{module_environ::ParsedFunc, operation::OperatorByProposal},
-    wasm_ty_bytes,
+use crate::{wasm_ty_bytes, UntypedFuncPtr};
+
+use self::body_gen::populate_body;
+
+use super::{
+    assembled_module::BuildError, bindings_gen::BindingHandles, call_graph::CallOrder, FuncUnit,
 };
 
-use self::mvp::eat_mvp_operator;
-
-use super::assembled_module::BuildError;
-
-fn add_val_type(wgpu_ty: &ValType, my_types: &mut UniqueArena<naga::Type>) -> Handle<naga::Type> {
+pub fn add_val_type(
+    wgpu_ty: ValType,
+    my_types: &mut UniqueArena<naga::Type>,
+) -> Handle<naga::Type> {
     let name = match wgpu_ty {
         ValType::I32 => "wgpu_i32",
         ValType::I64 => "wgpu_i64",
@@ -71,37 +73,34 @@ fn add_val_type(wgpu_ty: &ValType, my_types: &mut UniqueArena<naga::Type>) -> Ha
     my_types.insert(naga_ty, naga::Span::UNDEFINED)
 }
 
-fn make_arguments<'data>(
+fn populate_arguments<'data>(
     ty: &FuncType,
+    function: &mut naga::Function,
     my_types: &mut UniqueArena<naga::Type>,
-) -> Vec<naga::FunctionArgument> {
-    let mut args = Vec::new();
+) {
     for (i_param, param) in ty.params().into_iter().enumerate() {
-        args.push(naga::FunctionArgument {
+        function.arguments.push(naga::FunctionArgument {
             name: None,
-            ty: add_val_type(param, my_types),
-            binding: Some(naga::Binding::Location {
-                location: u32::try_from(i_param).expect("cannot have more than u32::MAX args"),
-                interpolation: None,
-                sampling: None,
-            }),
+            ty: add_val_type(*param, my_types),
+            binding: None,
         })
     }
-    return args;
 }
 
-fn make_result<'data>(
+fn populate_result<'data>(
     ty: &FuncType,
+    function: &mut naga::Function,
     my_types: &mut UniqueArena<naga::Type>,
-) -> Option<naga::FunctionResult> {
+) -> Option<naga::Handle<naga::Type>> {
     let results = ty.results();
     if results.len() == 0 {
+        function.result = None;
         return None;
     }
 
     let fields = results
         .into_iter()
-        .map(|ty| (ty, add_val_type(ty, my_types)))
+        .map(|ty| (ty, add_val_type(*ty, my_types)))
         .collect_vec();
 
     let mut members = Vec::new();
@@ -110,51 +109,44 @@ fn make_result<'data>(
         members.push(naga::StructMember {
             name: None,
             ty: field,
-            binding: Some(naga::Binding::Location {
-                location: 0,
-                interpolation: None,
-                sampling: None,
-            }),
+            binding: None,
             offset,
         });
 
-        offset += u32::try_from(wasm_ty_bytes(ty)).expect("wasm types are small")
+        offset += u32::try_from(wasm_ty_bytes(*ty)).expect("wasm types are small")
     }
 
     let naga_ty = my_types.insert(
         naga::Type {
             name: None,
-            inner: naga::TypeInner::Struct { members, span: 0 },
+            inner: naga::TypeInner::Struct {
+                members,
+                span: offset,
+            },
         },
         naga::Span::UNDEFINED,
     );
 
-    let arg = naga::FunctionResult {
+    function.result = Some(naga::FunctionResult {
         ty: naga_ty,
-        binding: Some(naga::Binding::Location {
-            location: 0,
-            interpolation: None,
-            sampling: None,
-        }),
-    };
-    return Some(arg);
+        binding: None,
+    });
+
+    return Some(naga_ty);
 }
 
-fn make_local_variables(
-    parsed: &ParsedFunc,
+fn populate_local_variables(
+    parsed_locals: &Vec<(u32, ValType)>,
+    function: &mut naga::Function,
     my_types: &mut UniqueArena<naga::Type>,
-) -> (
-    naga::Arena<naga::LocalVariable>,
-    HashMap<u32, Handle<naga::LocalVariable>>,
-) {
-    let mut locals = naga::Arena::new();
+) -> HashMap<u32, Handle<naga::LocalVariable>> {
     let mut handles = HashMap::new();
 
-    for (i_local, local_ty) in &parsed.locals {
-        let handle = locals.append(
+    for (i_local, local_ty) in parsed_locals {
+        let handle = function.local_variables.append(
             naga::LocalVariable {
                 name: Some(format! {"local_{}", i_local}),
-                ty: add_val_type(local_ty, my_types),
+                ty: add_val_type(*local_ty, my_types),
                 init: None,
             },
             naga::Span::UNDEFINED,
@@ -163,74 +155,48 @@ fn make_local_variables(
         handles.insert(*i_local, handle);
     }
 
-    return (locals, handles);
+    return handles;
 }
 
-/// Everything used while running through body instructions to make naga functions
-struct BodyState<'a> {
-    expressions: naga::Arena<naga::Expression>,
-    block: naga::Block,
-    stack: Vec<naga::Handle<naga::Expression>>,
-    types: &'a mut UniqueArena<naga::Type>,
-    locals: &'a HashMap<u32, Handle<naga::LocalVariable>>,
+pub fn populate_base_function(
+    module: &mut naga::Module,
+    function_data: &FuncUnit,
+    call_order: &CallOrder,
+    function_to_populate: naga::Handle<naga::Function>,
+    brain_function: naga::Handle<naga::Function>,
+    bindings: &BindingHandles,
+) -> Result<(), BuildError> {
+    let FuncUnit::LocalFunction(function_data) = function_data;
+
+    let function = module.functions.get_mut(function_to_populate);
+    let types = &mut module.types;
+
+    populate_arguments(&function_data.func_data.ty, function, types);
+    let result_type = populate_result(&function_data.func_data.ty, function, types);
+
+    let local_handles = populate_local_variables(&function_data.func_data.locals, function, types);
+
+    populate_body(
+        &function_data,
+        module,
+        function_to_populate,
+        &local_handles,
+        call_order,
+        brain_function,
+        bindings,
+        result_type,
+    )?;
+
+    return Ok(());
 }
 
-fn make_body(
-    parsed: &ParsedFunc,
-    my_types: &mut UniqueArena<naga::Type>,
-    locals: &HashMap<u32, Handle<naga::LocalVariable>>,
-) -> Result<(naga::Arena<naga::Expression>, naga::Block), BuildError> {
-    let mut state = BodyState {
-        expressions: naga::Arena::new(),
-        block: naga::Block::new(),
-        stack: Vec::new(),
-        types: my_types,
-        locals,
-    };
-
-    for operation in &parsed.operators {
-        match operation {
-            OperatorByProposal::MVP(mvp_op) => eat_mvp_operator(&mut state, mvp_op)?,
-            OperatorByProposal::Exceptions(_)
-            | OperatorByProposal::TailCall(_)
-            | OperatorByProposal::ReferenceTypes(_)
-            | OperatorByProposal::SignExtension(_)
-            | OperatorByProposal::SaturatingFloatToInt(_)
-            | OperatorByProposal::BulkMemory(_)
-            | OperatorByProposal::Threads(_)
-            | OperatorByProposal::SIMD(_)
-            | OperatorByProposal::RelaxedSIMD(_) => {
-                return Err(BuildError::UnsupportedInstructionError {
-                    instruction_opcode: operation.opcode(),
-                })
-            }
-        }
-    }
-
-    return Ok((state.expressions, state.block));
-}
-
-static COUNTER: AtomicUsizeCounter = AtomicUsizeCounter::new();
-
-pub fn naga_function_from_wasm(
-    types: &mut naga::UniqueArena<naga::Type>,
-    ty: &FuncType,
-    parsed: &ParsedFunc,
-) -> Result<naga::Function, BuildError> {
-    let arguments = make_arguments(ty, types);
-    let result = make_result(ty, types);
-
-    let (local_variables, local_handles) = make_local_variables(parsed, types);
-
-    let (expressions, body) = make_body(parsed, types, &local_handles)?;
-
-    Ok(naga::Function {
-        name: Some(format! {"wasm_generated_function_{}", COUNTER.next()}),
-        arguments,
-        result,
-        local_variables,
-        expressions,
-        body,
-        named_expressions: naga::FastHashMap::with_hasher(Default::default()),
-    })
+/// Generates function that extracts arguments from buffer, calls base function,
+/// then writes results to output buffer
+pub fn make_entry_function(
+    module: &mut naga::Module,
+    func_ptr: UntypedFuncPtr,
+    base_function: naga::Handle<naga::Function>,
+    bindings: &BindingHandles,
+) -> Result<(), BuildError> {
+    return Ok(());
 }

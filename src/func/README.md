@@ -1,6 +1,12 @@
-# Design Doc - TODO: Implement this
+# Design Doc
 
 This module deals with representing web assembly functions as naga IR. This naga IR can then be transformed to SPIR-V, or GLSL or HLSL or any number of graphics backends. 
+
+# Data representation
+
+Vectors (`V128`s) are stored as a vec4 of u32s in little-endian order. For vector operations they are reinterpreted, then operated on, then reinterpreted back. It is assumed that reinterpretation has no actual runtime cost.
+
+# Call order
 
 Unfortunately, SPIR-V (and by extension naga) have some requirements on functions that make this mapping difficult. Mainly, GPUs do not support recursion and the call graph of a shader must be a DAG.
 

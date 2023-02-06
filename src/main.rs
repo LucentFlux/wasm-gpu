@@ -1,4 +1,4 @@
-use wasm_spirv::{imports, wasp, PanicOnAny, Tuneables};
+use wasm_spirv::{imports, wasp, Tuneables};
 use wgpu_async::wrap_wgpu;
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
