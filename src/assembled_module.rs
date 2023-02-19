@@ -1,8 +1,7 @@
 use wasmparser::ValType;
 
-use crate::instance::func::FuncsInstance;
-use crate::module::operation::OpCode;
-use crate::{Tuneables, Val};
+use wasm_opcodes::OpCode;
+use wasm_types::Val;
 
 use super::bindings_gen::BindingHandles;
 use super::brain_func_gen::populate_brain_func;
@@ -12,6 +11,9 @@ use super::func_gen::{
 };
 use super::function_collection::FunctionCollection;
 use super::std_objects::StdObjects;
+use crate::func::FuncsInstance;
+use crate::func_gen::get_entry_name;
+use crate::Tuneables;
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum BuildError {
@@ -21,14 +23,14 @@ pub enum BuildError {
     UnsupportedTypeError { wasm_type: ValType },
 }
 
-pub mod build {
+pub(crate) mod build {
     use super::BuildError;
 
     pub type Result<V> = std::result::Result<V, BuildError>;
 }
 
 // The values used when building a module
-pub struct WorkingModule<'a> {
+pub(crate) struct WorkingModule<'a> {
     pub module: &'a mut naga::Module,
     pub std_objs: &'a StdObjects,
     pub tuneables: &'a Tuneables,
@@ -68,7 +70,10 @@ impl<'a> WorkingModule<'a> {
     }
 
     /// Get's a WASM val type's naga type
-    pub fn get_val_type(&mut self, val_ty: ValType) -> build::Result<naga::Handle<naga::Type>> {
+    pub(crate) fn get_val_type(
+        &mut self,
+        val_ty: ValType,
+    ) -> build::Result<naga::Handle<naga::Type>> {
         match val_ty {
             ValType::I32 => self.std_objs.tys.wasm_i32.get(self),
             ValType::I64 => self.std_objs.tys.wasm_i64.get(self),
@@ -81,7 +86,7 @@ impl<'a> WorkingModule<'a> {
     }
 
     /// Makes a new constant from the value
-    pub fn constant(&mut self, value: Val) -> build::Result<naga::Handle<naga::Constant>> {
+    pub(crate) fn constant(&mut self, value: Val) -> build::Result<naga::Handle<naga::Constant>> {
         match value {
             Val::I32(value) => self.std_objs.tys.wasm_i32.make_const(self, value),
             Val::I64(value) => self.std_objs.tys.wasm_i64.make_const(self, value),
@@ -93,7 +98,7 @@ impl<'a> WorkingModule<'a> {
         }
     }
 
-    pub fn make_function<'b>(
+    pub(crate) fn make_function<'b>(
         &'b mut self,
     ) -> (WorkingBaseFunction<'a, 'b>, naga::Handle<naga::Function>) {
         let func = naga::Function::default();
@@ -138,10 +143,7 @@ impl AssembledModule {
             .expect("internal compile error in wasm-spirv")
     }
 
-    pub(crate) fn assemble(
-        functions: &FuncsInstance,
-        tuneables: &Tuneables,
-    ) -> build::Result<Self> {
+    pub fn assemble(functions: &FuncsInstance, tuneables: &Tuneables) -> build::Result<Self> {
         let mut module = naga::Module::default();
         let objects = StdObjects::new();
         let mut working = WorkingModule::new(&mut module, &objects, tuneables, &functions);
@@ -150,18 +152,20 @@ impl AssembledModule {
         let bindings = BindingHandles::new(&mut working)?;
 
         // Populate function bodies
-        for ptr in functions.all_ptrs() {
-            let function_data = functions.get(&ptr);
+        for ptr in functions.all_funcrefs() {
+            let function_data = functions
+                .get(ptr)
+                .expect("funcref originated from functions set so is not None or OoB");
 
             // Generate function bodies
-            let base_handle = working.base_functions.lookup(&ptr.to_func_ref());
+            let base_handle = working.base_functions.lookup(&ptr);
             let mut working_function = WorkingBaseFunction::new(&mut working, base_handle);
             let (arg_tys, ret_ty) =
                 populate_base_function(&mut working_function, function_data, &bindings)?;
             //populate_stack_function(&mut module, function_data, &call_order, stack_functions.lookup(&ptr.to_func_ref()))?;
 
             // Generate entry function that points into base
-            let mut entry_function = working.make_entry_function(ptr.get_entry_name());
+            let mut entry_function = working.make_entry_function(get_entry_name(ptr));
             populate_entry_function(
                 &mut entry_function,
                 ptr,
@@ -182,11 +186,11 @@ impl AssembledModule {
         })
     }
 
-    pub(crate) fn get_module(&self) -> &naga::Module {
+    pub fn get_module(&self) -> &naga::Module {
         &self.module
     }
 
-    pub(crate) fn get_module_info(&self) -> &naga::valid::ModuleInfo {
+    pub fn get_module_info(&self) -> &naga::valid::ModuleInfo {
         &self.module_info
     }
 }

@@ -1,11 +1,11 @@
 use crate::{
-    func::assembled_module::{build, WorkingModule},
-    session::{INVOCATION_ID_FLAG_INDEX, TRAP_FLAG_INDEX},
+    assembled_module::{build, WorkingModule},
+    INVOCATION_ID_FLAG_INDEX, TRAP_FLAG_INDEX,
 };
 
 use super::TyGen;
 
-pub struct I32ArrayBuffer {}
+pub(crate) struct I32ArrayBuffer {}
 impl TyGen for I32ArrayBuffer {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let i32_ty = working.std_objs.tys.wasm_i32.get(working)?;
@@ -26,7 +26,7 @@ impl TyGen for I32ArrayBuffer {
     }
 }
 
-pub struct FlagsBuffer {}
+pub(crate) struct FlagsBuffer {}
 impl TyGen for FlagsBuffer {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let i32_ty = working.std_objs.tys.wasm_i32.get(working)?;

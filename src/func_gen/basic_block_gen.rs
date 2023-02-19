@@ -1,17 +1,15 @@
 use std::marker::PhantomData;
 
-use crate::{
-    func::assembled_module::{build, BuildError},
-    module::operation::OperatorByProposal,
-};
+use crate::assembled_module::{build, BuildError};
 
 use super::{body_gen::FunctionBodyInformation, mvp::eat_mvp_operator, WorkingFunction};
+use wasm_opcodes::OperatorByProposal;
 
 /// Everything used while running through basic block instructions to make naga functions.
 /// Parsing most instructions involves a straight run of values and operations. That straight run (or basic block)
 /// without control flow is eaten and converted by this. Since there is no control flow, expressions can be
 /// compounded without auxilliary assignments.
-pub struct BasicBlockState<'a, 'b, F: WorkingFunction<'b>> {
+pub(crate) struct BasicBlockState<'a, 'b, F: WorkingFunction<'b>> {
     // Global shader data, e.g. types or constants
     working: &'a mut F,
     _f_life: PhantomData<&'b ()>,
@@ -26,7 +24,7 @@ pub struct BasicBlockState<'a, 'b, F: WorkingFunction<'b>> {
 
 impl<'a, 'b, F: WorkingFunction<'b>> BasicBlockState<'a, 'b, F> {
     /// Pushes an expression on to the current stack
-    pub fn push(&mut self, value: naga::Expression) {
+    pub(crate) fn push(&mut self, value: naga::Expression) {
         let handle = self
             .working
             .get_fn_mut()
@@ -36,19 +34,22 @@ impl<'a, 'b, F: WorkingFunction<'b>> BasicBlockState<'a, 'b, F> {
     }
 
     /// Pops an expression from the current stack
-    pub fn pop(&mut self) -> naga::Handle<naga::Expression> {
+    pub(crate) fn pop(&mut self) -> naga::Handle<naga::Expression> {
         self.stack
             .pop()
             .expect("wasm validation asserts local stack will not be empty")
     }
 
-    pub fn constant(&mut self, value: crate::Val) -> build::Result<naga::Handle<naga::Constant>> {
+    pub(crate) fn constant(
+        &mut self,
+        value: wasm_types::Val,
+    ) -> build::Result<naga::Handle<naga::Constant>> {
         self.working.constant(value)
     }
 }
 
 /// Populates until a control flow instruction
-pub fn build_basic_block<'a, F: WorkingFunction<'a>>(
+pub(crate) fn build_basic_block<'a, F: WorkingFunction<'a>>(
     stack: Vec<naga::Handle<naga::Expression>>,
     instructions: &mut impl Iterator<Item = OperatorByProposal>,
     working: &mut F,

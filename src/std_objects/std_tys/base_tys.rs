@@ -1,11 +1,9 @@
-use crate::{
-    func::assembled_module::{build, BuildError, WorkingModule},
-    ExternRef, FuncRef, Ieee32, Ieee64,
-};
+use crate::assembled_module::{build, BuildError, WorkingModule};
+use wasm_types::{ExternRef, FuncRef, Ieee32, Ieee64, V128};
 
 use super::{TyGen, WasmTyGen};
 
-pub struct WasmNagaI32 {}
+pub(crate) struct WasmNagaI32 {}
 impl TyGen for WasmNagaI32 {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {
@@ -41,7 +39,7 @@ impl WasmTyGen for WasmNagaI32 {
     }
 }
 
-pub struct WasmNagaF32 {}
+pub(crate) struct WasmNagaF32 {}
 impl TyGen for WasmNagaF32 {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {
@@ -77,7 +75,7 @@ impl WasmTyGen for WasmNagaF32 {
     }
 }
 
-pub struct WasmNagaI64 {}
+pub(crate) struct WasmNagaI64 {}
 impl TyGen for WasmNagaI64 {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {
@@ -132,7 +130,7 @@ impl WasmTyGen for WasmNagaI64 {
     }
 }
 
-pub struct WasmNagaF64 {}
+pub(crate) struct WasmNagaF64 {}
 impl TyGen for WasmNagaF64 {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         if !working.tuneables.hardware_supports_f64 {
@@ -180,7 +178,7 @@ impl WasmTyGen for WasmNagaF64 {
     }
 }
 
-pub struct WasmNagaV128 {}
+pub(crate) struct WasmNagaV128 {}
 impl TyGen for WasmNagaV128 {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {
@@ -196,18 +194,22 @@ impl TyGen for WasmNagaV128 {
     }
 }
 impl WasmTyGen for WasmNagaV128 {
-    type WasmTy = u128;
+    type WasmTy = V128;
 
     fn make_const(
         ty: naga::Handle<naga::Type>,
         working: &mut WorkingModule,
         value: Self::WasmTy,
     ) -> build::Result<naga::Handle<naga::Constant>> {
+        let bytes = value.to_le_bytes();
         let inner = naga::ConstantInner::Composite {
             ty,
-            components: (0..4)
-                .map(|i_word| {
-                    let word = value >> (32 * i_word);
+            components: bytes
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|bytes| {
+                    let word = u32::from_le_bytes(*bytes);
                     let word = u32::try_from(word & 0xFFFFFFFF)
                         .expect("truncated word always fits in u32");
                     working.module.constants.append(
@@ -235,7 +237,7 @@ impl WasmTyGen for WasmNagaV128 {
     }
 }
 
-pub struct WasmNagaFuncRef {}
+pub(crate) struct WasmNagaFuncRef {}
 impl TyGen for WasmNagaFuncRef {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {
@@ -271,7 +273,7 @@ impl WasmTyGen for WasmNagaFuncRef {
     }
 }
 
-pub struct WasmNagaExternRef {}
+pub(crate) struct WasmNagaExternRef {}
 impl TyGen for WasmNagaExternRef {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {

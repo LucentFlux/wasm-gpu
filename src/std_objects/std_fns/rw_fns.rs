@@ -1,15 +1,13 @@
 use crate::{
-    func::{
-        assembled_module::{build, WorkingModule},
-        func_gen::{building::make_fn_return, WorkingFunction},
-    },
+    assembled_module::{build, WorkingModule},
+    func_gen::{building::make_fn_return, WorkingFunction},
     naga_expr, naga_fn_def,
 };
 
 use super::FnGen;
 
 // fn(buffer, word_address: i32) -> i32
-pub struct ReadI32 {}
+pub(crate) struct ReadI32 {}
 impl FnGen for ReadI32 {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Function>> {
         let i32_ty = working.std_objs.tys.wasm_i32.get(working)?;

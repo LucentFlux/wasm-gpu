@@ -1,8 +1,8 @@
-use crate::func::assembled_module::{build, WorkingModule};
+use crate::assembled_module::{build, WorkingModule};
 
 use super::TyGen;
 
-pub struct WorkgroupArgument {}
+pub(crate) struct WorkgroupArgument {}
 impl TyGen for WorkgroupArgument {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {

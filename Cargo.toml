@@ -1,8 +1,17 @@
 [package]
-name = "WASM-SPIRV-funcgen"
+name = "wasm-spirv-funcgen"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+wasm-opcodes = { path = "../WASM-opcodes" }
+wasm-types = { path = "../WASM-types" }
+
+naga = { version = "0.11", features = [] }
+itertools = "0.10"
+wasmparser = "0.93"
+petgraph = "0.6"
+once_cell = "1.17"
+thiserror = "1.0"
+cps = "0.2.0"

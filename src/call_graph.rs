@@ -1,22 +1,18 @@
-use std::collections::HashMap;
-
-use crate::{
-    instance::func::FuncsInstance,
-    module::operation::{ControlFlowOperator, OperatorByProposal, TailCallOperator},
-    FuncRef, UntypedFuncPtr,
-};
 use itertools::Itertools;
 use petgraph::{graph::NodeIndex, Graph};
+use std::collections::HashMap;
+use wasm_opcodes::{ControlFlowOperator, OperatorByProposal, TailCallOperator};
+use wasm_types::FuncRef;
 
-use super::{FuncInstance, FuncUnit};
+use crate::func::{FuncInstance, FuncUnit, FuncsInstance};
 
 pub struct CallGraph {
-    calls: Graph<UntypedFuncPtr, ()>,
+    calls: Graph<FuncRef, ()>,
 }
 
 impl CallGraph {
     fn add_local_function(
-        calls: &mut Graph<UntypedFuncPtr, ()>,
+        calls: &mut Graph<FuncRef, ()>,
         nodes: &HashMap<FuncRef, NodeIndex>,
         src_node: &NodeIndex,
         function: &FuncInstance,
@@ -26,14 +22,14 @@ impl CallGraph {
                 OperatorByProposal::ControlFlow(ControlFlowOperator::Call { function_index })
                 | OperatorByProposal::TailCall(TailCallOperator::ReturnCall { function_index }) => {
                     function
-                        .accessible()
+                        .accessible
                         .func_index_lookup
                         .get(
                             usize::try_from(*function_index)
                                 .expect("16 bit architectures unsupported"),
                         )
                         .expect("an OoB function reference should be caught by validation")
-                        .to_func_ref()
+                        .clone()
                 }
                 _ => continue, // Not a call
             };
@@ -50,20 +46,21 @@ impl CallGraph {
 
         // Add all nodes
         let mut nodes = HashMap::new();
-        let all_ptrs = functions.all_ptrs();
+        let all_ptrs = functions.all_funcrefs();
         for function_ptr in &all_ptrs {
-            let node = calls.add_node(function_ptr.clone());
-            nodes.insert(function_ptr.to_func_ref(), node);
+            let node = calls.add_node(*function_ptr);
+            nodes.insert(*function_ptr, node);
         }
 
         // Add direct calls
         for function_ptr in &all_ptrs {
-            let src_ref = function_ptr.to_func_ref();
             let src_node = nodes
-                .get(&src_ref)
+                .get(function_ptr)
                 .expect("every function was inserted into nodes");
 
-            let FuncUnit::LocalFunction(function) = functions.get(function_ptr);
+            let FuncUnit::LocalFunction(function) = functions
+                .get(*function_ptr)
+                .expect("funcref originated from this set, so is not None or OoB");
             Self::add_local_function(&mut calls, &nodes, src_node, function);
         }
 
@@ -73,7 +70,7 @@ impl CallGraph {
         Self { calls }
     }
 
-    fn get_externals(calls: &Graph<UntypedFuncPtr, ()>) -> Vec<NodeIndex> {
+    fn get_externals(calls: &Graph<FuncRef, ()>) -> Vec<NodeIndex> {
         calls
             .externals(petgraph::Direction::Incoming)
             .sorted()
@@ -121,22 +118,22 @@ impl CallGraph {
 
 pub struct CallOrder {
     //ASSERT for all x, y: order[lookup[x.to_func_ref()]] == x && lookup[order[y].to_func_ref()] == y
-    order: Vec<UntypedFuncPtr>,
+    order: Vec<FuncRef>,
     lookup: HashMap<FuncRef, usize>,
 }
 
 impl CallOrder {
-    fn new(order: Vec<UntypedFuncPtr>) -> Self {
+    fn new(order: Vec<FuncRef>) -> Self {
         let mut lookup = HashMap::new();
 
         for (i, ptr) in order.iter().enumerate() {
-            lookup.insert(ptr.to_func_ref(), i);
+            lookup.insert(*ptr, i);
         }
 
         Self { order, lookup }
     }
 
-    pub fn get_in_order(&self) -> &Vec<UntypedFuncPtr> {
+    pub fn get_in_order(&self) -> &Vec<FuncRef> {
         &self.order
     }
 }

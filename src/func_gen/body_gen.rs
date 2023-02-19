@@ -1,20 +1,19 @@
 use std::collections::HashMap;
+use wasm_opcodes::OperatorByProposal;
 
 use crate::{
-    func::{
-        assembled_module::BuildError, bindings_gen::BindingHandles, FuncAccessible, FuncInstance,
-        FunctionModuleData,
-    },
-    module::operation::OperatorByProposal,
+    assembled_module::BuildError,
+    bindings_gen::BindingHandles,
+    func::{FuncAccessible, FuncInstance, FunctionModuleData},
 };
 
 use super::{block_gen::populate_block, WasmNagaFnRes, WorkingFunction};
 
-pub struct FunctionBodyInformation<'a> {
-    pub accessible: &'a FuncAccessible,
-    pub module_data: &'a FunctionModuleData,
-    pub locals_ptrs_map: &'a HashMap<u32, naga::Handle<naga::Expression>>,
-    pub bindings: &'a BindingHandles,
+pub(crate) struct FunctionBodyInformation<'a> {
+    pub(crate) accessible: &'a FuncAccessible,
+    pub(crate) module_data: &'a FunctionModuleData,
+    pub(crate) locals_ptrs_map: &'a HashMap<u32, naga::Handle<naga::Expression>>,
+    pub(crate) bindings: &'a BindingHandles,
 }
 
 pub(super) fn populate_body<'a, F: WorkingFunction<'a>>(
@@ -55,10 +54,7 @@ pub(super) fn populate_body<'a, F: WorkingFunction<'a>>(
     }
 
     // Parse instructions
-    let accessible = parsed
-        .accessible
-        .as_deref()
-        .expect("function should be linked with module before body construction");
+    let accessible = &parsed.accessible;
     let module_data = parsed.func_data.module_data.as_ref();
     let mut instructions = parsed
         .func_data

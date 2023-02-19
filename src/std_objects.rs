@@ -3,13 +3,13 @@ use self::{std_fns::StdFnSet, std_tys::StdTySet};
 mod std_fns;
 mod std_tys;
 
-pub struct StdObjects {
-    pub fns: StdFnSet,
-    pub tys: StdTySet,
+pub(crate) struct StdObjects {
+    pub(crate) fns: StdFnSet,
+    pub(crate) tys: StdTySet,
 }
 
 impl StdObjects {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             fns: StdFnSet::new(),
             tys: StdTySet::new(),

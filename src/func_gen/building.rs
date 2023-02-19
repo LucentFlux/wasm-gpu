@@ -1,11 +1,11 @@
 //! Some functions and tools to streamline manually building naga functions from data
 use super::WorkingFunction;
 
-pub fn make_inner_func_result(ty: naga::Handle<naga::Type>) -> Option<naga::FunctionResult> {
+pub(crate) fn make_inner_func_result(ty: naga::Handle<naga::Type>) -> Option<naga::FunctionResult> {
     Some(naga::FunctionResult { ty, binding: None })
 }
 
-pub fn make_fn_return<'a, F: WorkingFunction<'a>>(
+pub(crate) fn make_fn_return<'a, F: WorkingFunction<'a>>(
     working: &mut F,
     statement: naga::Handle<naga::Expression>,
 ) {
@@ -36,7 +36,7 @@ macro_rules! naga_fn_def {
         )*)
     }};
 }
-pub use naga_fn_def;
+pub(crate) use naga_fn_def;
 
 #[macro_export]
 macro_rules! naga_expr {
@@ -80,23 +80,25 @@ macro_rules! naga_expr {
     }};
 
     // Constants
-    ($working:expr => I32($term:expr)) => {
-        $working.module.constants.append(naga::Constant {
+    ($working:expr => I32($term:expr)) => {{
+        let const_handle = $working.module.constants.append(naga::Constant {
             name: None,
             specialization: None,
-            inner: naga::ConstantInner::Scalar { width: 4, value: naga::ScalarValue::Sint($term) },
-        }, naga::Span::UNDEFINED)
-    };
-    ($working:expr => U32($term:expr)) => {
-        $working.module.constants.append(naga::Constant {
+            inner: naga::ConstantInner::Scalar { width: 4, value: naga::ScalarValue::Sint($term.into()) },
+        }, naga::Span::UNDEFINED);
+        $working.get_fn_mut().expressions.append(naga::Expression::Constant(const_handle), naga::Span::UNDEFINED)
+    }};
+    ($working:expr => U32($term:expr)) => {{
+        let const_handle = $working.module.constants.append(naga::Constant {
             name: None,
             specialization: None,
-            inner: naga::ConstantInner::Scalar { width: 4, value: naga::ScalarValue::Uint($term) },
-        }, naga::Span::UNDEFINED)
-    };
+            inner: naga::ConstantInner::Scalar { width: 4, value: naga::ScalarValue::Uint($term.into()) },
+        }, naga::Span::UNDEFINED);
+        $working.get_fn_mut().expressions.append(naga::Expression::Constant(const_handle), naga::Span::UNDEFINED)
+    }};
 
     // Arbitrary embeddings
     ($working:expr => $term:ident) => { $term };
 }
 
-pub use naga_expr;
+pub(crate) use naga_expr;

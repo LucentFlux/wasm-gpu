@@ -1,7 +1,12 @@
 use super::{basic_block_gen::BasicBlockState, WorkingFunction};
-use crate::{func::assembled_module::build, module::operation::MVPOperator};
+use crate::assembled_module::build;
+use wasm_opcodes::MVPOperator;
+use wasm_types::Val;
 
-fn const_val<'a, F: WorkingFunction<'a>>(state: &mut BasicBlockState<'_, 'a, F>, val: crate::Val) -> build::Result<()> {
+fn const_val<'a, F: WorkingFunction<'a>>(
+    state: &mut BasicBlockState<'_, 'a, F>,
+    val: Val,
+) -> build::Result<()> {
     let val = state.constant(val)?;
     state.push(naga::Expression::Constant(val));
     Ok(())
@@ -16,13 +21,13 @@ pub(super) fn eat_mvp_operator<'a, F: WorkingFunction<'a>>(
             /* Pass */
             Ok(())
         }
-        MVPOperator::I32Const { value } => const_val(state, crate::Val::I32(*value)),
-        MVPOperator::I64Const { value } => const_val(state, crate::Val::I64(*value)),
+        MVPOperator::I32Const { value } => const_val(state, Val::I32(*value)),
+        MVPOperator::I64Const { value } => const_val(state, Val::I64(*value)),
         MVPOperator::F32Const { value } => {
-            const_val(state, crate::Val::F32(crate::typed::Ieee32::from(*value)))
+            const_val(state, Val::F32(wasm_types::Ieee32::from(*value)))
         }
         MVPOperator::F64Const { value } => {
-            const_val(state, crate::Val::F64(crate::typed::Ieee64::from(*value)))
+            const_val(state, Val::F64(wasm_types::Ieee64::from(*value)))
         }
         MVPOperator::Unreachable => unimplemented!(),
         MVPOperator::Drop => unimplemented!(),

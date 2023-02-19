@@ -1,4 +1,4 @@
-use crate::session::{
+use crate::{
     DATA_BINDING_INDEX, ELEMENT_BINDING_INDEX, FLAGS_BINDING_INDEX, GLOBAL_BINDING_INDEX,
     INPUT_BINDING_INDEX, MEMORY_BINDING_INDEX, OUTPUT_BINDING_INDEX, STACK_BINDING_INDEX,
     TABLE_BINDING_INDEX,
@@ -6,23 +6,23 @@ use crate::session::{
 
 use super::assembled_module::{build, WorkingModule};
 
-pub struct BindingHandles {
-    pub memory: naga::Handle<naga::GlobalVariable>,
-    pub globals: naga::Handle<naga::GlobalVariable>,
-    pub tables: naga::Handle<naga::GlobalVariable>,
-    pub data: naga::Handle<naga::GlobalVariable>,
-    pub elements: naga::Handle<naga::GlobalVariable>,
+pub(crate) struct BindingHandles {
+    pub(crate) memory: naga::Handle<naga::GlobalVariable>,
+    pub(crate) globals: naga::Handle<naga::GlobalVariable>,
+    pub(crate) tables: naga::Handle<naga::GlobalVariable>,
+    pub(crate) data: naga::Handle<naga::GlobalVariable>,
+    pub(crate) elements: naga::Handle<naga::GlobalVariable>,
 
-    pub input: naga::Handle<naga::GlobalVariable>,
-    pub output: naga::Handle<naga::GlobalVariable>,
+    pub(crate) input: naga::Handle<naga::GlobalVariable>,
+    pub(crate) output: naga::Handle<naga::GlobalVariable>,
 
-    pub stack: naga::Handle<naga::GlobalVariable>,
+    pub(crate) stack: naga::Handle<naga::GlobalVariable>,
 
-    pub flags: naga::Handle<naga::GlobalVariable>,
+    pub(crate) flags: naga::Handle<naga::GlobalVariable>,
 }
 
 impl BindingHandles {
-    pub fn new(working: &mut WorkingModule) -> build::Result<Self> {
+    pub(crate) fn new(working: &mut WorkingModule) -> build::Result<Self> {
         let word_array_ty = working.std_objs.tys.wasm_i32_array_buffer.get(working)?;
         let flags_ty = working.std_objs.tys.wasm_flags_buffer.get(working)?;
 
