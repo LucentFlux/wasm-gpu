@@ -36,13 +36,13 @@ impl TyGen for FlagsBuffer {
                 name: Some("trap_flag".to_owned()),
                 ty: i32_ty,
                 binding: None,
-                offset: TRAP_FLAG_INDEX,
+                offset: TRAP_FLAG_INDEX * 4,
             },
             naga::StructMember {
                 name: Some("invocation_id".to_owned()),
                 ty: i32_ty,
                 binding: None,
-                offset: INVOCATION_ID_FLAG_INDEX,
+                offset: INVOCATION_ID_FLAG_INDEX * 4,
             },
         ];
         let flags_ty = working.module.types.insert(

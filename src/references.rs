@@ -35,6 +35,13 @@ macro_rules! impl_index {
 
 impl_index!(pub struct MemoryIndex);
 impl_index!(pub struct TableIndex);
-impl_index!(pub struct GlobalIndex);
+impl_index!(pub struct GlobalMutableIndex);
+impl_index!(pub struct GlobalImmutableIndex);
 impl_index!(pub struct ElementIndex);
 impl_index!(pub struct DataIndex);
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum GlobalIndex {
+    Mutable(GlobalMutableIndex),
+    Immutable(GlobalImmutableIndex),
+}

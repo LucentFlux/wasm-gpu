@@ -14,7 +14,7 @@ pub struct FunctionModuleData {
 }
 
 /// All data for each function in the module, without imports
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FuncData {
     pub ty: FuncType,
     pub locals: Vec<(u32, ValType)>,
@@ -32,8 +32,21 @@ pub struct FuncAccessible {
     pub memory_index_lookup: Vec<MemoryIndex>,
 }
 
+impl FuncAccessible {
+    pub fn empty() -> Self {
+        Self {
+            func_index_lookup: Vec::new(),
+            global_index_lookup: Vec::new(),
+            element_index_lookup: Vec::new(),
+            table_index_lookup: Vec::new(),
+            data_index_lookup: Vec::new(),
+            memory_index_lookup: Vec::new(),
+        }
+    }
+}
+
 /// All data for each function in the module, including all module objects that the function can access
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FuncInstance {
     pub func_data: FuncData,
     /// Pointers into the instantiated module set of all accessible objects
@@ -42,7 +55,7 @@ pub struct FuncInstance {
 
 /// Something that can be called, either an instance to be converted to shader code,
 /// or an injected custom function
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum FuncUnit {
     LocalFunction(FuncInstance),
     //CustomFunction {},
@@ -50,7 +63,7 @@ pub enum FuncUnit {
 
 #[derive(Debug)]
 pub struct FuncsInstance {
-    wasm_functions: Vec<FuncUnit>,
+    pub wasm_functions: Vec<FuncUnit>,
 }
 
 impl FuncsInstance {
@@ -59,7 +72,7 @@ impl FuncsInstance {
             .iter()
             .enumerate()
             .map(|(ptr, _)| {
-                FuncRef::try_from_u32(
+                FuncRef::try_from(
                     u32::try_from(ptr).expect("64-bit GPU word sizes are unsupported"),
                 )
                 .expect("cannot have more than u32::MAX - 1 functions")
