@@ -12,7 +12,7 @@ use super::func_gen::{
 use super::function_collection::FunctionCollection;
 use super::std_objects::StdObjects;
 use crate::func::FuncsInstance;
-use crate::func_gen::get_entry_name;
+use crate::func_gen::{get_entry_name, WorkingFunction};
 use crate::Tuneables;
 
 #[derive(thiserror::Error, Debug, Clone)]
@@ -160,6 +160,7 @@ impl AssembledModule {
             // Generate function bodies
             let base_handle = working.base_functions.lookup(&ptr);
             let mut working_function = WorkingBaseFunction::new(&mut working, base_handle);
+            working_function.get_fn_mut().name = Some(get_entry_name(ptr) + "_impl");
             let (arg_tys, ret_ty) =
                 populate_base_function(&mut working_function, function_data, &bindings)?;
             //populate_stack_function(&mut module, function_data, &call_order, stack_functions.lookup(&ptr.to_func_ref()))?;
