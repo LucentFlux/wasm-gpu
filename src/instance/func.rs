@@ -1,19 +1,23 @@
 use std::sync::Arc;
 
 use crate::capabilities::CapabilityStore;
-use crate::func::{FuncAccessible, FuncData, FuncInstance, FuncUnit};
 use crate::session::Session;
-use crate::{impl_immutable_ptr, DeviceStoreSet, FuncRef, Val, WasmTyVec};
+use crate::{impl_immutable_ptr, DeviceStoreSet};
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use itertools::Itertools;
-use perfect_derive::perfect_derive;
+use once_cell::sync::Lazy;
+use wasm_spirv_funcgen::{FuncAccessible, FuncData, FuncInstance, FuncUnit};
+use wasm_types::{FuncRef, Val, WasmTyVec};
 
-#[perfect_derive(Debug)]
+#[derive(Debug)]
 pub struct FuncsInstance {
     wasm_functions: Vec<FuncUnit>,
     cap_set: CapabilityStore,
 }
+
+static EMPTY_ACCESSABLE: Lazy<Arc<FuncAccessible>> =
+    Lazy::new(|| Arc::new(FuncAccessible::empty()));
 
 impl FuncsInstance {
     pub fn new() -> Self {
@@ -35,7 +39,7 @@ impl FuncsInstance {
             .push_within_capacity(FuncUnit::LocalFunction(FuncInstance {
                 func_data,
                 // Imports have to be filled in later
-                accessible: None,
+                accessible: Arc::clone(&EMPTY_ACCESSABLE),
             }))
             .expect("calls to `reserve` should be made before registering");
 
@@ -51,7 +55,7 @@ impl FuncsInstance {
             .expect("if the pointer is valid, the pointed value must exist");
 
         match instance {
-            FuncUnit::LocalFunction(instance) => instance.accessible = Some(accessible),
+            FuncUnit::LocalFunction(instance) => instance.accessible = accessible,
         }
     }
 
@@ -75,6 +79,12 @@ impl FuncsInstance {
             .get(ptr.ptr)
             .expect("if ptr was valid, since `wasm_functions` is append only, item must exist")
     }
+
+    pub(crate) fn assembleable(&self) -> wasm_spirv_funcgen::FuncsInstance {
+        wasm_spirv_funcgen::FuncsInstance {
+            wasm_functions: self.wasm_functions.clone(),
+        }
+    }
 }
 
 impl_immutable_ptr!(
@@ -86,7 +96,8 @@ pub struct UntypedFuncPtr {
 
 impl UntypedFuncPtr {
     pub fn to_func_ref(&self) -> FuncRef {
-        FuncRef::from_u32(self.ptr as u32)
+        FuncRef::try_from(Some(self.ptr as u32))
+            .expect("cannot have more than u32::MAX - 1 functions")
     }
 
     pub fn try_typed<Params: WasmTyVec, Results: WasmTyVec>(
@@ -159,7 +170,9 @@ impl<Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<Params, Results> {
             .map(|res| {
                 // For each successful result, type it
                 res.into_iter()
-                    .map(|v| v.and_then(|v| Results::try_from_val_vec(&v)))
+                    .map(|v| {
+                        v.and_then(|v| Results::try_from_val_vec(&v).map_err(anyhow::Error::from))
+                    })
                     .collect_vec()
             })
             .boxed();

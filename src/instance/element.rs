@@ -1,7 +1,7 @@
 use crate::capabilities::CapabilityStore;
 use crate::impl_immutable_ptr;
-use crate::typed::{FuncRef, WasmTyVal, WasmTyVec};
 use itertools::Itertools;
+use wasm_types::{FuncRef, WasmTyVal};
 use wasmparser::ValType;
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;
@@ -56,7 +56,7 @@ impl MappedElementInstance {
         element: Vec<Option<u32>>,
     ) -> Result<ElementPtr, BufferAsyncError> {
         let start = self.meta.head;
-        let end = start + (element.len() * FuncRef::byte_count());
+        let end = start + (element.len() * usize::from(FuncRef::byte_count()));
         assert!(
             end <= self.references.len(),
             "not enough space reserved to insert element to device buffer"
@@ -64,7 +64,11 @@ impl MappedElementInstance {
 
         let bytes = element
             .iter()
-            .flat_map(|v| WasmTyVal::to_bytes(&FuncRef::from(v)))
+            .flat_map(|v| {
+                WasmTyVal::to_bytes(
+                    &FuncRef::try_from(*v).expect("must have less than u32::MAX - 1 functions"),
+                )
+            })
             .collect_vec();
 
         self.references
@@ -112,3 +116,9 @@ impl_immutable_ptr!(
         len: usize,
     }
 );
+
+impl ElementPtr {
+    pub fn to_index(&self) -> wasm_spirv_funcgen::ElementIndex {
+        wasm_spirv_funcgen::ElementIndex::from(self.ptr)
+    }
+}

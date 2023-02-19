@@ -95,4 +95,8 @@ impl AbstractTablePtr {
         self.ty.element_type.eq(&ty.element_type)
             && wasm_limits_match(self.ty.initial, self.ty.maximum, ty.initial, ty.maximum)
     }
+
+    pub fn to_index(&self) -> wasm_spirv_funcgen::TableIndex {
+        wasm_spirv_funcgen::TableIndex::from(self.ptr)
+    }
 }

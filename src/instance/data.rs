@@ -94,3 +94,9 @@ impl_immutable_ptr!(
         len: usize, // In bytes
     }
 );
+
+impl DataPtr {
+    pub fn to_index(&self) -> wasm_spirv_funcgen::DataIndex {
+        wasm_spirv_funcgen::DataIndex::from(self.ptr)
+    }
+}

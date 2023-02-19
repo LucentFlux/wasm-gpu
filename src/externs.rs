@@ -2,9 +2,9 @@ use crate::instance::func::{TypedFuncPtr, UntypedFuncPtr};
 use crate::instance::global::builder::AbstractGlobalPtr;
 use crate::instance::memory::builder::AbstractMemoryPtr;
 use crate::instance::table::builder::AbstractTablePtr;
-use crate::typed::WasmTyVec;
 use itertools::Itertools;
 use perfect_derive::perfect_derive;
+use wasm_types::WasmTyVec;
 use wasmparser::{FuncType, GlobalType, TableType};
 
 #[perfect_derive(Clone)]

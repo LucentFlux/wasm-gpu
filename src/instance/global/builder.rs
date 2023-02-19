@@ -4,8 +4,9 @@ use crate::instance::global::immutable::GlobalImmutablePtr;
 use crate::instance::global::instance::GlobalMutablePtr;
 use crate::instance::global::instance::UnmappedMutableGlobalsInstanceSet;
 use crate::instance::global::{impl_global_get, impl_global_push};
-use crate::typed::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal};
 use std::mem::size_of;
+use wasm_spirv_funcgen::GlobalIndex;
+use wasm_types::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal, V128};
 use wasmparser::{GlobalType, ValType};
 use wgpu::BufferAsyncError;
 use wgpu_async::async_device::OutOfMemoryError;
@@ -139,6 +140,10 @@ impl AbstractGlobalMutablePtr {
     pub fn is_type(&self, ty: &GlobalType) -> bool {
         return self.content_type.eq(&ty.content_type) && ty.mutable;
     }
+
+    pub fn to_index(&self) -> wasm_spirv_funcgen::GlobalMutableIndex {
+        wasm_spirv_funcgen::GlobalMutableIndex::from(self.ptr)
+    }
 }
 
 #[derive(Debug)]
@@ -173,6 +178,13 @@ impl AbstractGlobalPtr {
         GlobalType {
             content_type: *self.content_type(),
             mutable: self.mutable(),
+        }
+    }
+
+    pub fn to_index(&self) -> GlobalIndex {
+        match self {
+            AbstractGlobalPtr::Immutable(ptr) => GlobalIndex::Immutable(ptr.to_index()),
+            AbstractGlobalPtr::Mutable(ptr) => GlobalIndex::Mutable(ptr.to_index()),
         }
     }
 }

@@ -5,10 +5,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use wasm_spirv::wasp::externs::NamedExtern;
-use wasm_spirv::{
-    wasp, Ieee32, Ieee64, MappedStoreSetBuilder, ModuleInstanceReferences, Tuneables, Val,
-    WasmFeatures,
-};
+use wasm_spirv::{wasp, MappedStoreSetBuilder, ModuleInstanceReferences, Tuneables, WasmFeatures};
+use wasm_types::{Ieee32, Ieee64, Val, V128};
 use wast::core::{HeapType, NanPattern, V128Pattern, WastRetCore};
 use wast::lexer::Lexer;
 use wast::token::{Float32, Float64, Id, Index, Span};
@@ -200,7 +198,11 @@ impl WastState {
             .unwrap();
 
         // Invoke
-        let args: Vec<Val> = wast_invoke.args.into_iter().map(|v| Val::from(v)).collect();
+        let args: Vec<Val> = wast_invoke
+            .args
+            .into_iter()
+            .map(|v| Val::try_from(v).expect("args should be values"))
+            .collect();
         let args: Vec<Vec<Val>> = (0..INSTANCE_COUNT).map(|_| args.clone()).collect();
         let mut res_list: Vec<anyhow::Result<Vec<Val>>> = func.call_all(&mut instances, args).await;
 
@@ -380,7 +382,7 @@ macro_rules! to_bytes {
     };
 }
 
-fn vec_matches(got: u128, expected: &V128Pattern) -> bool {
+fn vec_matches(got: V128, expected: &V128Pattern) -> bool {
     let bs = got.to_le_bytes();
     match expected {
         V128Pattern::I8x16(v) => to_bytes!(v) == bs,
@@ -411,8 +413,8 @@ fn test_match(got: Val, expected: &WastRetCore) -> bool {
         (WastRetCore::F32(f1), Val::F32(f2)) => f32_matches(f2, f1),
         (WastRetCore::F64(f1), Val::F64(f2)) => f64_matches(f2, f1),
         (WastRetCore::V128(v1), Val::V128(v2)) => vec_matches(v2, v1),
-        (WastRetCore::RefNull(Some(HeapType::Func)), Val::FuncRef(r)) => r.is_none(),
-        (WastRetCore::RefNull(Some(HeapType::Extern)), Val::ExternRef(r)) => r.is_none(),
+        (WastRetCore::RefNull(Some(HeapType::Func)), Val::FuncRef(r)) => r.is_null(),
+        (WastRetCore::RefNull(Some(HeapType::Extern)), Val::ExternRef(r)) => r.is_null(),
         (WastRetCore::RefFunc(None), Val::FuncRef(_)) => true,
         (WastRetCore::RefFunc(Some(Index::Num(v1, _))), Val::FuncRef(v2)) => {
             v2.as_u32() == Some(*v1)

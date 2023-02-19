@@ -1,13 +1,8 @@
 use crate::capabilities::CapabilityStore;
 use crate::impl_immutable_ptr;
 use crate::instance::global::{impl_global_get, impl_global_push};
-use crate::typed::WasmTyVal;
-use crate::ExternRef;
-use crate::FuncRef;
-use crate::Ieee32;
-use crate::Ieee64;
-use crate::Val;
 use std::mem::size_of;
+use wasm_types::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal, V128};
 use wasmparser::{GlobalType, ValType};
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;
@@ -113,8 +108,7 @@ impl MappedImmutableGlobalsInstance {
     }
 
     impl_global_get! {
-        pub async fn try_get(&mut self,
-            queue: &AsyncQueue,ptr: &GlobalImmutablePtr) -> Result<Val, BufferAsyncError>
+        pub async fn try_get(&mut self, queue: &AsyncQueue, ptr: &GlobalImmutablePtr) -> Result<Val, BufferAsyncError>
     }
 }
 
@@ -128,5 +122,9 @@ impl_immutable_ptr!(
 impl GlobalImmutablePtr {
     pub fn is_type(&self, ty: &GlobalType) -> bool {
         return self.content_type.eq(&ty.content_type) && !ty.mutable;
+    }
+
+    pub fn to_index(&self) -> wasm_spirv_funcgen::GlobalImmutableIndex {
+        wasm_spirv_funcgen::GlobalImmutableIndex::from(self.ptr)
     }
 }

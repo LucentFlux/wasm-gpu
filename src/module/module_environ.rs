@@ -1,7 +1,8 @@
-use crate::{module::error::WasmError, module::operation::OperatorByProposal};
+use crate::module::error::WasmError;
 use ouroboros::self_referencing;
 use std::collections::HashMap;
 use std::ops::Range;
+use wasm_opcodes::OperatorByProposal;
 use wasmparser::{
     BinaryReaderError, DataKind, ElementItem, ElementKind, Encoding, ExternalKind,
     FuncValidatorAllocations, GlobalType, MemoryType, NameSectionReader, Operator, Parser, Payload,

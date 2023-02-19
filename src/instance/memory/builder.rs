@@ -98,4 +98,8 @@ impl AbstractMemoryPtr {
     pub fn is_type(&self, ty: &MemoryType) -> bool {
         wasm_limits_match(self.ty.initial, self.ty.maximum, ty.initial, ty.maximum)
     }
+
+    pub fn to_index(&self) -> wasm_spirv_funcgen::MemoryIndex {
+        wasm_spirv_funcgen::MemoryIndex::from(self.ptr)
+    }
 }

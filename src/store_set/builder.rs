@@ -1,6 +1,5 @@
 use crate::externs::NamedExtern;
-use crate::func::assembled_module::{AssembledModule, BuildError};
-use crate::func::FuncAccessible;
+use crate::func::FuncAccessiblePtrs;
 use crate::instance::data::{MappedDataInstance, UnmappedDataInstance};
 use crate::instance::element::{MappedElementInstance, UnmappedElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
@@ -18,9 +17,11 @@ use crate::instance::table::builder::{
 };
 use crate::instance::ModuleInstanceReferences;
 use crate::store_set::UnmappedStoreSetData;
-use crate::{DeviceStoreSet, ExternRef, FuncRef, Ieee32, Ieee64, Module, Tuneables, Val};
+use crate::{DeviceStoreSet, Module, Tuneables};
 use perfect_derive::perfect_derive;
 use std::sync::Arc;
+use wasm_spirv_funcgen::{AssembledModule, BuildError};
+use wasm_types::{ExternRef, FuncRef, Ieee32, Ieee64, Val, V128};
 use wasmparser::{Operator, ValType};
 use wgpu::BufferAsyncError;
 use wgpu_async::async_device::OutOfMemoryError;
@@ -46,9 +47,7 @@ pub(crate) async fn interpret_constexpr<'data>(
             Operator::I64Const { value } => stack.push(Val::I64(*value)),
             Operator::F32Const { value } => stack.push(Val::F32(Ieee32::from(*value))),
             Operator::F64Const { value } => stack.push(Val::F64(Ieee64::from(*value))),
-            Operator::V128Const { value } => {
-                stack.push(Val::V128(u128::from_le_bytes(value.bytes().clone())))
-            }
+            Operator::V128Const { value } => stack.push(Val::V128(V128::from(*value))),
             Operator::RefNull { ty } => match ty {
                 ValType::FuncRef => stack.push(Val::FuncRef(FuncRef::none())),
                 ValType::ExternRef => stack.push(Val::ExternRef(ExternRef::none())),
@@ -218,15 +217,15 @@ impl MappedStoreSetBuilder {
             .await?;
 
         // Function bodies, where imports matter
-        let function_accessibles = Arc::new(FuncAccessible {
+        let function_accessible_ptrs = FuncAccessiblePtrs {
             func_index_lookup: func_ptrs.clone(),
             global_index_lookup: global_ptrs.clone(),
             element_index_lookup: element_ptrs.clone(),
             table_index_lookup: table_ptrs.clone(),
             data_index_lookup: data_ptrs.clone(),
             memory_index_lookup: memory_ptrs.clone(),
-        });
-        module.try_initialize_function_bodies(&mut self.functions, function_accessibles)?;
+        };
+        module.try_initialize_function_bodies(&mut self.functions, &function_accessible_ptrs)?;
 
         // Final setup, consisting of the Start function, must be performed in the build step if it
         // calls any host functions
@@ -272,7 +271,8 @@ impl MappedStoreSetBuilder {
             .await
             .map_err(BuilderCompleteError::OoM)?;
 
-        let assembled_module = AssembledModule::assemble(&functions, &tuneables)
+        let assembleable_functions = functions.assembleable();
+        let assembled_module = AssembledModule::assemble(&assembleable_functions, &tuneables)
             .map_err(BuilderCompleteError::BuildError)?;
 
         Ok(CompletedBuilder {

@@ -1,9 +1,8 @@
 pub mod error;
 pub mod module_environ;
-pub mod operation;
 
 use crate::externs::{Extern, NamedExtern};
-use crate::func::{FuncAccessible, FuncData, FunctionModuleData};
+use crate::func::FuncAccessiblePtrs;
 use crate::instance::data::{DataPtr, MappedDataInstance};
 use crate::instance::element::{ElementPtr, MappedElementInstance};
 use crate::instance::func::{FuncsInstance, UntypedFuncPtr};
@@ -15,13 +14,15 @@ use crate::module::module_environ::{
     ImportTypeRef, ModuleEnviron, ModuleExport, ParsedDataKind, ParsedElementKind, ParsedModuleUnit,
 };
 use crate::store_set::builder::interpret_constexpr;
-use crate::typed::{wasm_ty_bytes, FuncRef, Val};
 use anyhow::{anyhow, Context, Error};
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::slice::Iter;
 use std::sync::Arc;
+use wasm_spirv_funcgen::FuncAccessible;
+use wasm_spirv_funcgen::{FuncData, FunctionModuleData};
+use wasm_types::{FuncRef, Val, ValTypeByteCount};
 use wasmparser::{Type, ValType, Validator};
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;
@@ -173,7 +174,7 @@ impl Module {
             .borrow_sections()
             .globals
             .iter()
-            .map(|g| (g.ty.mutable, wasm_ty_bytes(g.ty.content_type)))
+            .map(|g| (g.ty.mutable, g.ty.content_type.byte_count()))
             .partition(|(is_mutable, _)| *is_mutable);
 
         let is_immutable_mutable = immutables.first().unwrap_or(&(false, 0)).0;
@@ -635,7 +636,7 @@ impl Module {
     pub(crate) fn try_initialize_function_bodies<'a>(
         &'a self,
         functions: &mut FuncsInstance,
-        accessible: Arc<FuncAccessible>,
+        accessible: &FuncAccessiblePtrs,
     ) -> anyhow::Result<()> {
         // Check that the data we've been given for the initialisation of this module makes sense.
         // This is a debug check to ensure everything has been implemented properly by us. This method
@@ -654,8 +655,10 @@ impl Module {
         let defined_function_ptrs = &accessible.func_index_lookup[defined_func_start..];
         debug_assert_eq!(defined_function_ptrs.len(), defined_func_count);
 
+        let function_accessibles = Arc::new(accessible.to_indices());
+
         for ptr in defined_function_ptrs {
-            functions.link_function_imports(ptr, Arc::clone(&accessible));
+            functions.link_function_imports(ptr, Arc::clone(&function_accessibles));
         }
 
         return Ok(());

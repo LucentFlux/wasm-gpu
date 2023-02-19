@@ -3,7 +3,6 @@ pub mod calling;
 
 use wgpu_lazybuffers_macros::lazy_mappable;
 
-use crate::func::assembled_module::AssembledModule;
 use crate::instance::data::UnmappedDataInstance;
 use crate::instance::element::UnmappedElementInstance;
 use crate::instance::func::FuncsInstance;
@@ -15,6 +14,7 @@ use crate::instance::memory::instance::{MappedMemoryInstanceSet, UnmappedMemoryI
 use crate::instance::table::instance::{MappedTableInstanceSet, UnmappedTableInstanceSet};
 use crate::MappedStoreSetBuilder;
 use std::sync::Arc;
+use wasm_spirv_funcgen::AssembledModule;
 
 #[lazy_mappable(MappedStoreSetData)]
 pub struct UnmappedStoreSetData {

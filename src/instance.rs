@@ -4,9 +4,9 @@ use crate::instance::global::builder::AbstractGlobalPtr;
 use crate::instance::memory::builder::AbstractMemoryPtr;
 use crate::instance::table::builder::AbstractTablePtr;
 use crate::module::module_environ::ModuleExport;
-use crate::typed::WasmTyVec;
 use anyhow::{anyhow, Context};
 use std::collections::HashMap;
+use wasm_types::WasmTyVec;
 
 pub mod data;
 pub mod element;

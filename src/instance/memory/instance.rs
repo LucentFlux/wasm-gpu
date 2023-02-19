@@ -4,6 +4,7 @@ use crate::capabilities::CapabilityStore;
 use crate::impl_concrete_ptr;
 use crate::instance::memory::builder::AbstractMemoryPtr;
 use futures::future::join_all;
+use wasm_spirv_funcgen::MEMORY_STRIDE_WORDS;
 use wgpu::BufferAsyncError;
 use wgpu_async::{async_device::OutOfMemoryError, async_queue::AsyncQueue};
 use wgpu_lazybuffers::{MemorySystem, UnmappedLazyBuffer};
@@ -12,12 +13,12 @@ use wgpu_lazybuffers_interleaving::{
 };
 use wgpu_lazybuffers_macros::lazy_mappable;
 
-const STRIDE: u64 = 16; // 4 * u32
+pub const MEMORY_STRIDE_BYTES: u64 = (MEMORY_STRIDE_WORDS * 4) as u64;
 
 #[lazy_mappable(MappedMemoryInstanceSet)]
 pub struct UnmappedMemoryInstanceSet {
-    #[map(Vec<MappedInterleavedBuffer<STRIDE>>)]
-    data: Vec<UnmappedInterleavedBuffer<STRIDE>>,
+    #[map(Vec<MappedInterleavedBuffer<MEMORY_STRIDE_BYTES>>)]
+    data: Vec<UnmappedInterleavedBuffer<MEMORY_STRIDE_BYTES>>,
     cap_set: CapabilityStore,
 }
 
@@ -64,7 +65,7 @@ impl MappedMemoryInstanceSet {
 }
 
 pub struct MemoryView<'a> {
-    memory_block: &'a MappedInterleavedBuffer<STRIDE>,
+    memory_block: &'a MappedInterleavedBuffer<MEMORY_STRIDE_BYTES>,
     index: usize,
 }
 

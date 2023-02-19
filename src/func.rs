@@ -1,7 +1,4 @@
-use std::sync::Arc;
-
-use perfect_derive::perfect_derive;
-use wasmparser::{FuncType, ValType};
+use wasm_spirv_funcgen::FuncAccessible;
 
 use crate::instance::data::DataPtr;
 use crate::instance::element::ElementPtr;
@@ -9,31 +6,8 @@ use crate::instance::memory::builder::AbstractMemoryPtr;
 use crate::instance::table::builder::AbstractTablePtr;
 use crate::{instance::global::builder::AbstractGlobalPtr, UntypedFuncPtr};
 
-use crate::module::operation::OperatorByProposal;
-
-pub mod assembled_module;
-mod bindings_gen;
-mod call_graph;
-mod func_gen;
-mod function_collection;
-
-/// Data from the parsed module shared by all functions, e.g. function types
 #[derive(Debug)]
-pub struct FunctionModuleData {
-    pub types: Vec<wasmparser::Type>,
-}
-
-/// All data for each function in the module, without imports
-#[derive(Debug)]
-pub struct FuncData {
-    pub ty: FuncType,
-    pub locals: Vec<(u32, ValType)>,
-    pub operators: Vec<OperatorByProposal>,
-    pub module_data: Arc<FunctionModuleData>,
-}
-
-#[derive(Debug)]
-pub struct FuncAccessible {
+pub struct FuncAccessiblePtrs {
     pub func_index_lookup: Vec<UntypedFuncPtr>,
     pub global_index_lookup: Vec<AbstractGlobalPtr>,
     pub element_index_lookup: Vec<ElementPtr>,
@@ -41,27 +15,39 @@ pub struct FuncAccessible {
     pub data_index_lookup: Vec<DataPtr>,
     pub memory_index_lookup: Vec<AbstractMemoryPtr>,
 }
-
-/// All data for each function in the module, including all module objects that the function can access
-#[perfect_derive(Debug)]
-pub struct FuncInstance {
-    pub func_data: FuncData,
-    /// Pointers into the instantiated module set of all accessible objects
-    pub accessible: Option<Arc<FuncAccessible>>,
-}
-
-impl FuncInstance {
-    pub fn accessible(&self) -> &FuncAccessible {
-        self.accessible
-            .as_ref()
-            .expect("accessible values should be populated at module link time")
+impl FuncAccessiblePtrs {
+    pub(crate) fn to_indices(&self) -> FuncAccessible {
+        FuncAccessible {
+            func_index_lookup: self
+                .func_index_lookup
+                .iter()
+                .map(|ptr| ptr.to_func_ref())
+                .collect(),
+            global_index_lookup: self
+                .global_index_lookup
+                .iter()
+                .map(|ptr| ptr.to_index())
+                .collect(),
+            element_index_lookup: self
+                .element_index_lookup
+                .iter()
+                .map(|ptr| ptr.to_index())
+                .collect(),
+            table_index_lookup: self
+                .table_index_lookup
+                .iter()
+                .map(|ptr| ptr.to_index())
+                .collect(),
+            data_index_lookup: self
+                .data_index_lookup
+                .iter()
+                .map(|ptr| ptr.to_index())
+                .collect(),
+            memory_index_lookup: self
+                .memory_index_lookup
+                .iter()
+                .map(|ptr| ptr.to_index())
+                .collect(),
+        }
     }
-}
-
-/// Something that can be called, either an instance to be converted to shader code,
-/// or an injected custom function
-#[perfect_derive(Debug)]
-pub enum FuncUnit {
-    LocalFunction(FuncInstance),
-    //CustomFunction {},
 }

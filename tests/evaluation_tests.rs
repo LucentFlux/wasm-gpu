@@ -5,7 +5,7 @@ use wasm_spirv::{wasp, PanicOnAny};
 use wgpu_async::wrap_wgpu;
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
-fn test_parity<Res: wasmtime::WasmResults + wasp::WasmTyVal + Eq + std::fmt::Debug>(
+fn test_parity<Res: wasmtime::WasmResults + wasm_types::WasmTyVal + Eq + std::fmt::Debug>(
     wasm: &str,
     target_name: &str,
 ) {

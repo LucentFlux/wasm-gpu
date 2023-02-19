@@ -6,7 +6,6 @@
 
 mod atomic_counter;
 mod capabilities;
-mod config;
 mod externs;
 mod func;
 mod instance;
@@ -28,7 +27,7 @@ pub mod wasp {
     pub use panic_on_any::PanicOnAny;
 
     // Configs
-    pub use config::Tuneables;
+    pub use wasm_spirv_funcgen::Tuneables;
     pub use wasmparser::WasmFeatures;
     // Module
     pub use module::Module;
