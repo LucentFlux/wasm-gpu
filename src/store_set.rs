@@ -12,6 +12,7 @@ use crate::instance::global::instance::{
 };
 use crate::instance::memory::instance::{MappedMemoryInstanceSet, UnmappedMemoryInstanceSet};
 use crate::instance::table::instance::{MappedTableInstanceSet, UnmappedTableInstanceSet};
+use crate::shader_module::WasmShaderModule;
 use crate::MappedStoreSetBuilder;
 use std::sync::Arc;
 use wasm_spirv_funcgen::AssembledModule;
@@ -33,7 +34,7 @@ pub struct StoreSet<O> {
     pub datas: Arc<UnmappedDataInstance>,
     pub immutable_globals: Arc<UnmappedImmutableGlobalsInstance>,
 
-    pub assembled_module: Arc<AssembledModule>,
+    pub shader_module: Arc<WasmShaderModule>,
 
     pub owned: O,
 }

@@ -16,10 +16,9 @@ struct Meta {}
 #[lazy_mappable(MappedTableInstanceSetBuilder)]
 #[derive(Debug)]
 pub struct UnmappedTableInstanceSetBuilder {
-    #[map(Vec<MappedLazyBuffer>)]
-    tables: Vec<UnmappedLazyBuffer>,
+    #[map(MappedLazyBuffer)]
+    tables: UnmappedLazyBuffer,
     cap_set: CapabilityStore,
-    memory_system: MemorySystem,
 }
 
 impl UnmappedTableInstanceSetBuilder {
@@ -43,23 +42,21 @@ impl UnmappedTableInstanceSetBuilder {
 impl MappedTableInstanceSetBuilder {
     pub fn new(memory_system: &MemorySystem) -> Self {
         Self {
-            tables: Vec::new(),
+            tables: memory_system.create_and_map_empty(&EmptyMemoryBlockConfig {
+                usages: wgpu::BufferUsages::empty(),
+                locking_size: 128,
+            }),
             cap_set: CapabilityStore::new(0),
-            memory_system: memory_system.clone(),
         }
     }
 
     pub fn add_table(&mut self, plan: &TableType) -> AbstractTablePtr {
         let ptr = self.tables.len();
-        self.tables.push(
-            self.memory_system
-                .create_and_map_empty(&EmptyMemoryBlockConfig {
-                    usages: wgpu::BufferUsages::empty(),
-                    locking_size: 128,
-                }),
-        );
+        let len = usize::try_from(plan.initial)
+            .expect("table must be expressable in RAM, but was too big");
+        self.tables.extend_lazy(len);
         self.cap_set = self.cap_set.resize_ref(self.tables.len());
-        return AbstractTablePtr::new(ptr, self.cap_set.get_cap(), plan.clone());
+        return AbstractTablePtr::new(ptr, self.cap_set.get_cap(), plan.clone(), len);
     }
 
     pub async fn try_initialize(
@@ -74,10 +71,15 @@ impl MappedTableInstanceSetBuilder {
             "table pointer was not valid for this instance"
         );
 
+        assert!(
+            ptr.len >= offset + data.len(),
+            "cannot slice memory larger than allocated memory space"
+        );
+
+        let bounds = (ptr.ptr + offset)..(ptr.ptr + offset + data.len());
+
         self.tables
-            .get_mut(ptr.ptr)
-            .expect("Table builders are append only, so having a pointer implies the item exists")
-            .try_write_slice_locking(queue, offset..offset + data.len(), data)
+            .try_write_slice_locking(queue, bounds, data)
             .await
     }
 }
@@ -87,6 +89,7 @@ impl_abstract_ptr!(
         pub(in crate::instance::table) data...
         // Copied from Table
         ty: TableType,
+        len: usize,
     } with concrete TablePtr;
 );
 

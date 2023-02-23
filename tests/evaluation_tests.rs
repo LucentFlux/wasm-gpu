@@ -1,7 +1,8 @@
 //! A collection of hand-written programs and tests that they evaluate to the expected result.
 //! Uses Wasmtime as a reference implementation
 
-use wasm_spirv::{wasp, PanicOnAny};
+use wasm_spirv::wasp;
+use wasmtime::Trap;
 use wgpu_async::wrap_wgpu;
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
@@ -16,11 +17,14 @@ fn test_parity<Res: wasmtime::WasmResults + wasm_types::WasmTyVal + Eq + std::fm
         let mut store = wasmtime::Store::new(&engine, ());
         let instance = wasmtime::Instance::new(&mut store, &module, &[]).unwrap();
         let target = instance.get_func(&mut store, target_name).unwrap();
-        let target = target.typed::<(), Res, _>(&store).unwrap();
-        let truth_result = target.call(&mut store, ()).unwrap();
+        let target = target.typed::<(), Res>(&store).unwrap();
+        let truth_result = target.call(&mut store, ());
 
         // Evaluate with Wasp
-        let instance = wgpu::Instance::new(wgpu::Backends::all());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            dx12_shader_compiler: wgpu::Dx12Compiler::Fxc,
+        });
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -83,11 +87,23 @@ fn test_parity<Res: wasmtime::WasmResults + wasm_types::WasmTyVal + Eq + std::fm
             .expect("could not build stores");
 
         let got_results = target
-            .call_all(&mut stores, vec![()])
+            .call_all(&memory_system, &queue, &mut stores, vec![()])
             .await
-            .expect_all("could not call target function");
+            .expect("could not allocate call buffers")
+            .await
+            .expect("could not read results buffers");
 
-        assert_eq!(truth_result, got_results[0]);
+        // Check they are the same
+        let truth_result = truth_result.map_err(|err| {
+            err.downcast_ref::<Trap>()
+                .expect("any errors should be traps")
+                .clone()
+        });
+        for got_result in got_results {
+            let got_result = got_result.map_err(|trap_code| wasmtime::Trap::from(trap_code));
+
+            assert_eq!(truth_result, got_result);
+        }
     })
 }
 

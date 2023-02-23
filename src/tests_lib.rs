@@ -6,7 +6,10 @@ use wgpu_async::async_queue::AsyncQueue;
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
 pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
-    let instance = wgpu::Instance::new(wgpu::Backends::all());
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        dx12_shader_compiler: wgpu::Dx12Compiler::Fxc,
+    });
 
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {

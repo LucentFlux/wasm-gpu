@@ -60,11 +60,11 @@ impl<'a> Caller<'a> {
         }
     }
 
-    pub async fn get_memory<'b>(&'b self, name: &str) -> Option<ActiveMemoryView<'b>> {
+    pub async fn lock_memory<'b>(&'b self, name: &str) -> Option<ActiveMemoryView<'b>> {
         let memptr = self.instance.get_memory_export(name).ok()?;
         let memptr = memptr.concrete(self.index);
 
-        let view = self.memory.get(&memptr);
+        let view = self.memory.lock(&memptr).await;
         Some(ActiveMemoryView {
             view,
             queue: self.queue,

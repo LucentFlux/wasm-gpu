@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wgpu = "0.14"
+wgpu = { version = "0.15", features = ["naga"] }
 wgpu-async = { path = "../wgpu-async" }
 wgpu-lazybuffers = { path = "../wgpu-lazybuffers" }
 wgpu-lazybuffers-operations = { path = "../wgpu-lazybuffers-operations" }
@@ -30,14 +30,20 @@ ouroboros = "0.15"
 perfect-derive = "0.1"
 tokio = { version = "1.22", features = ["rt", "rt-multi-thread", "macros"] }
 wast = "50.0"
-naga = { version = "0.11", features = ["hlsl-out"] }
+naga = { version = "0.11", features = ["clone"] }
 once_cell = "1.17"
+spirv-tools = { version = "0.9", optional = true, features = [
+    "use-compiled-tools",
+] }
+wasmtime-environ = "6"
 
 [dev-dependencies]
-rand = "0.8"
 wasm-spirv-test-gen = { path = "test_gen" }
-wasmtime = { version = "1", features = ["wat"] }
+wasmtime = { version = "6", features = ["wat"] }
+rand = "0.8"
 pollster = "0.2"
 
-[build]
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+[features]
+default = ["opt", "debug_hlsl_out"]                     # TODO: Remove this when not debugging
+opt = ["dep:spirv-tools", "wgpu/spirv", "naga/spv-out"]
+debug_hlsl_out = ["naga/hlsl-out"]

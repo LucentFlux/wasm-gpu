@@ -28,6 +28,10 @@ impl UnmappedDataInstance {
             .try_read_slice_locking(queue, ..)
             .await
     }
+
+    pub(crate) fn buffer(&self) -> &UnmappedLazyBuffer {
+        &self.datas
+    }
 }
 
 impl MappedDataInstance {

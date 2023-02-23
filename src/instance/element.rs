@@ -24,7 +24,11 @@ pub struct UnmappedElementInstance {
     meta: Meta,
 }
 
-impl UnmappedElementInstance {}
+impl UnmappedElementInstance {
+    pub(crate) fn buffer(&self) -> &UnmappedLazyBuffer {
+        &self.references
+    }
+}
 
 impl MappedElementInstance {
     pub fn new(memory_system: &MemorySystem) -> Self {

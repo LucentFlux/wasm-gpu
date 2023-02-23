@@ -13,8 +13,8 @@ const STRIDE: u64 = 4; // FuncRef is 1 x u32
 
 #[lazy_mappable(MappedTableInstanceSet)]
 pub struct UnmappedTableInstanceSet {
-    #[map(Vec<MappedInterleavedBuffer<STRIDE>>)]
-    data: Vec<UnmappedInterleavedBuffer<STRIDE>>,
+    #[map(MappedInterleavedBuffer<STRIDE>)]
+    tables: UnmappedInterleavedBuffer<STRIDE>,
     cap_set: CapabilityStore,
 }
 
@@ -22,7 +22,7 @@ impl UnmappedTableInstanceSet {
     pub(crate) async fn try_new(
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
-        sources: &Vec<UnmappedLazyBuffer>,
+        source: &UnmappedLazyBuffer,
         count: usize,
         cap_set: CapabilityStore,
     ) -> Result<Self, OutOfMemoryError> {
@@ -31,16 +31,15 @@ impl UnmappedTableInstanceSet {
             usages: wgpu::BufferUsages::STORAGE,
             locking_size: None,
         };
-        let tables = sources
-            .iter()
-            .map(|source| source.try_duplicate_interleave(memory_system, queue, &cfg));
+        let tables = source
+            .try_duplicate_interleave(memory_system, queue, &cfg)
+            .await?;
 
-        let tables: Result<_, _> = join_all(tables).await.into_iter().collect();
+        Ok(Self { tables, cap_set })
+    }
 
-        Ok(Self {
-            data: tables?,
-            cap_set,
-        })
+    pub(crate) fn buffer(&self) -> &UnmappedLazyBuffer {
+        &self.tables
     }
 }
 

@@ -1,4 +1,4 @@
-use wasm_spirv::{imports, wasp, Tuneables};
+use wasm_spirv::{imports, wasp, PanicOnAny, Tuneables};
 use wgpu_async::wrap_wgpu;
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
@@ -6,7 +6,10 @@ use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    let instance = wgpu::Instance::new(wgpu::Backends::all());
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        dx12_shader_compiler: wgpu::Dx12Compiler::Fxc,
+    });
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -41,9 +44,10 @@ async fn main() -> anyhow::Result<()> {
     // wasm setup
     let wat = r#"
         (module
-            (func (result i32)
+            (func $f (result i32)
                 (i32.const 42)
             )
+            (export "fill_with_value" (func $f))
         )
     "#;
     let module = wasp::Module::new(
@@ -59,14 +63,21 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("could not instantiate all modules");
 
+    let function = instances.get_func("fill_with_value").unwrap();
+    let function = function.try_typed::<(), i32>().unwrap();
+
     let store_source = store_builder
         .complete(&queue)
         .await
         .expect("could not complete store builder");
 
-    // Get generated source
-    let module = store_source.get_module();
-    let module_info = store_source.get_module_info();
+    let mut stores = store_source
+        .build(&memory_system, &queue, 1)
+        .await
+        .expect("could not build stores");
+
+    let module = &store_source.get_module();
+    let module_info = &store_source.get_module_info();
     let mut output_shader = String::new();
     let hlsl_options = naga::back::hlsl::Options {
         shader_model: naga::back::hlsl::ShaderModel::V6_0,
@@ -82,15 +93,17 @@ async fn main() -> anyhow::Result<()> {
     println!("{}", output_shader);
     println!("=====================HLSL SHADER END=====================");
 
-    /*let mut stores = store_source
-        .build(&memory_system, &queue, [16])
+    let results = function
+        .call_all(&memory_system, &queue, &mut stores, vec![()])
         .await
-        .expect("could not build stores");
+        .unwrap()
+        .await
+        .unwrap()
+        .expect_all("could not call all hello functions");
 
-    hellos
-        .call_all(&mut stores, vec![()])
-        .await
-        .expect_all("could not call all hello functions");*/
+    for result in results {
+        println!("result: {}", result);
+    }
 
     Ok(())
 }

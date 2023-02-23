@@ -41,6 +41,10 @@ impl UnmappedMutableGlobalsInstanceSet {
             cap_set,
         })
     }
+
+    pub(crate) fn buffer(&self) -> &UnmappedLazyBuffer {
+        &self.mutables
+    }
 }
 impl_concrete_ptr!(
     pub struct GlobalMutablePtr {

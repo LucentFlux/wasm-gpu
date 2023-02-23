@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::capabilities::CapabilityStore;
-use crate::session::Session;
+use crate::session::{OutputType, Session};
 use crate::{impl_immutable_ptr, DeviceStoreSet};
 use futures::future::BoxFuture;
 use futures::FutureExt;
@@ -9,6 +9,9 @@ use itertools::Itertools;
 use once_cell::sync::Lazy;
 use wasm_spirv_funcgen::{FuncAccessible, FuncData, FuncInstance, FuncUnit};
 use wasm_types::{FuncRef, Val, WasmTyVec};
+use wgpu::BufferAsyncError;
+use wgpu_async::{AsyncQueue, OutOfMemoryError};
+use wgpu_lazybuffers::MemorySystem;
 
 #[derive(Debug)]
 pub struct FuncsInstance {
@@ -128,15 +131,17 @@ impl UntypedFuncPtr {
     /// This function panics if:
     ///  - this function is not in the given store set
     ///  - the arguments given don't match the arguments that the function takes
-    pub fn call_all<'a>(
+    pub async fn call_all<'a>(
         &self,
+        memory_system: &MemorySystem,
+        queue: &AsyncQueue,
         stores: &'a mut DeviceStoreSet,
         args: impl IntoIterator<Item = Vec<Val>>,
-    ) -> BoxFuture<'a, Vec<anyhow::Result<Vec<Val>>>> {
+    ) -> Result<BoxFuture<'a, OutputType>, OutOfMemoryError> {
         let args = args.into_iter().collect();
 
         let session = Session::new(stores, self.clone(), args);
-        return session.run().boxed();
+        return session.run(memory_system, queue).await;
     }
 }
 
@@ -156,25 +161,36 @@ impl<Params: WasmTyVec, Results: WasmTyVec> TypedFuncPtr<Params, Results> {
     /// # Panics
     /// This function panics if:
     ///  - this function is not in the given store set
-    pub fn call_all<'a>(
+    pub async fn call_all<'a>(
         &self,
+        memory_system: &MemorySystem,
+        queue: &AsyncQueue,
         stores: &'a mut DeviceStoreSet,
         args: impl IntoIterator<Item = Params>,
-    ) -> BoxFuture<'a, Vec<anyhow::Result<Results>>> {
+    ) -> Result<
+        BoxFuture<'a, Result<Vec<Result<Results, wasmtime_environ::Trap>>, BufferAsyncError>>,
+        OutOfMemoryError,
+    > {
         let args = args.into_iter().map(|v| v.to_val_vec()).collect();
 
         let entry_func = self.as_untyped();
         let session = Session::new(stores, entry_func.clone(), args);
-        return session
-            .run()
-            .map(|res| {
+
+        let gpu_future = session.run(memory_system, queue).await?;
+        let typed_gpu_future = gpu_future.map(|res| {
+            res.map(|ret| {
                 // For each successful result, type it
-                res.into_iter()
+                ret.into_iter()
                     .map(|v| {
-                        v.and_then(|v| Results::try_from_val_vec(&v).map_err(anyhow::Error::from))
+                        v.map(|v| {
+                            Results::try_from_val_vec(&v).expect("type safety should ensure that casting function results to this typed pointer type always succeeds")
+                        })
                     })
                     .collect_vec()
             })
-            .boxed();
+        })
+        .boxed();
+
+        return Ok(typed_gpu_future);
     }
 }

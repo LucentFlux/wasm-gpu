@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use crate::capabilities::CapabilityStore;
 use crate::impl_abstract_ptr;
 use crate::instance::memory::instance::{MemoryPtr, UnmappedMemoryInstanceSet};
@@ -18,10 +20,9 @@ struct Meta {}
 #[lazy_mappable(MappedMemoryInstanceSetBuilder)]
 #[derive(Debug)]
 pub struct UnmappedMemoryInstanceSetBuilder {
-    #[map(Vec<MappedLazyBuffer>)]
-    memories: Vec<UnmappedLazyBuffer>,
+    #[map(MappedLazyBuffer)]
+    memory: UnmappedLazyBuffer,
     cap_set: CapabilityStore,
-    memory_system: MemorySystem,
 }
 
 impl UnmappedMemoryInstanceSetBuilder {
@@ -34,7 +35,7 @@ impl UnmappedMemoryInstanceSetBuilder {
         UnmappedMemoryInstanceSet::try_new(
             memory_system,
             queue,
-            &self.memories,
+            &self.memory,
             count,
             self.cap_set.clone(),
         )
@@ -45,23 +46,21 @@ impl UnmappedMemoryInstanceSetBuilder {
 impl MappedMemoryInstanceSetBuilder {
     pub fn new(memory_system: &MemorySystem) -> Self {
         Self {
-            memories: Vec::new(),
+            memory: memory_system.create_and_map_empty(&EmptyMemoryBlockConfig {
+                usages: wgpu::BufferUsages::empty(),
+                locking_size: 8192,
+            }),
             cap_set: CapabilityStore::new(0),
-            memory_system: memory_system.clone(),
         }
     }
 
     pub fn add_memory(&mut self, plan: &MemoryType) -> AbstractMemoryPtr {
-        let ptr = self.memories.len();
-        self.memories.push(
-            self.memory_system
-                .create_and_map_empty(&EmptyMemoryBlockConfig {
-                    usages: wgpu::BufferUsages::empty(),
-                    locking_size: 8192,
-                }),
-        );
-        self.cap_set = self.cap_set.resize_ref(self.memories.len());
-        return AbstractMemoryPtr::new(ptr, self.cap_set.get_cap(), plan.clone());
+        let ptr = self.memory.len();
+        let len = usize::try_from(plan.initial)
+            .expect("memory must be expressable in RAM, but was too big");
+        self.memory.extend_lazy(len);
+        self.cap_set = self.cap_set.resize_ref(self.memory.len());
+        return AbstractMemoryPtr::new(ptr, self.cap_set.get_cap(), plan.clone(), len);
     }
 
     /// # Panics
@@ -78,10 +77,15 @@ impl MappedMemoryInstanceSetBuilder {
             "memory pointer was not valid for this instance"
         );
 
-        self.memories
-            .get_mut(ptr.ptr as usize)
-            .expect("Memory builders are append only, so having a pointer implies the item exists")
-            .try_write_slice_locking(queue, offset..offset + data.len(), data)
+        assert!(
+            ptr.len >= offset + data.len(),
+            "cannot slice memory larger than allocated memory space"
+        );
+
+        let bounds = (ptr.ptr + offset)..(ptr.ptr + offset + data.len());
+
+        self.memory
+            .try_write_slice_locking(queue, bounds, data)
             .await
     }
 }
@@ -91,6 +95,7 @@ impl_abstract_ptr!(
         pub(in crate::instance::memory) data...
         // Copied from Memory
         ty: MemoryType,
+        len: usize,
     } with concrete MemoryPtr;
 );
 

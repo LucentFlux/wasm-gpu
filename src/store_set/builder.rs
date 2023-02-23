@@ -16,6 +16,7 @@ use crate::instance::table::builder::{
     MappedTableInstanceSetBuilder, UnmappedTableInstanceSetBuilder,
 };
 use crate::instance::ModuleInstanceReferences;
+use crate::shader_module::WasmShaderModule;
 use crate::store_set::UnmappedStoreSetData;
 use crate::{DeviceStoreSet, Module, Tuneables};
 use perfect_derive::perfect_derive;
@@ -275,6 +276,8 @@ impl MappedStoreSetBuilder {
         let assembled_module = AssembledModule::assemble(&assembleable_functions, &tuneables)
             .map_err(BuilderCompleteError::BuildError)?;
 
+        let shader_module = WasmShaderModule::make(queue.device(), &assembled_module);
+
         Ok(CompletedBuilder {
             tables,
             memories,
@@ -283,7 +286,8 @@ impl MappedStoreSetBuilder {
             immutable_globals: Arc::new(immutable_globals),
             datas: Arc::new(datas),
             functions: Arc::new(functions),
-            assembled_module: Arc::new(assembled_module),
+            shader_module: Arc::new(shader_module),
+            assembled_module,
         })
     }
 }
@@ -300,16 +304,17 @@ pub struct CompletedBuilder {
     /// We build the actual spir-v at builder completion, then copy it out to all store sets as they're
     /// instantiated. However all the information for the module can be rebuilt from the above data, so
     /// hoisting this is for optimisation reasons.
-    assembled_module: Arc<AssembledModule>,
+    shader_module: Arc<WasmShaderModule>,
+    assembled_module: AssembledModule,
 }
 
 impl CompletedBuilder {
     pub fn get_module(&self) -> &naga::Module {
-        self.assembled_module.get_module()
+        &self.assembled_module.module
     }
 
     pub fn get_module_info(&self) -> &naga::valid::ModuleInfo {
-        self.assembled_module.get_module_info()
+        &self.assembled_module.module_info
     }
 
     /// Takes the instructions provided to this builder and produces a collection of stores which can
@@ -337,7 +342,7 @@ impl CompletedBuilder {
             elements: self.elements.clone(),
             datas: self.datas.clone(),
             immutable_globals: self.immutable_globals.clone(),
-            assembled_module: self.assembled_module.clone(),
+            shader_module: self.shader_module.clone(),
             owned: UnmappedStoreSetData {
                 tables,
                 memories,

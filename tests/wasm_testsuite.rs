@@ -23,7 +23,10 @@ fn gen_check(path: &str, test_index: usize) {
 }
 
 pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
-    let instance = wgpu::Instance::new(wgpu::Backends::all());
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        dx12_shader_compiler: wgpu::Dx12Compiler::Fxc,
+    });
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -162,7 +165,7 @@ impl WastState {
         &'a mut self,
         wast_invoke: WastInvoke<'a>,
         span: &Span,
-    ) -> anyhow::Result<Vec<Val>> {
+    ) -> Result<Vec<Val>, wasmtime_environ::Trap> {
         let module = match wast_invoke.module {
             None => self
                 .latest_module
@@ -204,17 +207,22 @@ impl WastState {
             .map(|v| Val::try_from(v).expect("args should be values"))
             .collect();
         let args: Vec<Vec<Val>> = (0..INSTANCE_COUNT).map(|_| args.clone()).collect();
-        let mut res_list: Vec<anyhow::Result<Vec<Val>>> = func.call_all(&mut instances, args).await;
+        let mut res_list: Vec<Result<Vec<Val>, wasmtime_environ::Trap>> = func
+            .call_all(&self.memory_system, &self.queue, &mut instances, args)
+            .await
+            .unwrap()
+            .await
+            .unwrap();
 
         // Many instances but should all be the same result
         let res = res_list.pop().unwrap();
         assert!(
             res_list
                 .into_iter()
-                .all(|other_res: anyhow::Result<Vec<Val>>| {
+                .all(|other_res: Result<Vec<Val>, wasmtime_environ::Trap>| {
                     match (&res, &other_res) {
                         (Ok(v1), Ok(v2)) => v1.eq(v2),
-                        (Err(_), Err(_)) => true,
+                        (Err(trap1), Err(trap2)) => trap1.eq(trap2),
                         _ => false,
                     }
                 }),
@@ -231,7 +239,7 @@ impl WastState {
         &'a mut self,
         exec: WastExecute<'a>,
         span: &Span,
-    ) -> anyhow::Result<Vec<Val>> {
+    ) -> Result<Vec<Val>, wasmtime_environ::Trap> {
         match exec {
             WastExecute::Invoke(inv) => self.invoke(inv, span).await,
             WastExecute::Wat(_) => unimplemented!(),

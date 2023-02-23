@@ -1,4 +1,4 @@
-use std::ops::RangeBounds;
+use std::ops::{Bound, Range, RangeBounds};
 
 use crate::capabilities::CapabilityStore;
 use crate::impl_concrete_ptr;
@@ -7,7 +7,7 @@ use futures::future::join_all;
 use wasm_spirv_funcgen::MEMORY_STRIDE_WORDS;
 use wgpu::BufferAsyncError;
 use wgpu_async::{async_device::OutOfMemoryError, async_queue::AsyncQueue};
-use wgpu_lazybuffers::{MemorySystem, UnmappedLazyBuffer};
+use wgpu_lazybuffers::{LockCollection, MemorySystem, UnmappedLazyBuffer};
 use wgpu_lazybuffers_interleaving::{
     Interleaveable, InterleavedBufferConfig, MappedInterleavedBuffer, UnmappedInterleavedBuffer,
 };
@@ -17,66 +17,92 @@ pub const MEMORY_STRIDE_BYTES: u64 = (MEMORY_STRIDE_WORDS * 4) as u64;
 
 #[lazy_mappable(MappedMemoryInstanceSet)]
 pub struct UnmappedMemoryInstanceSet {
-    #[map(Vec<MappedInterleavedBuffer<MEMORY_STRIDE_BYTES>>)]
-    data: Vec<UnmappedInterleavedBuffer<MEMORY_STRIDE_BYTES>>,
+    #[map(MappedInterleavedBuffer<MEMORY_STRIDE_BYTES>)]
+    memory: UnmappedInterleavedBuffer<MEMORY_STRIDE_BYTES>,
     cap_set: CapabilityStore,
+    instance_count: usize,
 }
 
 impl UnmappedMemoryInstanceSet {
     pub(crate) async fn try_new(
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
-        sources: &Vec<UnmappedLazyBuffer>,
-        count: usize,
+        source: &UnmappedLazyBuffer,
+        instance_count: usize,
         cap_set: CapabilityStore,
     ) -> Result<Self, OutOfMemoryError> {
         let cfg = InterleavedBufferConfig {
-            repetitions: count,
+            repetitions: instance_count,
             usages: wgpu::BufferUsages::STORAGE,
             locking_size: None,
         };
-        let memories = sources
-            .iter()
-            .map(|source| source.try_duplicate_interleave(memory_system, queue, &cfg));
-
-        let memories: Result<_, _> = join_all(memories).await.into_iter().collect();
+        let memory = source
+            .try_duplicate_interleave(memory_system, queue, &cfg)
+            .await?;
 
         Ok(Self {
-            data: memories?,
+            memory,
             cap_set,
+            instance_count,
         })
+    }
+
+    pub(crate) fn buffer(&self) -> &UnmappedLazyBuffer {
+        &self.memory
     }
 }
 
 impl MappedMemoryInstanceSet {
-    pub(crate) fn get<'a>(&'a self, ptr: &MemoryPtr) -> MemoryView<'a> {
+    pub(crate) async fn lock<'a>(&'a self, ptr: &MemoryPtr) -> MemoryView<'a> {
         assert!(self.cap_set.check(&ptr.src.cap));
 
-        let memory_block = self
-            .data
-            .get(ptr.src.ptr)
-            .expect("pointer was valid in cap set");
+        let mut memory_locks = LockCollection::empty();
+        let bounds = ptr.bounds(self.instance_count);
+        self.memory
+            .lock_writing(bounds.clone(), &mut memory_locks)
+            .await;
 
         MemoryView {
-            memory_block,
-            index: ptr.index,
+            memory: &self.memory,
+            memory_locks,
+            bounds,
         }
     }
 }
 
 pub struct MemoryView<'a> {
-    memory_block: &'a MappedInterleavedBuffer<MEMORY_STRIDE_BYTES>,
-    index: usize,
+    memory: &'a MappedInterleavedBuffer<MEMORY_STRIDE_BYTES>,
+    memory_locks: LockCollection<'a>,
+    bounds: Range<usize>,
 }
 
 impl<'a> MemoryView<'a> {
+    fn slice_to_bounds(&self, slice: impl RangeBounds<usize>) -> Range<usize> {
+        let start = self.bounds.start
+            + match slice.start_bound() {
+                Bound::Included(v) => *v,
+                Bound::Excluded(v) => *v + 1,
+                Bound::Unbounded => 0,
+            };
+        let end = match slice.end_bound() {
+            Bound::Included(v) => self.bounds.start + *v + 1,
+            Bound::Excluded(v) => self.bounds.start + *v,
+            Bound::Unbounded => self.bounds.end,
+        };
+
+        assert!(start <= end);
+        assert!(end <= self.bounds.end);
+
+        return start..end;
+    }
+
     pub async fn try_read_slice(
         &self,
         queue: &AsyncQueue,
         slice: impl RangeBounds<usize>,
     ) -> Result<Vec<u8>, BufferAsyncError> {
-        self.memory_block
-            .try_read_interleaved_slice_locking(queue, slice, self.index)
+        self.memory
+            .try_read_slice_with_locks(queue, self.slice_to_bounds(slice), &self.memory_locks)
             .await
     }
 
@@ -86,8 +112,13 @@ impl<'a> MemoryView<'a> {
         slice: impl RangeBounds<usize>,
         data: &[u8],
     ) -> Result<(), BufferAsyncError> {
-        self.memory_block
-            .try_write_interleaved_slice_locking(queue, slice, self.index, data)
+        self.memory
+            .try_write_slice_with_locks(
+                queue,
+                self.slice_to_bounds(slice),
+                data,
+                &self.memory_locks,
+            )
             .await
     }
 }
@@ -97,3 +128,11 @@ impl_concrete_ptr!(
         data...
     } with abstract AbstractMemoryPtr;
 );
+
+impl MemoryPtr {
+    fn bounds(&self, instance_count: usize) -> Range<usize> {
+        let segment_len = self.src.len();
+        let start = (self.src.ptr * instance_count) + (self.index * segment_len);
+        return start..(start + segment_len);
+    }
+}

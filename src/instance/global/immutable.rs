@@ -23,7 +23,11 @@ pub struct UnmappedImmutableGlobalsInstance {
     cap_set: CapabilityStore,
 }
 
-impl UnmappedImmutableGlobalsInstance {}
+impl UnmappedImmutableGlobalsInstance {
+    pub(crate) fn buffer(&self) -> &UnmappedLazyBuffer {
+        &self.immutables
+    }
+}
 
 impl MappedImmutableGlobalsInstance {
     pub fn new(memory_system: &MemorySystem) -> Self {

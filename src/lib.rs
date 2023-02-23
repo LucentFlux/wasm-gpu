@@ -1,8 +1,7 @@
 #![feature(future_join)]
 #![feature(async_closure)]
-#![feature(macro_metavar_expr)]
 #![feature(vec_push_within_capacity)]
-#![recursion_limit = "1024"]
+#![feature(int_roundings)]
 
 mod atomic_counter;
 mod capabilities;
@@ -12,6 +11,7 @@ mod instance;
 mod module;
 mod panic_on_any;
 mod session;
+mod shader_module;
 mod store_set;
 mod typed;
 
