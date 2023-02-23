@@ -20,17 +20,42 @@ pub(crate) struct BasicBlockState<'a, 'b, F: WorkingFunction<'b>> {
     // What we're building into to make the function body
     stack: Vec<naga::Handle<naga::Expression>>,
     statements: Vec<naga::Statement>,
+
+    // Used to emit expressions in naga::Statement::Emit
+    first_and_last: Option<(
+        naga::Handle<naga::Expression>,
+        naga::Handle<naga::Expression>,
+    )>,
 }
 
 impl<'a, 'b, F: WorkingFunction<'b>> BasicBlockState<'a, 'b, F> {
     /// Pushes an expression on to the current stack
     pub(crate) fn push(&mut self, value: naga::Expression) {
+        let needs_emitting = match &value {
+            naga::Expression::FunctionArgument(_)
+            | naga::Expression::GlobalVariable(_)
+            | naga::Expression::LocalVariable(_)
+            | naga::Expression::Constant(_)
+            | naga::Expression::CallResult(_)
+            | naga::Expression::AtomicResult { .. } => false,
+            _ => true,
+        };
+
         let handle = self
             .working
             .get_fn_mut()
             .expressions
             .append(value, naga::Span::UNDEFINED);
         self.stack.push(handle);
+
+        if needs_emitting {
+            self.first_and_last = match self.first_and_last {
+                Some((first, _)) => Some((first, handle)),
+                None => Some((handle, handle)),
+            }
+        } else {
+            self.emit_expressions();
+        }
     }
 
     /// Pops an expression from the current stack
@@ -45,6 +70,17 @@ impl<'a, 'b, F: WorkingFunction<'b>> BasicBlockState<'a, 'b, F> {
         value: wasm_types::Val,
     ) -> build::Result<naga::Handle<naga::Constant>> {
         self.working.constant(value)
+    }
+
+    /// Emits all working expressions as a naga block and clears the current working pool.
+    /// Should be called before any statement is pushed to the body.
+    pub fn emit_expressions(&mut self) {
+        if let Some((first, last)) = self.first_and_last.take() {
+            self.statements
+                .push(naga::Statement::Emit(naga::Range::new_from_bounds(
+                    first, last,
+                )))
+        }
     }
 }
 
@@ -61,6 +97,7 @@ pub(crate) fn build_basic_block<'a, F: WorkingFunction<'a>>(
         stack,
         statements: Vec::new(),
         _f_life: PhantomData,
+        first_and_last: None,
     };
 
     let mut instructions = instructions.peekable();
@@ -86,6 +123,9 @@ pub(crate) fn build_basic_block<'a, F: WorkingFunction<'a>>(
         // If it wasn't control flow, actually progress iterator since we implemented the operation
         instructions.next();
     }
+
+    // Ensure we don't have anything dangling on return
+    state.emit_expressions();
 
     return Ok((state.stack, naga::Block::from_vec(state.statements)));
 }

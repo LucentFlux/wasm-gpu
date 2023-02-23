@@ -82,6 +82,10 @@ pub(super) fn populate_body<'a, F: WorkingFunction<'a>>(
         );
 
         func.body.push(
+            naga::Statement::Emit(naga::Range::new_from_bounds(struct_build, struct_build)),
+            naga::Span::UNDEFINED,
+        );
+        func.body.push(
             naga::Statement::Return {
                 value: Some(struct_build),
             },

@@ -14,7 +14,7 @@ use naga::Handle;
 use wasm_types::{FuncRef, ValTypeByteCount};
 use wasmparser::{FuncType, ValType};
 
-use crate::{naga_expr, INVOCATION_ID_FLAG_INDEX};
+use crate::{naga_expr, IO_ARGUMENT_ALIGNMENT_WORDS, IO_INVOCATION_ALIGNMENT_WORDS};
 
 use self::body_gen::populate_body;
 
@@ -24,7 +24,7 @@ use super::{
     func::FuncUnit,
 };
 
-pub(crate) fn get_entry_name(funcref: FuncRef) -> String {
+pub fn get_entry_name(funcref: FuncRef) -> String {
     format!(
         "__wasm_entry_function_{}",
         funcref.as_u32().unwrap_or(u32::MAX)
@@ -39,17 +39,36 @@ pub(crate) trait WorkingFunction<'a>: Deref<Target = WorkingModule<'a>> + DerefM
 pub(crate) struct WorkingBaseFunction<'a, 'b> {
     pub(crate) working_module: &'b mut WorkingModule<'a>,
     handle: Handle<naga::Function>,
+    pub(crate) invocation_index: Handle<naga::Expression>,
 }
 
 impl<'a, 'b> WorkingBaseFunction<'a, 'b> {
     pub(crate) fn new(
         working_module: &'b mut WorkingModule<'a>,
         handle: Handle<naga::Function>,
-    ) -> Self {
-        Self {
+    ) -> build::Result<Self> {
+        // Default arguments to permiate
+        let i32_ty = working_module
+            .std_objs
+            .tys
+            .global_invocation_id
+            .get(working_module)?;
+        let func_mut = working_module.module.functions.get_mut(handle.clone());
+        let invocation_index = func_mut.expressions.append(
+            naga::Expression::FunctionArgument(func_mut.arguments.len() as u32),
+            naga::Span::UNDEFINED,
+        );
+        func_mut.arguments.push(naga::FunctionArgument {
+            name: Some("invocation_index".to_owned()),
+            ty: i32_ty,
+            binding: None,
+        });
+
+        Ok(Self {
             working_module,
             handle,
-        }
+            invocation_index,
+        })
     }
 }
 
@@ -146,6 +165,7 @@ fn populate_arguments<'a, F: WorkingFunction<'a>>(
 pub(crate) struct WasmNagaFnRes {
     handle: naga::Handle<naga::Type>,
     wasm_ty: Vec<ValType>,
+    word_offsets: Vec<u32>,
     words: u32,
 }
 
@@ -165,6 +185,7 @@ fn populate_result<'a, F: WorkingFunction<'a>>(
         .collect::<build::Result<Vec<_>>>()?;
 
     let mut members = Vec::new();
+    let mut word_offsets = Vec::new();
     let mut offset = 0;
     for (i, (ty, field)) in fields.into_iter().enumerate() {
         members.push(naga::StructMember {
@@ -173,9 +194,12 @@ fn populate_result<'a, F: WorkingFunction<'a>>(
             binding: None,
             offset,
         });
+        debug_assert_eq!(offset % 4, 0);
+        word_offsets.push(offset / 4);
 
-        offset += u32::from(ty.byte_count())
+        offset += u32::from(ty.byte_count()).next_multiple_of(IO_ARGUMENT_ALIGNMENT_WORDS * 4);
     }
+    let offset = offset.next_multiple_of(IO_INVOCATION_ALIGNMENT_WORDS * 4);
 
     let naga_ty = working.module.types.insert(
         naga::Type {
@@ -196,6 +220,7 @@ fn populate_result<'a, F: WorkingFunction<'a>>(
     return Ok(Some(WasmNagaFnRes {
         handle: naga_ty,
         wasm_ty: Vec::from(ty.results()),
+        word_offsets,
         words: offset / 4,
     }));
 }
@@ -263,19 +288,19 @@ pub(crate) fn populate_entry_function(
     // Make parameters (builtin variables)
     let workgroups_ty = working.std_objs.tys.workgroup_argument.get(working)?;
     let func_mut = working.get_fn_mut();
-    let workgroup_index_param = func_mut.expressions.append(
+    let gloabl_index_param = func_mut.expressions.append(
         naga::Expression::FunctionArgument(func_mut.arguments.len() as u32),
         naga::Span::UNDEFINED,
     );
     working.get_fn_mut().arguments.push(naga::FunctionArgument {
-        name: Some("workgroup_index".to_owned()),
+        name: Some("global_id".to_owned()),
         ty: workgroups_ty,
-        binding: Some(naga::Binding::BuiltIn(naga::BuiltIn::WorkGroupId)),
+        binding: Some(naga::Binding::BuiltIn(naga::BuiltIn::GlobalInvocationId)),
     });
 
-    let instance_index = store_workgroup_index(working, bindings, workgroup_index_param);
+    let instance_index = get_workgroup_index(working, gloabl_index_param);
 
-    let arg_handles = vec![]; //read_entry_inputs(working, bindings, arguments, instance_index)?;
+    let arg_handles = vec![instance_index]; //read_entry_inputs(working, bindings, arguments, instance_index)?;
 
     // Call fn
     let call_result = result.as_ref().map(|_| {
@@ -295,60 +320,19 @@ pub(crate) fn populate_entry_function(
 
     // Write outputs
     if let Some(call_result) = call_result {
-        let output_ref = working.get_fn_mut().expressions.append(
-            naga::Expression::GlobalVariable(bindings.output.clone()),
-            naga::Span::UNDEFINED,
-        );
+        let results = result.expect("if call_result is Some then so is result");
 
-        let result_size = result
-            .expect("if call_result is Some then so is result")
-            .words;
-        let store_location =
-            naga_expr! {working => output_ref[(U32(result_size)) * instance_index]};
-
-        working.get_fn_mut().body.push(
-            naga::Statement::Store {
-                pointer: store_location,
-                value: call_result,
-            },
-            naga::Span::UNDEFINED,
-        );
+        store_output(working, bindings, call_result, results, instance_index);
     }
 
     return Ok(());
 }
 
-fn store_workgroup_index(
+fn get_workgroup_index(
     working: &mut WorkingEntryFunction,
-    bindings: &BindingHandles,
-    workgroup_index_param: naga::Handle<naga::Expression>,
+    gloabl_index_param: naga::Handle<naga::Expression>,
 ) -> naga::Handle<naga::Expression> {
-    let flags = working.get_fn_mut().expressions.append(
-        naga::Expression::GlobalVariable(bindings.flags),
-        naga::Span::UNDEFINED,
-    );
-    let invocation_id_flags_field = naga_expr! {working => flags[const INVOCATION_ID_FLAG_INDEX]};
-
-    // Scale elements of vector
-    let mut invocation_id = naga_expr! {working => workgroup_index_param[const 0]};
-    let mut coeff = working.tuneables.workgroup_size[0];
-    if working.tuneables.workgroup_size[1] != 1 {
-        invocation_id = naga_expr! {working => invocation_id + ((workgroup_index_param[const 1]) * (U32(coeff)))};
-        coeff *= working.tuneables.workgroup_size[1];
-    }
-    if working.tuneables.workgroup_size[2] != 1 {
-        invocation_id = naga_expr! {working => invocation_id + ((workgroup_index_param[const 2]) * (U32(coeff)))};
-    }
-
-    working.get_fn_mut().body.push(
-        naga::Statement::Store {
-            pointer: invocation_id_flags_field,
-            value: invocation_id,
-        },
-        naga::Span::UNDEFINED,
-    );
-
-    return invocation_id;
+    naga_expr! {working => gloabl_index_param[const 0]}
 }
 
 fn read_entry_inputs(
@@ -357,15 +341,15 @@ fn read_entry_inputs(
     arguments: Vec<WasmNagaFnArg>,
     workgroup_index_param: naga::Handle<naga::Expression>,
 ) -> build::Result<Vec<naga::Handle<naga::Expression>>> {
-    let input_ref = working.get_fn_mut().expressions.append(
-        naga::Expression::GlobalVariable(bindings.input.clone()),
-        naga::Span::UNDEFINED,
-    );
     let mut arg_offset = 0;
     let mut arg_handles = Vec::new();
     for arg in &arguments {
         let load_fn = match arg.wasm_ty {
-            ValType::I32 => working.std_objs.fns.read_i32.get(working)?,
+            ValType::I32 => working
+                .std_objs
+                .fns
+                .read_i32
+                .get_for(working, bindings.input.clone())?,
             _ => todo!(),
         };
 
@@ -380,7 +364,7 @@ fn read_entry_inputs(
             naga::Statement::Call {
                 function: load_fn,
                 arguments: vec![
-                    input_ref, /*TODO: Calculate position in buffer of input given invocation ID */
+                    /*TODO: Calculate position in buffer of input given invocation ID */
                 ],
                 result: Some(arg_result.clone()),
             },
@@ -388,8 +372,54 @@ fn read_entry_inputs(
         );
         arg_handles.push(arg_result);
 
-        arg_offset += u32::from(arg.wasm_ty.byte_count())
+        arg_offset +=
+            u32::from(arg.wasm_ty.byte_count()).next_multiple_of(IO_ARGUMENT_ALIGNMENT_WORDS)
     }
 
     return Ok(arg_handles);
+}
+
+fn store_output(
+    working: &mut WorkingEntryFunction,
+    bindings: &BindingHandles,
+    call_result: naga::Handle<naga::Expression>,
+    results: WasmNagaFnRes,
+    instance_index: naga::Handle<naga::Expression>,
+) -> build::Result<()> {
+    let base_index = naga_expr! {working => (U32(results.words)) * instance_index};
+    for (i_res, (ty, word_offset)) in results
+        .wasm_ty
+        .into_iter()
+        .zip_eq(results.word_offsets)
+        .enumerate()
+    {
+        let i_res = i_res as u32;
+        let store_location = naga_expr! {working => base_index + (U32(word_offset))};
+        let result = naga_expr! {working => call_result[const i_res]};
+
+        let function = match ty {
+            ValType::I32 => working
+                .std_objs
+                .fns
+                .write_i32
+                .get_for(working, bindings.output.clone())?,
+            ValType::I64 => todo!(),
+            ValType::F32 => todo!(),
+            ValType::F64 => todo!(),
+            ValType::V128 => todo!(),
+            ValType::FuncRef => todo!(),
+            ValType::ExternRef => todo!(),
+        };
+
+        working.get_fn_mut().body.push(
+            naga::Statement::Call {
+                function,
+                arguments: vec![store_location, result],
+                result: None,
+            },
+            naga::Span::UNDEFINED,
+        );
+    }
+
+    return Ok(());
 }

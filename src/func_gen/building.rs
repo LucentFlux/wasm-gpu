@@ -28,7 +28,7 @@ macro_rules! naga_fn_def {
         ];
         $(
             $working.get_fn_mut().result =
-            crate::func::func_gen::building::make_inner_func_result($ret_ty);
+            $crate::func_gen::building::make_inner_func_result($ret_ty);
         )*
 
         ($(
@@ -40,6 +40,13 @@ pub(crate) use naga_fn_def;
 
 #[macro_export]
 macro_rules! naga_expr {
+    (@emit $working:expr => $handle:ident) => {
+        $working.get_fn_mut().body
+            .push(naga::Statement::Emit(naga::Range::new_from_bounds(
+                $handle, $handle,
+            )), naga::Span::UNDEFINED);
+    };
+
     ($working:expr => ($($terms:tt)*)) => {
         naga_expr!($working => $($terms)*)
     };
@@ -48,35 +55,59 @@ macro_rules! naga_expr {
     ($working:expr => $lhs:tt + $rhs:tt) => {{
         let left = naga_expr!($working => $lhs);
         let right = naga_expr!($working => $rhs);
-        $working.get_fn_mut().expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Add, left, right }, naga::Span::UNDEFINED)
+        let handle = $working.get_fn_mut().expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Add, left, right }, naga::Span::UNDEFINED);
+
+        naga_expr!{@emit $working => handle}
+
+        handle
     }};
     ($working:expr => $lhs:tt - $rhs:tt) => {{
         let left = naga_expr!($working => $lhs);
         let right = naga_expr!($working => $rhs);
-        $working.get_fn_mut().expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Subtract, left, right }, naga::Span::UNDEFINED)
+        let handle = $working.get_fn_mut().expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Subtract, left, right }, naga::Span::UNDEFINED);
+
+        naga_expr!{@emit $working => handle}
+
+        handle
     }};
     ($working:expr => $lhs:tt * $rhs:tt) => {{
         let left = naga_expr!($working => $lhs);
         let right = naga_expr!($working => $rhs);
-        $working.get_fn_mut().expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Multiply, left, right }, naga::Span::UNDEFINED)
+        let handle = $working.get_fn_mut().expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Multiply, left, right }, naga::Span::UNDEFINED);
+
+        naga_expr!{@emit $working => handle}
+
+        handle
     }};
     ($working:expr => $lhs:tt / $rhs:tt) => {{
         let left = naga_expr!($working => $lhs);
         let right = naga_expr!($working => $rhs);
-        $working.get_fn_mut().expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Divide, left, right }, naga::Span::UNDEFINED)
+        let handle = $working.get_fn_mut().expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Divide, left, right }, naga::Span::UNDEFINED);
+
+        naga_expr!{@emit $working => handle}
+
+        handle
     }};
 
     // Struct Ops
     ($working:expr => $base:tt [const $index:expr ]) => {{
         let base = naga_expr!($working => $base);
-        $working.get_fn_mut().expressions.append(naga::Expression::AccessIndex{ base, index: $index }, naga::Span::UNDEFINED)
+        let handle = $working.get_fn_mut().expressions.append(naga::Expression::AccessIndex{ base, index: $index }, naga::Span::UNDEFINED);
+
+        naga_expr!{@emit $working => handle}
+
+        handle
     }};
 
     // Array Ops
     ($working:expr => $base:tt [ $($index:tt)* ]) => {{
         let base = naga_expr!($working => $base);
         let index = naga_expr!($working => $($index)*);
-        $working.get_fn_mut().expressions.append(naga::Expression::Access { base, index }, naga::Span::UNDEFINED)
+        let handle = $working.get_fn_mut().expressions.append(naga::Expression::Access { base, index }, naga::Span::UNDEFINED);
+
+        naga_expr!{@emit $working => handle}
+
+        handle
     }};
 
     // Constants

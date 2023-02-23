@@ -58,24 +58,28 @@ impl<I: WasmTyGen> LazyTy<I> {
 }
 
 pub(crate) struct StdTySet {
-    pub(crate) workgroup_argument: LazyTy<self::naga_tys::WorkgroupArgument>,
+    pub(crate) workgroup_argument: LazyTy<self::naga_tys::UVec3Gen>,
+    pub(crate) global_invocation_id: LazyTy<self::naga_tys::U32Gen>,
+    pub(crate) address: LazyTy<self::naga_tys::U32Gen>,
 
-    pub(crate) wasm_i32: LazyTy<self::base_tys::WasmNagaI32>,
-    pub(crate) wasm_i64: LazyTy<self::base_tys::WasmNagaI64>,
-    pub(crate) wasm_f32: LazyTy<self::base_tys::WasmNagaF32>,
-    pub(crate) wasm_f64: LazyTy<self::base_tys::WasmNagaF64>,
-    pub(crate) wasm_v128: LazyTy<self::base_tys::WasmNagaV128>,
-    pub(crate) wasm_func_ref: LazyTy<self::base_tys::WasmNagaFuncRef>,
-    pub(crate) wasm_extern_ref: LazyTy<self::base_tys::WasmNagaExternRef>,
+    pub(crate) wasm_i32: LazyTy<self::base_tys::WasmI32Gen>,
+    pub(crate) wasm_i64: LazyTy<self::base_tys::WasmI64Gen>,
+    pub(crate) wasm_f32: LazyTy<self::base_tys::WasmF32Gen>,
+    pub(crate) wasm_f64: LazyTy<self::base_tys::WasmF64Gen>,
+    pub(crate) wasm_v128: LazyTy<self::base_tys::WasmV128Gen>,
+    pub(crate) wasm_func_ref: LazyTy<self::base_tys::WasmFuncRefGen>,
+    pub(crate) wasm_extern_ref: LazyTy<self::base_tys::WasmExternRefGen>,
 
-    pub(crate) wasm_i32_array_buffer: LazyTy<self::buffer_tys::I32ArrayBuffer>,
-    pub(crate) wasm_flags_buffer: LazyTy<self::buffer_tys::FlagsBuffer>,
+    pub(crate) wasm_i32_array_buffer: LazyTy<self::buffer_tys::I32ArrayBufferGen>,
+    pub(crate) wasm_flags_buffer: LazyTy<self::buffer_tys::FlagsBufferGen>,
 }
 
 impl StdTySet {
     pub(crate) fn new() -> Self {
         Self {
             workgroup_argument: LazyTy::new(),
+            global_invocation_id: LazyTy::new(),
+            address: LazyTy::new(),
 
             wasm_i32: LazyTy::new(),
             wasm_i64: LazyTy::new(),

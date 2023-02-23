@@ -3,8 +3,8 @@ use wasm_types::{ExternRef, FuncRef, Ieee32, Ieee64, V128};
 
 use super::{TyGen, WasmTyGen};
 
-pub(crate) struct WasmNagaI32 {}
-impl TyGen for WasmNagaI32 {
+pub(crate) struct WasmI32Gen {}
+impl TyGen for WasmI32Gen {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {
             name: None,
@@ -17,7 +17,7 @@ impl TyGen for WasmNagaI32 {
         Ok(working.module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
 }
-impl WasmTyGen for WasmNagaI32 {
+impl WasmTyGen for WasmI32Gen {
     type WasmTy = i32;
 
     fn make_const(
@@ -39,8 +39,8 @@ impl WasmTyGen for WasmNagaI32 {
     }
 }
 
-pub(crate) struct WasmNagaF32 {}
-impl TyGen for WasmNagaF32 {
+pub(crate) struct WasmF32Gen {}
+impl TyGen for WasmF32Gen {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {
             name: None,
@@ -53,7 +53,7 @@ impl TyGen for WasmNagaF32 {
         Ok(working.module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
 }
-impl WasmTyGen for WasmNagaF32 {
+impl WasmTyGen for WasmF32Gen {
     type WasmTy = Ieee32;
 
     fn make_const(
@@ -75,8 +75,8 @@ impl WasmTyGen for WasmNagaF32 {
     }
 }
 
-pub(crate) struct WasmNagaI64 {}
-impl TyGen for WasmNagaI64 {
+pub(crate) struct WasmI64Gen {}
+impl TyGen for WasmI64Gen {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {
             name: Some("i64".to_owned()),
@@ -90,7 +90,7 @@ impl TyGen for WasmNagaI64 {
         Ok(working.module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
 }
-impl WasmTyGen for WasmNagaI64 {
+impl WasmTyGen for WasmI64Gen {
     type WasmTy = i64;
 
     fn make_const(
@@ -130,8 +130,8 @@ impl WasmTyGen for WasmNagaI64 {
     }
 }
 
-pub(crate) struct WasmNagaF64 {}
-impl TyGen for WasmNagaF64 {
+pub(crate) struct WasmF64Gen {}
+impl TyGen for WasmF64Gen {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         if !working.tuneables.hardware_supports_f64 {
             return Err(BuildError::UnsupportedTypeError {
@@ -150,7 +150,7 @@ impl TyGen for WasmNagaF64 {
         Ok(working.module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
 }
-impl WasmTyGen for WasmNagaF64 {
+impl WasmTyGen for WasmF64Gen {
     type WasmTy = Ieee64;
 
     fn make_const(
@@ -178,8 +178,8 @@ impl WasmTyGen for WasmNagaF64 {
     }
 }
 
-pub(crate) struct WasmNagaV128 {}
-impl TyGen for WasmNagaV128 {
+pub(crate) struct WasmV128Gen {}
+impl TyGen for WasmV128Gen {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {
             name: Some("v128".to_owned()),
@@ -193,7 +193,7 @@ impl TyGen for WasmNagaV128 {
         Ok(working.module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
 }
-impl WasmTyGen for WasmNagaV128 {
+impl WasmTyGen for WasmV128Gen {
     type WasmTy = V128;
 
     fn make_const(
@@ -237,8 +237,8 @@ impl WasmTyGen for WasmNagaV128 {
     }
 }
 
-pub(crate) struct WasmNagaFuncRef {}
-impl TyGen for WasmNagaFuncRef {
+pub(crate) struct WasmFuncRefGen {}
+impl TyGen for WasmFuncRefGen {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {
             name: Some("FuncRef".to_owned()),
@@ -251,7 +251,7 @@ impl TyGen for WasmNagaFuncRef {
         Ok(working.module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
 }
-impl WasmTyGen for WasmNagaFuncRef {
+impl WasmTyGen for WasmFuncRefGen {
     type WasmTy = FuncRef;
 
     fn make_const(
@@ -273,8 +273,8 @@ impl WasmTyGen for WasmNagaFuncRef {
     }
 }
 
-pub(crate) struct WasmNagaExternRef {}
-impl TyGen for WasmNagaExternRef {
+pub(crate) struct WasmExternRefGen {}
+impl TyGen for WasmExternRefGen {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {
             name: Some("ExtrenRef".to_owned()),
@@ -287,7 +287,7 @@ impl TyGen for WasmNagaExternRef {
         Ok(working.module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
 }
-impl WasmTyGen for WasmNagaExternRef {
+impl WasmTyGen for WasmExternRefGen {
     type WasmTy = ExternRef;
 
     fn make_const(

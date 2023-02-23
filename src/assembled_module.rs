@@ -1,3 +1,7 @@
+use std::error::Error;
+
+use naga::valid::ValidationError;
+use naga::WithSpan;
 use wasmparser::ValType;
 
 use wasm_opcodes::OpCode;
@@ -100,11 +104,11 @@ impl<'a> WorkingModule<'a> {
 
     pub(crate) fn make_function<'b>(
         &'b mut self,
-    ) -> (WorkingBaseFunction<'a, 'b>, naga::Handle<naga::Function>) {
+    ) -> build::Result<(WorkingBaseFunction<'a, 'b>, naga::Handle<naga::Function>)> {
         let func = naga::Function::default();
         let handle = self.module.functions.append(func, naga::Span::UNDEFINED);
-        let working = WorkingBaseFunction::new(self, handle.clone());
-        (working, handle)
+        let working = WorkingBaseFunction::new(self, handle.clone())?;
+        Ok((working, handle))
     }
 
     fn make_entry_function<'b>(&'b mut self, name: String) -> WorkingEntryFunction<'a, 'b> {
@@ -114,7 +118,7 @@ impl<'a> WorkingModule<'a> {
             name,
             stage: naga::ShaderStage::Compute,
             early_depth_test: None,
-            workgroup_size: self.tuneables.workgroup_size,
+            workgroup_size: [self.tuneables.workgroup_size, 1, 1],
             function: func,
         });
         WorkingEntryFunction::new(self, index)
@@ -123,11 +127,60 @@ impl<'a> WorkingModule<'a> {
 
 /// All of the functions and trampolines for a module, in wgpu objects ready to be called.
 pub struct AssembledModule {
-    module: naga::Module,
-    module_info: naga::valid::ModuleInfo,
+    pub module: naga::Module,
+    pub module_info: naga::valid::ModuleInfo,
 }
 impl AssembledModule {
-    fn validate(module: &naga::Module, tuneables: &Tuneables) -> naga::valid::ModuleInfo {
+    fn validation_panic(
+        err: WithSpan<ValidationError>,
+        module: &naga::Module,
+        tuneables: &Tuneables,
+        functions: &FuncsInstance,
+        capabilities: naga::valid::Capabilities,
+    ) -> ! {
+        let mut err_display = format! {"{}", err};
+        let mut src_err: &dyn Error = &err;
+        while let Some(next_err) = src_err.source() {
+            err_display = format! {"{}: {}", err_display, next_err};
+            src_err = next_err;
+        }
+
+        #[cfg(not(debug_assertions))]
+        panic!(
+            "failed to validate wasm-generated naga module: {}",
+            err_display
+        );
+
+        // Lots'a debugging info
+        let mut validation_pass_broken = None;
+        for flag in [
+            naga::valid::ValidationFlags::BINDINGS,
+            naga::valid::ValidationFlags::BLOCKS,
+            naga::valid::ValidationFlags::CONSTANTS,
+            naga::valid::ValidationFlags::CONTROL_FLOW_UNIFORMITY,
+            naga::valid::ValidationFlags::EXPRESSIONS,
+            naga::valid::ValidationFlags::STRUCT_LAYOUTS,
+        ] {
+            let flags = flag;
+            if naga::valid::Validator::new(flags, capabilities)
+                .validate(module)
+                .is_err()
+            {
+                validation_pass_broken = Some(flag);
+                break;
+            }
+        }
+        panic!(
+            "failed to validate wasm-generated naga module in pass {:?}: {}\n{{\nnaga_error: {:#?},\nnaga module: {:#?},\nwasm functions: {:#?},\ntuneables: {:#?}\n}}",
+            validation_pass_broken, err_display, err, module, functions, tuneables
+        )
+    }
+
+    fn validate(
+        module: &naga::Module,
+        tuneables: &Tuneables,
+        functions: &FuncsInstance,
+    ) -> naga::valid::ModuleInfo {
         #[cfg(debug_assertions)]
         let flags = naga::valid::ValidationFlags::all();
         #[cfg(not(debug_assertions))]
@@ -138,9 +191,14 @@ impl AssembledModule {
         } else {
             naga::valid::Capabilities::empty()
         };
-        naga::valid::Validator::new(flags, capabilities)
-            .validate(&module)
-            .expect("internal compile error in wasm-spirv")
+        let res = naga::valid::Validator::new(flags, capabilities).validate(&module);
+
+        let info = match res {
+            Ok(info) => info,
+            Err(e) => Self::validation_panic(e, &module, tuneables, functions, capabilities),
+        };
+
+        return info;
     }
 
     pub fn assemble(functions: &FuncsInstance, tuneables: &Tuneables) -> build::Result<Self> {
@@ -159,7 +217,7 @@ impl AssembledModule {
 
             // Generate function bodies
             let base_handle = working.base_functions.lookup(&ptr);
-            let mut working_function = WorkingBaseFunction::new(&mut working, base_handle);
+            let mut working_function = WorkingBaseFunction::new(&mut working, base_handle)?;
             working_function.get_fn_mut().name = Some(get_entry_name(ptr) + "_impl");
             let (arg_tys, ret_ty) =
                 populate_base_function(&mut working_function, function_data, &bindings)?;
@@ -182,16 +240,8 @@ impl AssembledModule {
         populate_brain_func(&mut working)?;
 
         Ok(Self {
-            module_info: Self::validate(&module, tuneables),
+            module_info: Self::validate(&module, tuneables, functions),
             module,
         })
-    }
-
-    pub fn get_module(&self) -> &naga::Module {
-        &self.module
-    }
-
-    pub fn get_module_info(&self) -> &naga::valid::ModuleInfo {
-        &self.module_info
     }
 }

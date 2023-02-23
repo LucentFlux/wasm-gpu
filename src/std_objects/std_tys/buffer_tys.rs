@@ -1,12 +1,12 @@
 use crate::{
     assembled_module::{build, WorkingModule},
-    INVOCATION_ID_FLAG_INDEX, TRAP_FLAG_INDEX,
+    TRAP_FLAG_INDEX,
 };
 
 use super::TyGen;
 
-pub(crate) struct I32ArrayBuffer {}
-impl TyGen for I32ArrayBuffer {
+pub(crate) struct I32ArrayBufferGen {}
+impl TyGen for I32ArrayBufferGen {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let i32_ty = working.std_objs.tys.wasm_i32.get(working)?;
 
@@ -16,7 +16,7 @@ impl TyGen for I32ArrayBuffer {
                 inner: naga::TypeInner::Array {
                     base: i32_ty,
                     size: naga::ArraySize::Dynamic,
-                    stride: 1,
+                    stride: 4,
                 },
             },
             naga::Span::UNDEFINED,
@@ -26,25 +26,17 @@ impl TyGen for I32ArrayBuffer {
     }
 }
 
-pub(crate) struct FlagsBuffer {}
-impl TyGen for FlagsBuffer {
+pub(crate) struct FlagsBufferGen {}
+impl TyGen for FlagsBufferGen {
     fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>> {
         let i32_ty = working.std_objs.tys.wasm_i32.get(working)?;
 
-        let flag_members = vec![
-            naga::StructMember {
-                name: Some("trap_flag".to_owned()),
-                ty: i32_ty,
-                binding: None,
-                offset: TRAP_FLAG_INDEX * 4,
-            },
-            naga::StructMember {
-                name: Some("invocation_id".to_owned()),
-                ty: i32_ty,
-                binding: None,
-                offset: INVOCATION_ID_FLAG_INDEX * 4,
-            },
-        ];
+        let flag_members = vec![naga::StructMember {
+            name: Some("trap_flag".to_owned()),
+            ty: i32_ty,
+            binding: None,
+            offset: TRAP_FLAG_INDEX * 4,
+        }];
         let flags_ty = working.module.types.insert(
             naga::Type {
                 name: Some("wasm_flags".to_owned()),
