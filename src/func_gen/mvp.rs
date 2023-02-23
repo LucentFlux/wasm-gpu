@@ -30,7 +30,10 @@ pub(super) fn eat_mvp_operator<'a, F: WorkingFunction<'a>>(
             const_val(state, Val::F64(wasm_types::Ieee64::from(*value)))
         }
         MVPOperator::Unreachable => unimplemented!(),
-        MVPOperator::Drop => unimplemented!(),
+        MVPOperator::Drop => {
+            /* Pass */
+            Ok(())
+        }
         MVPOperator::Select => unimplemented!(),
         MVPOperator::LocalGet { local_index } => unimplemented!(),
         MVPOperator::LocalSet { local_index } => unimplemented!(),

@@ -51,6 +51,16 @@ macro_rules! naga_expr {
         naga_expr!($working => $($terms)*)
     };
 
+    // Casting
+    ($working:expr => $lhs:tt as $kind:tt) => {{
+        let left = naga_expr!($working => $lhs);
+        let handle = $working.get_fn_mut().expressions.append(naga::Expression::As { expr: left, kind: naga::ScalarKind::$kind, convert: None }, naga::Span::UNDEFINED);
+
+        naga_expr!{@emit $working => handle}
+
+        handle
+    }};
+
     // Bin Ops
     ($working:expr => $lhs:tt + $rhs:tt) => {{
         let left = naga_expr!($working => $lhs);
@@ -115,7 +125,7 @@ macro_rules! naga_expr {
         let const_handle = $working.module.constants.append(naga::Constant {
             name: None,
             specialization: None,
-            inner: naga::ConstantInner::Scalar { width: 4, value: naga::ScalarValue::Sint($term.into()) },
+            inner: naga::ConstantInner::Scalar { width: 4, value: naga::ScalarValue::Sint($term as i64) },
         }, naga::Span::UNDEFINED);
         $working.get_fn_mut().expressions.append(naga::Expression::Constant(const_handle), naga::Span::UNDEFINED)
     }};
@@ -123,9 +133,26 @@ macro_rules! naga_expr {
         let const_handle = $working.module.constants.append(naga::Constant {
             name: None,
             specialization: None,
-            inner: naga::ConstantInner::Scalar { width: 4, value: naga::ScalarValue::Uint($term.into()) },
+            inner: naga::ConstantInner::Scalar { width: 4, value: naga::ScalarValue::Uint($term as u64) },
         }, naga::Span::UNDEFINED);
         $working.get_fn_mut().expressions.append(naga::Expression::Constant(const_handle), naga::Span::UNDEFINED)
+    }};
+
+    // Constructors
+    ($working:expr => $type:tt ( $($element:tt),* $(,)? )) => {{
+        let components = vec![
+            $(
+                naga_expr!($working => $element),
+            )*
+        ];
+        let handle = $working.get_fn_mut().expressions.append(
+            naga::Expression::Compose {ty: $type, components},
+            naga::Span::UNDEFINED,
+        );
+
+        naga_expr!{@emit $working => handle}
+
+        handle
     }};
 
     // Arbitrary embeddings
