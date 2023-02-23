@@ -80,6 +80,8 @@ pub(crate) struct StdFnSet {
     pub(crate) write_i32: LazyBufferFn<self::rw_fns::WriteI32Gen>,
     pub(crate) read_i64: LazyBufferFn<self::rw_fns::ReadI64Gen>,
     pub(crate) write_i64: LazyBufferFn<self::rw_fns::WriteI64Gen>,
+    pub(crate) read_f32: LazyBufferFn<self::rw_fns::ReadF32Gen>,
+    pub(crate) write_f32: LazyBufferFn<self::rw_fns::WriteF32Gen>,
 }
 
 impl StdFnSet {
@@ -89,6 +91,8 @@ impl StdFnSet {
             write_i32: LazyBufferFn::new(),
             read_i64: LazyBufferFn::new(),
             write_i64: LazyBufferFn::new(),
+            read_f32: LazyBufferFn::new(),
+            write_f32: LazyBufferFn::new(),
         }
     }
 }

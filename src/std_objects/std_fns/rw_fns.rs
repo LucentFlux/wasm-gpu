@@ -143,3 +143,68 @@ impl BufferFnGen for WriteI64Gen {
         Ok(handle)
     }
 }
+
+// fn<buffer>(word_address: u32) -> f32
+pub(crate) struct ReadF32Gen {}
+impl BufferFnGen for ReadF32Gen {
+    fn gen_for(
+        working: &mut WorkingModule,
+        buffer: naga::Handle<naga::GlobalVariable>,
+    ) -> build::Result<naga::Handle<naga::Function>> {
+        let address_ty = working.std_objs.tys.address.get(working)?;
+        let f32_ty = working.std_objs.tys.wasm_f32.get(working)?;
+
+        let (mut working, handle) = working.make_function()?;
+
+        let (word_address,) = naga_fn_def! {
+            working => fn read_f32(word_address: address_ty) -> f32_ty
+        };
+
+        let output_ref = working.get_fn_mut().expressions.append(
+            naga::Expression::GlobalVariable(buffer),
+            naga::Span::UNDEFINED,
+        );
+
+        let read_word = naga_expr!(working => output_ref[word_address]);
+        let read_value = naga_expr!(working => read_word as Float);
+        make_fn_return(&mut working, read_value);
+
+        Ok(handle)
+    }
+}
+
+// fn<buffer>(word_address: u32, value: f32)
+pub(crate) struct WriteF32Gen {}
+impl BufferFnGen for WriteF32Gen {
+    fn gen_for(
+        working: &mut WorkingModule,
+        buffer: naga::Handle<naga::GlobalVariable>,
+    ) -> build::Result<naga::Handle<naga::Function>> {
+        let address_ty = working.std_objs.tys.address.get(working)?;
+        let f32_ty = working.std_objs.tys.wasm_f32.get(working)?;
+
+        let (mut working, handle) = working.make_function()?;
+
+        let (word_address, value) = naga_fn_def! {
+            working => fn write_i64(word_address: address_ty, value: f32_ty)
+        };
+
+        let output_ref = working.get_fn_mut().expressions.append(
+            naga::Expression::GlobalVariable(buffer),
+            naga::Span::UNDEFINED,
+        );
+
+        let write_word_loc = naga_expr!(working => output_ref[word_address]);
+        let word = naga_expr!(working => value as Sint);
+
+        working.get_fn_mut().body.push(
+            naga::Statement::Store {
+                pointer: write_word_loc,
+                value: word,
+            },
+            naga::Span::UNDEFINED,
+        );
+
+        Ok(handle)
+    }
+}

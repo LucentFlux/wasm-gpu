@@ -355,6 +355,11 @@ fn read_entry_inputs(
                 .fns
                 .read_i64
                 .get_for(working, bindings.input.clone())?,
+            ValType::F32 => working
+                .std_objs
+                .fns
+                .read_f32
+                .get_for(working, bindings.input.clone())?,
             _ => todo!(),
         };
 
@@ -413,7 +418,11 @@ fn store_output(
                 .fns
                 .write_i64
                 .get_for(working, bindings.output.clone())?,
-            ValType::F32 => todo!(),
+            ValType::F32 => working
+                .std_objs
+                .fns
+                .write_f32
+                .get_for(working, bindings.output.clone())?,
             ValType::F64 => todo!(),
             ValType::V128 => todo!(),
             ValType::FuncRef => todo!(),
