@@ -21,7 +21,7 @@ use crate::store_set::UnmappedStoreSetData;
 use crate::{DeviceStoreSet, Module, Tuneables};
 use perfect_derive::perfect_derive;
 use std::sync::Arc;
-use wasm_spirv_funcgen::{AssembledModule, BuildError};
+use wasm_gpu_funcgen::{AssembledModule, BuildError};
 use wasm_types::{ExternRef, FuncRef, Ieee32, Ieee64, Val, V128};
 use wasmparser::{Operator, ValType};
 use wgpu::BufferAsyncError;
@@ -355,7 +355,7 @@ impl CompletedBuilder {
 #[cfg(test)]
 mod tests {
     use crate::tests_lib::{gen_test_memory_string, get_backend};
-    use crate::{block_test, imports, wasp, MappedStoreSetBuilder};
+    use crate::{block_test, imports, MappedStoreSetBuilder};
     use anyhow::anyhow;
     use std::sync::Arc;
     macro_rules! data_tests {
@@ -384,7 +384,7 @@ mod tests {
             data_str
         );
         let wat = wat.into_bytes();
-        let module = wasp::Module::new(
+        let module = crate::Module::new(
             &wasmparser::WasmFeatures::default(),
             &wat,
             "test_module".to_owned(),

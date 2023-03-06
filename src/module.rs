@@ -20,8 +20,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::slice::Iter;
 use std::sync::Arc;
-use wasm_spirv_funcgen::FuncAccessible;
-use wasm_spirv_funcgen::{FuncData, FunctionModuleData};
+use wasm_gpu_funcgen::{FuncData, FunctionModuleData};
 use wasm_types::{FuncRef, Val, ValTypeByteCount};
 use wasmparser::{Type, ValType, Validator};
 use wgpu::BufferAsyncError;
@@ -30,7 +29,7 @@ use wgpu_async::async_queue::AsyncQueue;
 /// A wasm module that has not been instantiated
 pub struct Module {
     parsed: ParsedModuleUnit,
-    name: String,
+    _name: String,
 }
 
 pub struct ValidatedImports {
@@ -80,7 +79,10 @@ impl Module {
 
         let parsed = Self::parse(features, wasm)?;
 
-        return Ok(Self { parsed, name });
+        return Ok(Self {
+            parsed,
+            _name: name,
+        });
     }
 
     /// See 4.5.4 of WASM spec 2.0

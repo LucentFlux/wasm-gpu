@@ -1,4 +1,4 @@
-use wasm_spirv_funcgen::FuncAccessible;
+use wasm_gpu_funcgen::FuncAccessible;
 
 use crate::instance::data::DataPtr;
 use crate::instance::element::ElementPtr;

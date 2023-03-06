@@ -1,7 +1,6 @@
 use crate::capabilities::CapabilityStore;
 use crate::impl_concrete_ptr;
 use crate::instance::table::builder::AbstractTablePtr;
-use futures::future::join_all;
 use wgpu_async::{async_device::OutOfMemoryError, async_queue::AsyncQueue};
 use wgpu_lazybuffers::{MemorySystem, UnmappedLazyBuffer};
 use wgpu_lazybuffers_interleaving::{

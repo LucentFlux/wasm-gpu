@@ -2,9 +2,8 @@ use std::sync::Arc;
 
 use crate::DeviceStoreSet;
 use crate::{instance::func::UntypedFuncPtr, shader_module::Bindings};
-use anyhow::anyhow;
 use futures::{future::BoxFuture, FutureExt};
-use wasm_spirv_funcgen::{
+use wasm_gpu_funcgen::{
     u32_to_trap, FLAGS_LEN_BYTES, IO_ARGUMENT_ALIGNMENT_WORDS, IO_INVOCATION_ALIGNMENT_WORDS,
     STACK_LEN_BYTES, TRAP_FLAG_INDEX,
 };
@@ -86,7 +85,6 @@ impl<'a> Session<'a> {
     async fn make_output(
         &self,
         memory_system: &MemorySystem,
-        device: &AsyncDevice,
     ) -> Result<UnmappedLazyBuffer, OutOfMemoryError> {
         let output_length = Self::output_instance_len(self.entry_func.ty().results());
         let output_length =
@@ -105,7 +103,6 @@ impl<'a> Session<'a> {
     async fn make_flags(
         &self,
         memory_system: &MemorySystem,
-        device: &AsyncDevice,
     ) -> Result<UnmappedLazyBuffer, OutOfMemoryError> {
         let flags_length = self.args.len()
             * usize::try_from(FLAGS_LEN_BYTES).expect("that's a very big wasm module");
@@ -219,11 +216,11 @@ impl<'a> Session<'a> {
         queue: &AsyncQueue,
     ) -> Result<BoxFuture<'a, OutputType>, OutOfMemoryError> {
         let input = self.make_inputs(queue.device()).await?;
-        let output = Arc::new(self.make_output(memory_system, queue.device()).await?);
-        let flags = Arc::new(self.make_flags(memory_system, queue.device()).await?);
+        let output = Arc::new(self.make_output(memory_system).await?);
+        let flags = Arc::new(self.make_flags(memory_system).await?);
         let stack = self.make_stack(queue.device()).await?;
 
-        let mut non_empty_binding = queue
+        let non_empty_binding = queue
             .device()
             .create_buffer(&wgpu::BufferDescriptor {
                 label: Some("non-empty buffer"),

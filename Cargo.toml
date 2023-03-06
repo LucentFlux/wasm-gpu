@@ -1,7 +1,15 @@
 [package]
-name = "wasm-spirv"
+name = "wasm-gpu"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+description = "Runs WASM on the GPU, seamlessly"
+homepage = "https://github.com/LucentFlux/wasm-gpu"
+repository = "https://github.com/LucentFlux/wasm-gpu"
+readme = "README.md"
+keywords = ["wasm", "webassembly", "gpu"]
+categories = ["compilers", "hardware-support", "wasm", "virtualization"]
+include = ["/Cargo.toml", "/LICENSE", "/README.md", "/src/**"]
 
 [dependencies]
 wgpu = { version = "0.15", features = ["naga"] }
@@ -10,9 +18,9 @@ wgpu-lazybuffers = { path = "../wgpu-lazybuffers" }
 wgpu-lazybuffers-operations = { path = "../wgpu-lazybuffers-operations" }
 wgpu-lazybuffers-interleaving = { path = "../wgpu-lazybuffers-interleaving" }
 wgpu-lazybuffers-macros = { path = "../wgpu-lazybuffers-macros" }
-wasm-opcodes = { path = "../WASM-opcodes" }
-wasm-types = { path = "../WASM-types" }
-wasm-spirv-funcgen = { path = "../WASM-SPIRV-funcgen" }
+wasm-opcodes = { path = "../wasm-opcodes" }
+wasm-types = { path = "../wasm-types" }
+wasm-gpu-funcgen = { path = "../wasm-gpu-funcgen" }
 
 wat = "1.0"
 thiserror = "1.0"
@@ -38,8 +46,8 @@ spirv-tools = { version = "0.9", optional = true, features = [
 wasmtime-environ = "6"
 
 [dev-dependencies]
-wasm-spirv-test-gen = { path = "test_gen" }
-wasmtime = { version = "6", features = ["wat"] }
+wasm-gpu-test-gen = { path = "test_gen" }
+wasm-gpu-test-lib = { path = "test_lib" }
 rand = "0.8"
 pollster = "0.2"
 

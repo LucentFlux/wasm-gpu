@@ -1,4 +1,4 @@
-use wasm_spirv::{imports, wasp, PanicOnAny, Tuneables};
+use wasm_gpu::{imports, PanicOnAny, Tuneables};
 use wgpu_async::wrap_wgpu;
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
@@ -50,13 +50,13 @@ async fn main() -> anyhow::Result<()> {
             (export "fill_with_value" (func $f))
         )
     "#;
-    let module = wasp::Module::new(
+    let module = wasm_gpu::Module::new(
         &wasmparser::WasmFeatures::default(),
         wat.as_bytes(),
         "main_module".to_owned(),
     )?;
 
-    let mut store_builder = wasp::MappedStoreSetBuilder::new(&memory_system, Tuneables::default());
+    let mut store_builder = wasm_gpu::MappedStoreSetBuilder::new(&memory_system, Tuneables::default());
 
     let instances = store_builder
         .instantiate_module(&queue, &module, imports! {})

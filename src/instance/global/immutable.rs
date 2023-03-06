@@ -128,7 +128,7 @@ impl GlobalImmutablePtr {
         return self.content_type.eq(&ty.content_type) && !ty.mutable;
     }
 
-    pub fn to_index(&self) -> wasm_spirv_funcgen::GlobalImmutableIndex {
-        wasm_spirv_funcgen::GlobalImmutableIndex::from(self.ptr)
+    pub fn to_index(&self) -> wasm_gpu_funcgen::GlobalImmutableIndex {
+        wasm_gpu_funcgen::GlobalImmutableIndex::from(self.ptr)
     }
 }

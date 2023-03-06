@@ -4,8 +4,8 @@ use itertools::Itertools;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
-use wasm_spirv::wasp::externs::NamedExtern;
-use wasm_spirv::{wasp, MappedStoreSetBuilder, ModuleInstanceReferences, Tuneables, WasmFeatures};
+use wasm_gpu::NamedExtern;
+use wasm_gpu::{MappedStoreSetBuilder, ModuleInstanceReferences, Tuneables, WasmFeatures};
 use wasm_types::{Ieee32, Ieee64, Val, V128};
 use wast::core::{HeapType, NanPattern, V128Pattern, WastRetCore};
 use wast::lexer::Lexer;
@@ -17,7 +17,7 @@ use wast::{
 use wgpu_async::{wrap_wgpu, AsyncQueue};
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
-#[wasm_spirv_test_gen::wast("tests/testsuite/*.wast")]
+#[wasm_gpu_test_gen::wast("tests/testsuite/*.wast")]
 fn gen_check(path: &str, test_index: usize) {
     Runtime::new().unwrap().block_on(check(path, test_index))
 }
@@ -113,7 +113,7 @@ impl WastState {
         let bytes = quote_wast
             .encode()
             .expect(&format!("could not encode expected module at {:?}", span));
-        let module = wasp::Module::new(&self.features, &bytes, name)
+        let module = wasm_gpu::Module::new(&self.features, &bytes, name)
             .expect(&format!("could not parse module byes at {:?}", span));
         let instance = self
             .store_builder
@@ -336,7 +336,7 @@ async fn test_assert_malformed_or_invalid(
         Err(_) => return, // Failure to encode is fine if malformed
     };
 
-    let module = wasp::Module::new(&state.features, &bytes, "test_module".to_owned());
+    let module = wasm_gpu::Module::new(&state.features, &bytes, "test_module".to_owned());
 
     let module = match module {
         Err(_) => return, // We want this to fail

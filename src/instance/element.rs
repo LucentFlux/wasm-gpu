@@ -122,7 +122,7 @@ impl_immutable_ptr!(
 );
 
 impl ElementPtr {
-    pub fn to_index(&self) -> wasm_spirv_funcgen::ElementIndex {
-        wasm_spirv_funcgen::ElementIndex::from(self.ptr)
+    pub fn to_index(&self) -> wasm_gpu_funcgen::ElementIndex {
+        wasm_gpu_funcgen::ElementIndex::from(self.ptr)
     }
 }

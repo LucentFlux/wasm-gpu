@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use crate::capabilities::CapabilityStore;
 use crate::impl_abstract_ptr;
 use crate::instance::memory::instance::{MemoryPtr, UnmappedMemoryInstanceSet};
@@ -104,7 +102,7 @@ impl AbstractMemoryPtr {
         wasm_limits_match(self.ty.initial, self.ty.maximum, ty.initial, ty.maximum)
     }
 
-    pub fn to_index(&self) -> wasm_spirv_funcgen::MemoryIndex {
-        wasm_spirv_funcgen::MemoryIndex::from(self.ptr)
+    pub fn to_index(&self) -> wasm_gpu_funcgen::MemoryIndex {
+        wasm_gpu_funcgen::MemoryIndex::from(self.ptr)
     }
 }

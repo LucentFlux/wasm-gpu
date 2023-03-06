@@ -7,7 +7,7 @@ use futures::future::BoxFuture;
 use futures::FutureExt;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
-use wasm_spirv_funcgen::{FuncAccessible, FuncData, FuncInstance, FuncUnit};
+use wasm_gpu_funcgen::{FuncAccessible, FuncData, FuncInstance, FuncUnit};
 use wasm_types::{FuncRef, Val, WasmTyVec};
 use wgpu::BufferAsyncError;
 use wgpu_async::{AsyncQueue, OutOfMemoryError};
@@ -83,8 +83,8 @@ impl FuncsInstance {
             .expect("if ptr was valid, since `wasm_functions` is append only, item must exist")
     }
 
-    pub(crate) fn assembleable(&self) -> wasm_spirv_funcgen::FuncsInstance {
-        wasm_spirv_funcgen::FuncsInstance {
+    pub(crate) fn assembleable(&self) -> wasm_gpu_funcgen::FuncsInstance {
+        wasm_gpu_funcgen::FuncsInstance {
             wasm_functions: self.wasm_functions.clone(),
         }
     }

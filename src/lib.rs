@@ -19,7 +19,7 @@ mod typed;
 pub mod tests_lib;
 
 // Manually define our API
-pub mod wasp {
+mod wasm_gpu {
     use super::*;
 
     // Utilities
@@ -27,15 +27,13 @@ pub mod wasp {
     pub use panic_on_any::PanicOnAny;
 
     // Configs
-    pub use wasm_spirv_funcgen::Tuneables;
+    pub use wasm_gpu_funcgen::Tuneables;
     pub use wasmparser::WasmFeatures;
     // Module
     pub use module::Module;
     // Externs
-    pub mod externs {
-        pub use crate::externs::Extern;
-        pub use crate::externs::NamedExtern;
-    }
+    pub use crate::externs::Extern;
+    pub use crate::externs::NamedExtern;
     // Store
     pub use store_set::builder::MappedStoreSetBuilder; // Don't need to expose the unmapped version
     pub use store_set::calling::Caller;
@@ -49,4 +47,4 @@ pub mod wasp {
     pub use typed::*;
 }
 
-pub use wasp::*;
+pub use wasm_gpu::*;

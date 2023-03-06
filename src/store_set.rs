@@ -15,7 +15,6 @@ use crate::instance::table::instance::{MappedTableInstanceSet, UnmappedTableInst
 use crate::shader_module::WasmShaderModule;
 use crate::MappedStoreSetBuilder;
 use std::sync::Arc;
-use wasm_spirv_funcgen::AssembledModule;
 
 #[lazy_mappable(MappedStoreSetData)]
 pub struct UnmappedStoreSetData {

@@ -1,10 +1,10 @@
 [package]
-name = "wasm-spirv-test-gen"
+name = "wasm-gpu-test-gen"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-syn = { version = "1.0", features=["full"] }
+syn = { version = "1.0", features = ["full"] }
 proc-macro2 = "1.0.40"
 quote = "1.0.20"
 glob = "0.3.0"

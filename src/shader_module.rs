@@ -3,15 +3,15 @@ use std::{borrow::Cow, collections::BTreeMap};
 use elsa::FrozenMap;
 use itertools::Itertools;
 use spirv_tools::opt::Optimizer;
-use wasm_spirv_funcgen::{get_entry_name, AssembledModule, BINDING_TUPLES, DATA_BINDING_READ_ONLY};
-use wasm_spirv_funcgen::{
+use wasm_gpu_funcgen::{get_entry_name, AssembledModule, BINDING_TUPLES};
+use wasm_gpu_funcgen::{
     DATA_BINDING_INDEX, ELEMENT_BINDING_INDEX, FLAGS_BINDING_INDEX, IMMUTABLE_GLOBAL_BINDING_INDEX,
     INPUT_BINDING_INDEX, MEMORY_BINDING_INDEX, MUTABLE_GLOBAL_BINDING_INDEX, OUTPUT_BINDING_INDEX,
     STACK_BINDING_INDEX, TABLE_BINDING_INDEX,
 };
 use wasm_types::FuncRef;
-use wgpu::{BindGroupLayoutDescriptor, PipelineLayout, ShaderModule};
-use wgpu_async::{AsyncQueue, OutOfMemoryError, WgpuFuture};
+use wgpu::{BindGroupLayoutDescriptor, ShaderModule};
+use wgpu_async::{AsyncQueue, WgpuFuture};
 
 pub struct Bindings<'a> {
     pub data: &'a wgpu::Buffer,
@@ -188,7 +188,7 @@ impl WasmShaderModule {
             Ok(writer) => writer,
             // Fall back to naga
             Err(e) => {
-                debug_assert!(false, "failed to create optimise spir-v: {:?}", e);
+                debug_assert!(false, "failed to create optimised spir-v: {:?}", e);
                 return Self::make_naga_shader_module(device, assembled);
             }
         }
@@ -208,7 +208,7 @@ impl WasmShaderModule {
         let binding_entries = BINDING_TUPLES
             .clone()
             .into_iter()
-            .map(|(binding, read_only)| wgpu::BindGroupLayoutEntry {
+            .map(|(binding, _read_only)| wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {

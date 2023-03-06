@@ -5,9 +5,9 @@ use crate::instance::global::instance::GlobalMutablePtr;
 use crate::instance::global::instance::UnmappedMutableGlobalsInstanceSet;
 use crate::instance::global::{impl_global_get, impl_global_push};
 use std::mem::size_of;
-use wasm_spirv_funcgen::GlobalIndex;
 use wasm_types::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal, V128};
 use wasmparser::{GlobalType, ValType};
+use wasm_gpu_funcgen::GlobalIndex;
 use wgpu::BufferAsyncError;
 use wgpu_async::async_device::OutOfMemoryError;
 use wgpu_async::async_queue::AsyncQueue;
@@ -141,8 +141,8 @@ impl AbstractGlobalMutablePtr {
         return self.content_type.eq(&ty.content_type) && ty.mutable;
     }
 
-    pub fn to_index(&self) -> wasm_spirv_funcgen::GlobalMutableIndex {
-        wasm_spirv_funcgen::GlobalMutableIndex::from(self.ptr)
+    pub fn to_index(&self) -> wasm_gpu_funcgen::GlobalMutableIndex {
+        wasm_gpu_funcgen::GlobalMutableIndex::from(self.ptr)
     }
 }
 

@@ -99,7 +99,7 @@ impl AbstractTablePtr {
             && wasm_limits_match(self.ty.initial, self.ty.maximum, ty.initial, ty.maximum)
     }
 
-    pub fn to_index(&self) -> wasm_spirv_funcgen::TableIndex {
-        wasm_spirv_funcgen::TableIndex::from(self.ptr)
+    pub fn to_index(&self) -> wasm_gpu_funcgen::TableIndex {
+        wasm_gpu_funcgen::TableIndex::from(self.ptr)
     }
 }

@@ -100,7 +100,7 @@ impl_immutable_ptr!(
 );
 
 impl DataPtr {
-    pub fn to_index(&self) -> wasm_spirv_funcgen::DataIndex {
-        wasm_spirv_funcgen::DataIndex::from(self.ptr)
+    pub fn to_index(&self) -> wasm_gpu_funcgen::DataIndex {
+        wasm_gpu_funcgen::DataIndex::from(self.ptr)
     }
 }
