@@ -1,12 +1,12 @@
 [package]
-name = "wasm-spirv-funcgen"
+name = "wasm-gpu-funcgen"
 version = "0.1.0"
 edition = "2021"
 
 
 [dependencies]
-wasm-opcodes = { path = "../WASM-opcodes" }
-wasm-types = { path = "../WASM-types" }
+wasm-opcodes = { path = "../wasm-opcodes" }
+wasm-types = { path = "../wasm-types" }
 
 naga = { version = "0.11", features = ["validate"] }
 itertools = "0.10"
