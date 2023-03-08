@@ -42,9 +42,10 @@ impl UnmappedMemoryInstanceSetBuilder {
 }
 
 impl MappedMemoryInstanceSetBuilder {
-    pub fn new(memory_system: &MemorySystem) -> Self {
+    pub fn new(memory_system: &MemorySystem, module_label: &str) -> Self {
         Self {
             memory: memory_system.create_and_map_empty(&EmptyMemoryBlockConfig {
+                label: &format!("{}_memory_buffer", module_label),
                 usages: wgpu::BufferUsages::empty(),
                 locking_size: 8192,
             }),

@@ -121,8 +121,11 @@ pub fn test_parity<Input: ParityType, Output: ParityType>(
         )
         .unwrap();
 
-        let mut store_builder =
-            wasm_gpu::MappedStoreSetBuilder::new(&memory_system, wasm_gpu::Tuneables::default());
+        let mut store_builder = wasm_gpu::MappedStoreSetBuilder::new(
+            &memory_system,
+            "parity_test_storeset",
+            wasm_gpu::Tuneables::default(),
+        );
 
         let instances = store_builder
             .instantiate_module(&queue, &module, wasm_gpu::imports! {})

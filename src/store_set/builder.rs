@@ -106,6 +106,9 @@ pub enum BuilderCompleteError {
 #[lazy_mappable(MappedStoreSetBuilder)]
 #[perfect_derive(Debug)]
 pub struct UnmappedStoreSetBuilder {
+    /// Used for debugging
+    label: String,
+
     #[map(MappedTableInstanceSetBuilder)]
     tables: UnmappedTableInstanceSetBuilder,
     #[map(MappedMemoryInstanceSetBuilder)]
@@ -124,14 +127,16 @@ pub struct UnmappedStoreSetBuilder {
 }
 
 impl MappedStoreSetBuilder {
-    pub fn new(memory_system: &MemorySystem, tuneables: Tuneables) -> Self {
+    pub fn new(memory_system: &MemorySystem, label: &str, tuneables: Tuneables) -> Self {
         Self {
-            tables: MappedTableInstanceSetBuilder::new(memory_system),
-            memories: MappedMemoryInstanceSetBuilder::new(memory_system),
-            immutable_globals: MappedImmutableGlobalsInstance::new(memory_system),
-            mutable_globals: MappedMutableGlobalsInstanceBuilder::new(memory_system),
-            elements: MappedElementInstance::new(memory_system),
-            datas: MappedDataInstance::new(memory_system),
+            label: label.to_owned(),
+
+            tables: MappedTableInstanceSetBuilder::new(memory_system, label),
+            memories: MappedMemoryInstanceSetBuilder::new(memory_system, label),
+            immutable_globals: MappedImmutableGlobalsInstance::new(memory_system, label),
+            mutable_globals: MappedMutableGlobalsInstanceBuilder::new(memory_system, label),
+            elements: MappedElementInstance::new(memory_system, label),
+            datas: MappedDataInstance::new(memory_system, label),
 
             functions: FuncsInstance::new(),
             tuneables,
@@ -258,6 +263,8 @@ impl MappedStoreSetBuilder {
         queue: &AsyncQueue,
     ) -> Result<CompletedBuilder, BuilderCompleteError> {
         let UnmappedStoreSetBuilder {
+            label,
+
             tables,
             memories,
             mutable_globals,
@@ -279,6 +286,7 @@ impl MappedStoreSetBuilder {
         let shader_module = WasmShaderModule::make(queue.device(), &assembled_module);
 
         Ok(CompletedBuilder {
+            label,
             tables,
             memories,
             mutable_globals,
@@ -293,6 +301,9 @@ impl MappedStoreSetBuilder {
 }
 
 pub struct CompletedBuilder {
+    /// Used for debugging
+    label: String,
+
     tables: UnmappedTableInstanceSetBuilder,
     memories: UnmappedMemoryInstanceSetBuilder,
     mutable_globals: UnmappedMutableGlobalsInstanceBuilder,
@@ -338,6 +349,8 @@ impl CompletedBuilder {
             .await?;
 
         Ok(DeviceStoreSet {
+            label: format!("{}_built", self.label),
+
             functions: self.functions.clone(),
             elements: self.elements.clone(),
             datas: self.datas.clone(),
@@ -354,7 +367,7 @@ impl CompletedBuilder {
 
 #[cfg(test)]
 mod tests {
-    use crate::tests_lib::{gen_test_memory_string, get_backend};
+    use crate::unit_tests_lib::{gen_test_memory_string, get_backend};
     use crate::{block_test, imports, MappedStoreSetBuilder};
     use anyhow::anyhow;
     use std::sync::Arc;
@@ -373,7 +386,8 @@ mod tests {
         let (memory_system, queue) = get_backend().await;
 
         let (expected_data, data_str) = gen_test_memory_string(size, 84637322u32);
-        let mut stores_builder = MappedStoreSetBuilder::new(&memory_system, Default::default());
+        let mut stores_builder =
+            MappedStoreSetBuilder::new(&memory_system, "test_module", Default::default());
 
         let wat = format!(
             r#"

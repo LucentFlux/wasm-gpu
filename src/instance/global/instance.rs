@@ -32,6 +32,7 @@ impl UnmappedMutableGlobalsInstanceSet {
                     memory_system,
                     queue,
                     &InterleavedBufferConfig {
+                        label: &format!("{}_instance_set", mutables_source.label()),
                         repetitions: count,
                         usages: wgpu::BufferUsages::STORAGE,
                         locking_size: None,

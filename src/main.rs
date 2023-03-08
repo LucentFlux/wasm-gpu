@@ -56,7 +56,8 @@ async fn main() -> anyhow::Result<()> {
         "main_module".to_owned(),
     )?;
 
-    let mut store_builder = wasm_gpu::MappedStoreSetBuilder::new(&memory_system, Tuneables::default());
+    let mut store_builder =
+        wasm_gpu::MappedStoreSetBuilder::new(&memory_system, "main_store", Tuneables::default());
 
     let instances = store_builder
         .instantiate_module(&queue, &module, imports! {})

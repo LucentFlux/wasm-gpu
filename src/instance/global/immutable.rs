@@ -30,9 +30,10 @@ impl UnmappedImmutableGlobalsInstance {
 }
 
 impl MappedImmutableGlobalsInstance {
-    pub fn new(memory_system: &MemorySystem) -> Self {
+    pub fn new(memory_system: &MemorySystem, module_label: &str) -> Self {
         let cap_set = CapabilityStore::new(0);
         let immutables = memory_system.create_and_map_empty(&EmptyMemoryBlockConfig {
+            label: &format!("{}_immutable_globals_buffer", module_label),
             usages: wgpu::BufferUsages::STORAGE,
             locking_size: 1024,
         });

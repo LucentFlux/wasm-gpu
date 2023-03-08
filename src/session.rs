@@ -37,7 +37,11 @@ impl<'a> Session<'a> {
         }
     }
 
-    async fn make_inputs(&self, device: &AsyncDevice) -> Result<AsyncBuffer, OutOfMemoryError> {
+    async fn make_inputs(
+        &self,
+        device: &AsyncDevice,
+        label: &str,
+    ) -> Result<AsyncBuffer, OutOfMemoryError> {
         let mut data = Vec::new();
         for input_set in &self.args {
             for input in input_set {
@@ -54,7 +58,7 @@ impl<'a> Session<'a> {
 
         let input_buffer = device
             .create_buffer(&wgpu::BufferDescriptor {
-                label: None,
+                label: Some(label),
                 size: data.len() as u64,
                 usage: BufferUsages::STORAGE,
                 mapped_at_creation: true,
@@ -85,6 +89,7 @@ impl<'a> Session<'a> {
     async fn make_output(
         &self,
         memory_system: &MemorySystem,
+        label: &str,
     ) -> Result<UnmappedLazyBuffer, OutOfMemoryError> {
         let output_length = Self::output_instance_len(self.entry_func.ty().results());
         let output_length =
@@ -96,6 +101,7 @@ impl<'a> Session<'a> {
                 size: output_length,
                 initial_data: None,
                 locking_size: output_length,
+                label,
             })
             .await
     }
@@ -103,6 +109,7 @@ impl<'a> Session<'a> {
     async fn make_flags(
         &self,
         memory_system: &MemorySystem,
+        label: &str,
     ) -> Result<UnmappedLazyBuffer, OutOfMemoryError> {
         let flags_length = self.args.len()
             * usize::try_from(FLAGS_LEN_BYTES).expect("that's a very big wasm module");
@@ -113,17 +120,22 @@ impl<'a> Session<'a> {
                 size: flags_length,
                 initial_data: None,
                 locking_size: flags_length,
+                label,
             })
             .await
     }
 
-    async fn make_stack(&self, device: &AsyncDevice) -> Result<AsyncBuffer, OutOfMemoryError> {
+    async fn make_stack(
+        &self,
+        device: &AsyncDevice,
+        label: &str,
+    ) -> Result<AsyncBuffer, OutOfMemoryError> {
         let stack_length = u64::from(STACK_LEN_BYTES)
             * u64::try_from(self.args.len()).expect("that's a too big wasm module");
 
         device
             .create_buffer(&wgpu::BufferDescriptor {
-                label: None,
+                label: Some(label),
                 size: stack_length,
                 usage: BufferUsages::STORAGE,
                 mapped_at_creation: false,
@@ -215,10 +227,32 @@ impl<'a> Session<'a> {
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
     ) -> Result<BoxFuture<'a, OutputType>, OutOfMemoryError> {
-        let input = self.make_inputs(queue.device()).await?;
-        let output = Arc::new(self.make_output(memory_system).await?);
-        let flags = Arc::new(self.make_flags(memory_system).await?);
-        let stack = self.make_stack(queue.device()).await?;
+        let input = self
+            .make_inputs(
+                queue.device(),
+                &format!("{}_input_buffer", self.stores.label),
+            )
+            .await?;
+        let output = Arc::new(
+            self.make_output(
+                memory_system,
+                &format!("{}_output_buffer", self.stores.label),
+            )
+            .await?,
+        );
+        let flags = Arc::new(
+            self.make_flags(
+                memory_system,
+                &format!("{}_flags_buffer", self.stores.label),
+            )
+            .await?,
+        );
+        let stack = self
+            .make_stack(
+                queue.device(),
+                &format!("{}_stack_buffer", self.stores.label),
+            )
+            .await?;
 
         let non_empty_binding = queue
             .device()

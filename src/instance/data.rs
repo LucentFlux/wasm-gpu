@@ -35,9 +35,10 @@ impl UnmappedDataInstance {
 }
 
 impl MappedDataInstance {
-    pub fn new(memory_system: &MemorySystem) -> Self {
+    pub fn new(memory_system: &MemorySystem, module_label: &str) -> Self {
         Self {
             datas: memory_system.create_and_map_empty(&EmptyMemoryBlockConfig {
+                label: &format!("{}_data_buffer", module_label),
                 usages: wgpu::BufferUsages::STORAGE,
                 locking_size: 8192,
             }),

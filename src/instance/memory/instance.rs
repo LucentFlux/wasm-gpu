@@ -31,6 +31,7 @@ impl UnmappedMemoryInstanceSet {
         cap_set: CapabilityStore,
     ) -> Result<Self, OutOfMemoryError> {
         let cfg = InterleavedBufferConfig {
+            label: &format!("{}_instance_set", source.label()),
             repetitions: instance_count,
             usages: wgpu::BufferUsages::STORAGE,
             locking_size: None,

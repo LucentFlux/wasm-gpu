@@ -80,6 +80,7 @@ impl WastState {
         Self {
             store_builder: Some(MappedStoreSetBuilder::new(
                 &memory_system,
+                "testsuite_storeset",
                 Tuneables::default(),
             )),
             named_modules: HashMap::new(),

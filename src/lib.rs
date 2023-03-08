@@ -16,7 +16,7 @@ mod store_set;
 mod typed;
 
 #[cfg(test)]
-pub mod tests_lib;
+mod unit_tests_lib;
 
 // Manually define our API
 mod wasm_gpu {

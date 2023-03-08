@@ -28,6 +28,8 @@ pub struct UnmappedStoreSetData {
 
 /// All of the state for a collection of active WASM state machines
 pub struct StoreSet<O> {
+    pub(crate) label: String,
+
     pub functions: Arc<FuncsInstance>,
     pub elements: Arc<UnmappedElementInstance>,
     pub datas: Arc<UnmappedDataInstance>,

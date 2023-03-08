@@ -40,9 +40,10 @@ impl UnmappedTableInstanceSetBuilder {
 }
 
 impl MappedTableInstanceSetBuilder {
-    pub fn new(memory_system: &MemorySystem) -> Self {
+    pub fn new(memory_system: &MemorySystem, module_label: &str) -> Self {
         Self {
             tables: memory_system.create_and_map_empty(&EmptyMemoryBlockConfig {
+                label: &format!("{}_table_buffer", module_label),
                 usages: wgpu::BufferUsages::empty(),
                 locking_size: 128,
             }),

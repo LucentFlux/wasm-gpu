@@ -5,9 +5,9 @@ use crate::instance::global::instance::GlobalMutablePtr;
 use crate::instance::global::instance::UnmappedMutableGlobalsInstanceSet;
 use crate::instance::global::{impl_global_get, impl_global_push};
 use std::mem::size_of;
+use wasm_gpu_funcgen::GlobalIndex;
 use wasm_types::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal, V128};
 use wasmparser::{GlobalType, ValType};
-use wasm_gpu_funcgen::GlobalIndex;
 use wgpu::BufferAsyncError;
 use wgpu_async::async_device::OutOfMemoryError;
 use wgpu_async::async_queue::AsyncQueue;
@@ -45,9 +45,10 @@ impl UnmappedMutableGlobalsInstanceBuilder {
 }
 
 impl MappedMutableGlobalsInstanceBuilder {
-    pub fn new(memory_system: &MemorySystem) -> Self {
+    pub fn new(memory_system: &MemorySystem, module_label: &str) -> Self {
         Self {
             mutable_values: memory_system.create_and_map_empty(&EmptyMemoryBlockConfig {
+                label: &format!("{}_mutable_globals_buffer", module_label),
                 usages: wgpu::BufferUsages::empty(),
                 locking_size: 1024,
             }),
