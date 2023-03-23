@@ -56,7 +56,8 @@ pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
             chunk_size: 1024,
             total_transfer_buffers: 2,
         },
-    );
+    )
+    .unwrap();
 
     return (memory_system, queue);
 }

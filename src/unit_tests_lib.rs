@@ -39,7 +39,7 @@ pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
         chunk_size: 1024,
         total_transfer_buffers: 2,
     };
-    let memory_system = MemorySystem::new(device, conf);
+    let memory_system = MemorySystem::new(device, conf).unwrap();
 
     return (memory_system, queue);
 }

@@ -39,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
             chunk_size,
             total_transfer_buffers: 1024,
         },
-    );
+    ).unwrap();
 
     // wasm setup
     let wat = r#"

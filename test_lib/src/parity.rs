@@ -112,7 +112,7 @@ pub fn test_parity<Input: ParityType, Output: ParityType>(
                 chunk_size,
                 total_transfer_buffers: 2,
             },
-        );
+        ).unwrap();
 
         let module = wasm_gpu::Module::new(
             &wasm_gpu::WasmFeatures::default(),
