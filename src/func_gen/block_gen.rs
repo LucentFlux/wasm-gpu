@@ -2,11 +2,11 @@ use crate::assembled_module::BuildError;
 use wasm_opcodes::OperatorByProposal;
 
 use super::{
-    basic_block_gen::build_basic_block, body_gen::FunctionBodyInformation, WorkingFunction,
+    basic_block_gen::build_basic_block, body_gen::FunctionBodyInformation, ActiveFunction,
 };
 
 /// A straight run-through block, where branches jump forwards. Eats tokens up to an End token.
-pub(crate) fn populate_block<'a, F: WorkingFunction<'a>>(
+pub(crate) fn populate_block<'a, F: ActiveFunction<'a>>(
     stack: Vec<naga::Handle<naga::Expression>>,
     instructions: &mut impl Iterator<Item = OperatorByProposal>,
     working: &mut F,

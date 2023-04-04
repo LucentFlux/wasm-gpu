@@ -1,98 +1,115 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, sync::atomic::AtomicBool};
 
 use once_cell::sync::OnceCell;
+use perfect_derive::perfect_derive;
 
-use crate::assembled_module::{build, WorkingModule};
+use crate::assembled_module::build;
 
-mod rw_fns;
+use super::{GenerationParameters, Generator};
 
 /// A function that attaches itself to a module the first time it is requested
 pub(crate) trait FnGen {
-    fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Function>>;
+    fn gen<Ps: GenerationParameters>(
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
+    ) -> build::Result<naga::Handle<naga::Function>>;
 }
 
+#[perfect_derive(Default)]
 pub(crate) struct LazyFn<I> {
+    generating: AtomicBool,
     handle: OnceCell<build::Result<naga::Handle<naga::Function>>>,
     _phantom: PhantomData<I>,
 }
 
-impl<I> LazyFn<I> {
-    pub(crate) fn new() -> Self {
-        Self {
-            handle: OnceCell::new(),
-            _phantom: PhantomData,
-        }
-    }
-}
-impl<I: FnGen> LazyFn<I> {
-    pub(crate) fn get(
+impl<I: FnGen> Generator for LazyFn<I> {
+    type Generated = naga::Handle<naga::Function>;
+
+    fn gen<Ps: super::GenerationParameters>(
         &self,
-        working: &mut WorkingModule,
-    ) -> build::Result<naga::Handle<naga::Function>> {
-        self.handle.get_or_init(|| I::gen(working)).clone()
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
+    ) -> crate::assembled_module::build::Result<Self::Generated> {
+        self.handle
+            .get_or_init(|| {
+                if self
+                    .generating
+                    .fetch_or(true, std::sync::atomic::Ordering::AcqRel)
+                {
+                    panic!("loop detected in std objects when generating buffer function")
+                }
+                I::gen(module, others)
+            })
+            .clone()
     }
 }
 
 pub(crate) trait BufferFnGen {
-    fn gen_for(
-        working: &mut WorkingModule,
+    fn gen<Ps: GenerationParameters>(
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
         buffer: naga::Handle<naga::GlobalVariable>,
     ) -> build::Result<naga::Handle<naga::Function>>;
 }
 
-pub(crate) struct LazyBufferFn<I> {
-    handles: elsa::FrozenMap<
-        naga::Handle<naga::GlobalVariable>,
-        Box<build::Result<naga::Handle<naga::Function>>>,
-    >,
-    _phantom: PhantomData<I>,
+pub(crate) trait BufferExtraction {
+    fn get_buffer<Ps: GenerationParameters>(
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
+    ) -> build::Result<naga::Handle<naga::GlobalVariable>>;
 }
 
-impl<I> LazyBufferFn<I> {
-    pub(crate) fn new() -> Self {
-        Self {
-            handles: elsa::FrozenMap::new(),
-            _phantom: PhantomData,
-        }
+pub(crate) struct FromInputBuffer;
+impl BufferExtraction for FromInputBuffer {
+    fn get_buffer<Ps: GenerationParameters>(
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
+    ) -> build::Result<naga::Handle<naga::GlobalVariable>> {
+        others.bindings.input.gen(module, others)
     }
 }
 
-impl<I: BufferFnGen> LazyBufferFn<I> {
-    pub(crate) fn get_for(
-        &self,
-        working: &mut WorkingModule,
-        buffer: naga::Handle<naga::GlobalVariable>,
+pub(crate) struct FromOutputBuffer;
+impl BufferExtraction for FromOutputBuffer {
+    fn get_buffer<Ps: GenerationParameters>(
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
+    ) -> build::Result<naga::Handle<naga::GlobalVariable>> {
+        others.bindings.output.gen(module, others)
+    }
+}
+
+pub(crate) struct FromMemoryBuffer;
+impl BufferExtraction for FromMemoryBuffer {
+    fn get_buffer<Ps: GenerationParameters>(
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
+    ) -> build::Result<naga::Handle<naga::GlobalVariable>> {
+        others.bindings.memory.gen(module, others)
+    }
+}
+
+#[perfect_derive(Default)]
+pub(crate) struct LazyBufferFn<I, B>(LazyFn<Self>, PhantomData<(I, B)>);
+
+impl<I: BufferFnGen, B: BufferExtraction> FnGen for LazyBufferFn<I, B> {
+    fn gen<Ps: GenerationParameters>(
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
     ) -> build::Result<naga::Handle<naga::Function>> {
-        let mut res = self.handles.get(&buffer);
-        match res {
-            None => {
-                self.handles
-                    .insert(buffer, Box::new(I::gen_for(working, buffer)));
-                self.get_for(working, buffer)
-            }
-            Some(res) => res.clone(),
-        }
+        let buffer = B::get_buffer(module, others)?;
+        I::gen(module, others, buffer)
     }
 }
 
-pub(crate) struct StdFnSet {
-    pub(crate) read_i32: LazyBufferFn<self::rw_fns::ReadI32Gen>,
-    pub(crate) write_i32: LazyBufferFn<self::rw_fns::WriteI32Gen>,
-    pub(crate) read_i64: LazyBufferFn<self::rw_fns::ReadI64Gen>,
-    pub(crate) write_i64: LazyBufferFn<self::rw_fns::WriteI64Gen>,
-    pub(crate) read_f32: LazyBufferFn<self::rw_fns::ReadF32Gen>,
-    pub(crate) write_f32: LazyBufferFn<self::rw_fns::WriteF32Gen>,
-}
+impl<I: BufferFnGen, B: BufferExtraction> Generator for LazyBufferFn<I, B> {
+    type Generated = <LazyFn<Self> as Generator>::Generated;
 
-impl StdFnSet {
-    pub(crate) fn new() -> Self {
-        Self {
-            read_i32: LazyBufferFn::new(),
-            write_i32: LazyBufferFn::new(),
-            read_i64: LazyBufferFn::new(),
-            write_i64: LazyBufferFn::new(),
-            read_f32: LazyBufferFn::new(),
-            write_f32: LazyBufferFn::new(),
-        }
+    fn gen<Ps: super::GenerationParameters>(
+        &self,
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
+    ) -> crate::assembled_module::build::Result<Self::Generated> {
+        self.0.gen(module, others)
     }
 }

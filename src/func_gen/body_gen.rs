@@ -3,24 +3,21 @@ use wasm_opcodes::OperatorByProposal;
 
 use crate::{
     assembled_module::BuildError,
-    bindings_gen::BindingHandles,
     func::{FuncAccessible, FuncInstance, FunctionModuleData},
 };
 
-use super::{block_gen::populate_block, WasmNagaFnRes, WorkingFunction};
+use super::{block_gen::populate_block, ActiveFunction, WasmNagaFnRes};
 
 pub(crate) struct FunctionBodyInformation<'a> {
     pub(crate) accessible: &'a FuncAccessible,
     pub(crate) module_data: &'a FunctionModuleData,
     pub(crate) locals_ptrs_map: &'a HashMap<u32, naga::Handle<naga::Expression>>,
-    pub(crate) bindings: &'a BindingHandles,
 }
 
-pub(super) fn populate_body<'a, F: WorkingFunction<'a>>(
+pub(super) fn populate_body<'a, F: ActiveFunction<'a>>(
     working: &mut F,
     parsed: &FuncInstance,
     generated_locals_map: &HashMap<u32, naga::Handle<naga::LocalVariable>>,
-    bindings: &BindingHandles,
     result_type: &Option<WasmNagaFnRes>,
 ) -> Result<(), BuildError> {
     let mut locals_ptrs_map = HashMap::new();
@@ -65,7 +62,6 @@ pub(super) fn populate_body<'a, F: WorkingFunction<'a>>(
         accessible,
         module_data,
         locals_ptrs_map: &locals_ptrs_map,
-        bindings,
     };
     let entry_stack = vec![];
     let exit_stack = populate_block(entry_stack, &mut instructions, working, body_info)?;

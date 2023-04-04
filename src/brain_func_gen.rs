@@ -1,6 +1,6 @@
-use super::assembled_module::{build, WorkingModule};
+use super::assembled_module::{build, ActiveModule};
 
-pub(crate) fn populate_brain_func(working_module: &mut WorkingModule) -> build::Result<()> {
+pub(crate) fn populate_brain_func(working_module: &mut ActiveModule) -> build::Result<()> {
     let brain_function = working_module
         .module
         .functions

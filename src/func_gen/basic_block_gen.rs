@@ -2,14 +2,14 @@ use std::marker::PhantomData;
 
 use crate::assembled_module::{build, BuildError};
 
-use super::{body_gen::FunctionBodyInformation, mvp::eat_mvp_operator, WorkingFunction};
+use super::{body_gen::FunctionBodyInformation, mvp::eat_mvp_operator, ActiveFunction};
 use wasm_opcodes::OperatorByProposal;
 
 /// Everything used while running through basic block instructions to make naga functions.
 /// Parsing most instructions involves a straight run of values and operations. That straight run (or basic block)
 /// without control flow is eaten and converted by this. Since there is no control flow, expressions can be
 /// compounded without auxilliary assignments.
-pub(crate) struct BasicBlockState<'a, 'b, F: WorkingFunction<'b>> {
+pub(crate) struct BasicBlockState<'a, 'b, F: ActiveFunction<'b>> {
     // Global shader data, e.g. types or constants
     working: &'a mut F,
     _f_life: PhantomData<&'b ()>,
@@ -28,7 +28,7 @@ pub(crate) struct BasicBlockState<'a, 'b, F: WorkingFunction<'b>> {
     )>,
 }
 
-impl<'a, 'b, F: WorkingFunction<'b>> BasicBlockState<'a, 'b, F> {
+impl<'a, 'b, F: ActiveFunction<'b>> BasicBlockState<'a, 'b, F> {
     /// Pushes an expression on to the current stack
     pub(crate) fn push(&mut self, value: naga::Expression) {
         let needs_emitting = match &value {
@@ -85,7 +85,7 @@ impl<'a, 'b, F: WorkingFunction<'b>> BasicBlockState<'a, 'b, F> {
 }
 
 /// Populates until a control flow instruction
-pub(crate) fn build_basic_block<'a, F: WorkingFunction<'a>>(
+pub(crate) fn build_basic_block<'a, F: ActiveFunction<'a>>(
     stack: Vec<naga::Handle<naga::Expression>>,
     instructions: &mut impl Iterator<Item = OperatorByProposal>,
     working: &mut F,

@@ -19,8 +19,7 @@ use crate::{naga_expr, IO_ARGUMENT_ALIGNMENT_WORDS, IO_INVOCATION_ALIGNMENT_WORD
 use self::body_gen::populate_body;
 
 use super::{
-    assembled_module::{build, BuildError, WorkingModule},
-    bindings_gen::BindingHandles,
+    assembled_module::{build, ActiveModule, BuildError},
     func::FuncUnit,
 };
 
@@ -31,28 +30,32 @@ pub fn get_entry_name(funcref: FuncRef) -> String {
     )
 }
 
-// The values used when building a function
-pub(crate) trait WorkingFunction<'a>: Deref<Target = WorkingModule<'a>> + DerefMut {
+/// Any function, entry or not, that can be modified.
+pub(crate) trait ActiveFunction<'a>: Deref<Target = ActiveModule<'a>> + DerefMut {
     fn get_fn_mut(&mut self) -> &mut naga::Function;
+    fn get_active<'b>(&'b mut self) -> (MutModuleWithoutFunctions<'b>, &'b mut naga::Function);
 }
 
-pub(crate) struct WorkingBaseFunction<'a, 'b> {
-    pub(crate) working_module: &'b mut WorkingModule<'a>,
+/// While working on a function we may wish to modify the module the function is in.
+/// This contains references to everything *other* than the functions in a module.
+pub(crate) struct MutModuleWithoutFunctions<'a> {
+    pub(crate) types: &'a mut naga::UniqueArena<naga::Type>,
+    pub(crate) constants: &'a mut naga::Arena<naga::Constant>,
+    pub(crate) global_variables: &'a mut naga::Arena<naga::GlobalVariable>,
+}
+
+pub(crate) struct ActiveBaseFunction<'a, 'b> {
+    pub(crate) working_module: &'b mut ActiveModule<'a>,
     handle: Handle<naga::Function>,
     pub(crate) invocation_index: Handle<naga::Expression>,
 }
 
-impl<'a, 'b> WorkingBaseFunction<'a, 'b> {
+impl<'a, 'b> ActiveBaseFunction<'a, 'b> {
     pub(crate) fn new(
-        working_module: &'b mut WorkingModule<'a>,
+        working_module: &'b mut ActiveModule<'a>,
         handle: Handle<naga::Function>,
     ) -> build::Result<Self> {
         // Default arguments to permiate
-        let i32_ty = working_module
-            .std_objs
-            .tys
-            .global_invocation_id
-            .get(working_module)?;
         let func_mut = working_module.module.functions.get_mut(handle.clone());
         let invocation_index = func_mut.expressions.append(
             naga::Expression::FunctionArgument(func_mut.arguments.len() as u32),
@@ -60,7 +63,7 @@ impl<'a, 'b> WorkingBaseFunction<'a, 'b> {
         );
         func_mut.arguments.push(naga::FunctionArgument {
             name: Some("invocation_index".to_owned()),
-            ty: i32_ty,
+            ty: working_module.std_objs.u32,
             binding: None,
         });
 
@@ -72,36 +75,47 @@ impl<'a, 'b> WorkingBaseFunction<'a, 'b> {
     }
 }
 
-impl<'a, 'b> WorkingFunction<'a> for WorkingBaseFunction<'a, 'b> {
+impl<'a, 'b> ActiveFunction<'a> for ActiveBaseFunction<'a, 'b> {
     fn get_fn_mut(&mut self) -> &mut naga::Function {
         self.working_module
             .module
             .functions
             .get_mut(self.handle.clone())
     }
+    fn get_active<'c>(&'c mut self) -> (MutModuleWithoutFunctions<'c>, &'c mut naga::Function) {
+        let module = &mut self.working_module.module;
+        (
+            MutModuleWithoutFunctions {
+                types: &mut module.types,
+                constants: &mut module.constants,
+                global_variables: &mut module.global_variables,
+            },
+            module.functions.get_mut(self.handle.clone()),
+        )
+    }
 }
 
-impl<'a, 'b> Deref for WorkingBaseFunction<'a, 'b> {
-    type Target = WorkingModule<'a>;
+impl<'a, 'b> Deref for ActiveBaseFunction<'a, 'b> {
+    type Target = ActiveModule<'a>;
 
     fn deref(&self) -> &Self::Target {
         &self.working_module
     }
 }
 
-impl<'a, 'b> DerefMut for WorkingBaseFunction<'a, 'b> {
+impl<'a, 'b> DerefMut for ActiveBaseFunction<'a, 'b> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.working_module
     }
 }
 
-pub(crate) struct WorkingEntryFunction<'a, 'b> {
-    pub(crate) working_module: &'b mut WorkingModule<'a>,
+pub(crate) struct ActiveEntryFunction<'a, 'b> {
+    pub(crate) working_module: &'b mut ActiveModule<'a>,
     entry_index: usize,
 }
 
-impl<'a, 'b> WorkingEntryFunction<'a, 'b> {
-    pub(crate) fn new(working_module: &'b mut WorkingModule<'a>, entry_index: usize) -> Self {
+impl<'a, 'b> ActiveEntryFunction<'a, 'b> {
+    pub(crate) fn new(working_module: &'b mut ActiveModule<'a>, entry_index: usize) -> Self {
         Self {
             working_module,
             entry_index,
@@ -109,7 +123,7 @@ impl<'a, 'b> WorkingEntryFunction<'a, 'b> {
     }
 }
 
-impl<'a, 'b> WorkingFunction<'a> for WorkingEntryFunction<'a, 'b> {
+impl<'a, 'b> ActiveFunction<'a> for ActiveEntryFunction<'a, 'b> {
     fn get_fn_mut(&mut self) -> &mut naga::Function {
         &mut self
             .working_module
@@ -119,17 +133,32 @@ impl<'a, 'b> WorkingFunction<'a> for WorkingEntryFunction<'a, 'b> {
             .expect("entry points are add only")
             .function
     }
+    fn get_active<'c>(&'c mut self) -> (MutModuleWithoutFunctions<'c>, &'c mut naga::Function) {
+        let module = &mut self.working_module.module;
+        (
+            MutModuleWithoutFunctions {
+                types: &mut module.types,
+                constants: &mut module.constants,
+                global_variables: &mut module.global_variables,
+            },
+            &mut module
+                .entry_points
+                .get_mut(self.entry_index)
+                .expect("entry points are add only")
+                .function,
+        )
+    }
 }
 
-impl<'a, 'b> Deref for WorkingEntryFunction<'a, 'b> {
-    type Target = WorkingModule<'a>;
+impl<'a, 'b> Deref for ActiveEntryFunction<'a, 'b> {
+    type Target = ActiveModule<'a>;
 
     fn deref(&self) -> &Self::Target {
         &self.working_module
     }
 }
 
-impl<'a, 'b> DerefMut for WorkingEntryFunction<'a, 'b> {
+impl<'a, 'b> DerefMut for ActiveEntryFunction<'a, 'b> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.working_module
     }
@@ -139,15 +168,22 @@ pub(crate) struct WasmNagaFnArg {
     handle: naga::Handle<naga::Type>,
     i_param: usize,
     wasm_ty: ValType,
+    word_offset: u32,
 }
 
-fn populate_arguments<'a, F: WorkingFunction<'a>>(
+pub(crate) struct WasmNagaFnArgs {
+    args: Vec<WasmNagaFnArg>,
+    word_alignment: u32,
+}
+
+fn populate_arguments<'a, F: ActiveFunction<'a>>(
     working: &mut F,
     ty: &FuncType,
-) -> build::Result<Vec<WasmNagaFnArg>> {
+) -> build::Result<WasmNagaFnArgs> {
     let mut arg_tys = Vec::new();
+    let mut word_offset = 0;
     for (i_param, param) in ty.params().into_iter().enumerate() {
-        let ty = working.get_val_type(*param)?;
+        let ty = working.get_val_type(*param);
         working.get_fn_mut().arguments.push(naga::FunctionArgument {
             name: Some(format!("arg{}", i_param + 1)),
             ty,
@@ -157,19 +193,28 @@ fn populate_arguments<'a, F: WorkingFunction<'a>>(
             handle: ty,
             i_param,
             wasm_ty: param.clone(),
+            word_offset,
         });
+
+        word_offset +=
+            u32::from(param.byte_count() / 4).next_multiple_of(IO_ARGUMENT_ALIGNMENT_WORDS);
     }
-    return Ok(arg_tys);
+    let word_alignment = word_offset.next_multiple_of(IO_INVOCATION_ALIGNMENT_WORDS);
+
+    return Ok(WasmNagaFnArgs {
+        args: arg_tys,
+        word_alignment,
+    });
 }
 
 pub(crate) struct WasmNagaFnRes {
     handle: naga::Handle<naga::Type>,
     wasm_ty: Vec<ValType>,
     word_offsets: Vec<u32>,
-    words: u32,
+    word_alignment: u32,
 }
 
-fn populate_result<'a, F: WorkingFunction<'a>>(
+fn populate_result<'a, F: ActiveFunction<'a>>(
     working: &mut F,
     ty: &FuncType,
 ) -> build::Result<Option<WasmNagaFnRes>> {
@@ -181,7 +226,7 @@ fn populate_result<'a, F: WorkingFunction<'a>>(
 
     let fields = results
         .into_iter()
-        .map(|ty| Ok((ty, working.get_val_type(*ty)?)))
+        .map(|ty| Ok((ty, working.get_val_type(*ty))))
         .collect::<build::Result<Vec<_>>>()?;
 
     let mut members = Vec::new();
@@ -199,14 +244,14 @@ fn populate_result<'a, F: WorkingFunction<'a>>(
 
         offset += u32::from(ty.byte_count()).next_multiple_of(IO_ARGUMENT_ALIGNMENT_WORDS * 4);
     }
-    let offset = offset.next_multiple_of(IO_INVOCATION_ALIGNMENT_WORDS * 4);
+    let byte_alignment = offset.next_multiple_of(IO_INVOCATION_ALIGNMENT_WORDS * 4);
 
     let naga_ty = working.module.types.insert(
         naga::Type {
             name: None,
             inner: naga::TypeInner::Struct {
                 members,
-                span: offset,
+                span: byte_alignment,
             },
         },
         naga::Span::UNDEFINED,
@@ -217,22 +262,23 @@ fn populate_result<'a, F: WorkingFunction<'a>>(
         binding: None,
     });
 
+    assert_eq!(byte_alignment % 4, 0);
     return Ok(Some(WasmNagaFnRes {
         handle: naga_ty,
         wasm_ty: Vec::from(ty.results()),
         word_offsets,
-        words: offset / 4,
+        word_alignment: byte_alignment / 4,
     }));
 }
 
-fn populate_local_variables<'a, F: WorkingFunction<'a>>(
+fn populate_local_variables<'a, F: ActiveFunction<'a>>(
     working: &mut F,
     parsed_locals: &Vec<(u32, ValType)>,
 ) -> build::Result<HashMap<u32, Handle<naga::LocalVariable>>> {
     let mut handles = HashMap::new();
 
     for (i_local, local_ty) in parsed_locals {
-        let ty = working.get_val_type(*local_ty)?;
+        let ty = working.get_val_type(*local_ty);
         let handle = working.get_fn_mut().local_variables.append(
             naga::LocalVariable {
                 name: Some(format! {"local_{}", i_local}),
@@ -249,10 +295,9 @@ fn populate_local_variables<'a, F: WorkingFunction<'a>>(
 }
 
 pub(crate) fn populate_base_function<'a>(
-    working_function: &mut WorkingBaseFunction<'a, '_>,
+    working_function: &mut ActiveBaseFunction<'a, '_>,
     function_data: &FuncUnit,
-    bindings: &BindingHandles,
-) -> Result<(Vec<WasmNagaFnArg>, Option<WasmNagaFnRes>), BuildError> {
+) -> Result<(WasmNagaFnArgs, Option<WasmNagaFnRes>), BuildError> {
     let FuncUnit::LocalFunction(function_data) = function_data;
 
     let arg_types = populate_arguments(working_function, &function_data.func_data.ty)?;
@@ -265,7 +310,6 @@ pub(crate) fn populate_base_function<'a>(
         working_function,
         &function_data,
         &local_handles,
-        bindings,
         &result_type,
     )?;
 
@@ -275,18 +319,17 @@ pub(crate) fn populate_base_function<'a>(
 /// Generates function that extracts arguments from buffer, calls base function,
 /// then writes results to output buffer
 pub(crate) fn populate_entry_function(
-    working: &mut WorkingEntryFunction,
+    working: &mut ActiveEntryFunction,
     func_ptr: FuncRef,
     base_function: naga::Handle<naga::Function>,
     base_function_definition: &FuncUnit,
-    bindings: &BindingHandles,
-    arguments: Vec<WasmNagaFnArg>,
+    arguments: WasmNagaFnArgs,
     result: Option<WasmNagaFnRes>,
 ) -> build::Result<()> {
     working.get_fn_mut().name = Some(get_entry_name(func_ptr));
 
     // Make parameters (builtin variables)
-    let workgroups_ty = working.std_objs.tys.workgroup_argument.get(working)?;
+    let workgroups_ty = working.std_objs.uvec3;
     let func_mut = working.get_fn_mut();
     let gloabl_index_param = func_mut.expressions.append(
         naga::Expression::FunctionArgument(func_mut.arguments.len() as u32),
@@ -300,7 +343,9 @@ pub(crate) fn populate_entry_function(
 
     let instance_index = get_workgroup_index(working, gloabl_index_param);
 
-    let arg_handles = vec![instance_index]; //read_entry_inputs(working, bindings, arguments, instance_index)?;
+    let mut arg_handles = vec![instance_index];
+    let mut read_args = read_entry_inputs(working, arguments, instance_index)?;
+    arg_handles.append(&mut read_args);
 
     // Call fn
     let call_result = result.as_ref().map(|_| {
@@ -322,48 +367,47 @@ pub(crate) fn populate_entry_function(
     if let Some(call_result) = call_result {
         let results = result.expect("if call_result is Some then so is result");
 
-        store_output(working, bindings, call_result, results, instance_index);
+        store_output(working, call_result, results, instance_index)?;
     }
 
     return Ok(());
 }
 
 fn get_workgroup_index(
-    working: &mut WorkingEntryFunction,
+    working: &mut ActiveEntryFunction,
     gloabl_index_param: naga::Handle<naga::Expression>,
 ) -> naga::Handle<naga::Expression> {
     naga_expr! {working => gloabl_index_param[const 0]}
 }
 
+fn io_base_index(
+    working: &mut ActiveEntryFunction,
+    io_word_alignment: u32,
+    instance_index: naga::Handle<naga::Expression>,
+) -> naga::Handle<naga::Expression> {
+    naga_expr! {working => (U32(io_word_alignment)) * instance_index}
+}
+
 fn read_entry_inputs(
-    working: &mut WorkingEntryFunction,
-    bindings: &BindingHandles,
-    arguments: Vec<WasmNagaFnArg>,
-    workgroup_index_param: naga::Handle<naga::Expression>,
+    working: &mut ActiveEntryFunction,
+    arguments: WasmNagaFnArgs,
+    instance_index: naga::Handle<naga::Expression>,
 ) -> build::Result<Vec<naga::Handle<naga::Expression>>> {
-    let mut arg_offset = 0;
+    let base_index = io_base_index(working, arguments.word_alignment, instance_index);
+
     let mut arg_handles = Vec::new();
-    for arg in &arguments {
+    for arg in &arguments.args {
         let load_fn = match arg.wasm_ty {
-            ValType::I32 => working
-                .std_objs
-                .fns
-                .read_i32
-                .get_for(working, bindings.input.clone())?,
-            ValType::I64 => working
-                .std_objs
-                .fns
-                .read_i64
-                .get_for(working, bindings.input.clone())?,
-            ValType::F32 => working
-                .std_objs
-                .fns
-                .read_f32
-                .get_for(working, bindings.input.clone())?,
-            _ => todo!(),
+            ValType::I32 => working.std_objs.i32.read_input,
+            ValType::I64 => working.std_objs.i64.read_input,
+            ValType::F32 => working.std_objs.f32.read_input,
+            ValType::F64 => working.std_objs.f64.read_input,
+            ValType::V128 => working.std_objs.v128.read_input,
+            ValType::FuncRef => working.std_objs.func_ref.read_input,
+            ValType::ExternRef => working.std_objs.extern_ref.read_input,
         };
 
-        let word_id = todo!();
+        let load_location = naga_expr! {working => base_index + (U32(arg.word_offset))};
 
         let entry_fn = working.get_fn_mut();
 
@@ -373,30 +417,24 @@ fn read_entry_inputs(
         entry_fn.body.push(
             naga::Statement::Call {
                 function: load_fn,
-                arguments: vec![
-                    /*TODO: Calculate position in buffer of input given invocation ID */
-                ],
+                arguments: vec![load_location],
                 result: Some(arg_result.clone()),
             },
             naga::Span::UNDEFINED,
         );
         arg_handles.push(arg_result);
-
-        arg_offset +=
-            u32::from(arg.wasm_ty.byte_count()).next_multiple_of(IO_ARGUMENT_ALIGNMENT_WORDS)
     }
 
     return Ok(arg_handles);
 }
 
 fn store_output(
-    working: &mut WorkingEntryFunction,
-    bindings: &BindingHandles,
+    working: &mut ActiveEntryFunction,
     call_result: naga::Handle<naga::Expression>,
     results: WasmNagaFnRes,
     instance_index: naga::Handle<naga::Expression>,
 ) -> build::Result<()> {
-    let base_index = naga_expr! {working => (U32(results.words)) * instance_index};
+    let base_index = io_base_index(working, results.word_alignment, instance_index);
     for (i_res, (ty, word_offset)) in results
         .wasm_ty
         .into_iter()
@@ -408,25 +446,13 @@ fn store_output(
         let result = naga_expr! {working => call_result[const i_res]};
 
         let function = match ty {
-            ValType::I32 => working
-                .std_objs
-                .fns
-                .write_i32
-                .get_for(working, bindings.output.clone())?,
-            ValType::I64 => working
-                .std_objs
-                .fns
-                .write_i64
-                .get_for(working, bindings.output.clone())?,
-            ValType::F32 => working
-                .std_objs
-                .fns
-                .write_f32
-                .get_for(working, bindings.output.clone())?,
-            ValType::F64 => todo!(),
-            ValType::V128 => todo!(),
-            ValType::FuncRef => todo!(),
-            ValType::ExternRef => todo!(),
+            ValType::I32 => working.std_objs.i32.write_output,
+            ValType::I64 => working.std_objs.i64.write_output,
+            ValType::F32 => working.std_objs.f32.write_output,
+            ValType::F64 => working.std_objs.f64.write_output,
+            ValType::V128 => working.std_objs.v128.write_output,
+            ValType::FuncRef => working.std_objs.func_ref.write_output,
+            ValType::ExternRef => working.std_objs.extern_ref.write_output,
         };
 
         working.get_fn_mut().body.push(

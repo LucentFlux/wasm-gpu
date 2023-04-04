@@ -1,9 +1,9 @@
-use super::{basic_block_gen::BasicBlockState, WorkingFunction};
+use super::{basic_block_gen::BasicBlockState, ActiveFunction};
 use crate::assembled_module::build;
 use wasm_opcodes::MVPOperator;
 use wasm_types::Val;
 
-fn const_val<'a, F: WorkingFunction<'a>>(
+fn const_val<'a, F: ActiveFunction<'a>>(
     state: &mut BasicBlockState<'_, 'a, F>,
     val: Val,
 ) -> build::Result<()> {
@@ -12,7 +12,7 @@ fn const_val<'a, F: WorkingFunction<'a>>(
     Ok(())
 }
 
-pub(super) fn eat_mvp_operator<'a, F: WorkingFunction<'a>>(
+pub(super) fn eat_mvp_operator<'a, F: ActiveFunction<'a>>(
     state: &mut BasicBlockState<'_, 'a, F>,
     operator: &MVPOperator,
 ) -> build::Result<()> {

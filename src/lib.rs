@@ -58,13 +58,13 @@ pub const IO_ARGUMENT_ALIGNMENT_WORDS: u32 = 1;
 pub const IO_INVOCATION_ALIGNMENT_WORDS: u32 = 1;
 
 mod assembled_module;
-mod bindings_gen;
 mod brain_func_gen;
 mod call_graph;
 mod config;
 mod func;
 mod func_gen;
 mod function_collection;
+mod module_ext;
 mod references;
 mod std_objects;
 mod traps;

@@ -1,17 +1,22 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, sync::atomic::AtomicBool};
 
 use once_cell::sync::OnceCell;
+use perfect_derive::perfect_derive;
 
-use crate::assembled_module::{build, WorkingModule};
+use crate::{
+    assembled_module::{build, ActiveModule},
+    TRAP_FLAG_INDEX,
+};
 use wasm_types::WasmTyVal;
 
-mod base_tys;
-mod buffer_tys;
-mod naga_tys;
+use super::Generator;
 
 /// A type that attaches itself to a module the first time it is requested
 pub(crate) trait TyGen {
-    fn gen(working: &mut WorkingModule) -> build::Result<naga::Handle<naga::Type>>;
+    fn gen<Ps: super::GenerationParameters>(
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
+    ) -> build::Result<naga::Handle<naga::Type>>;
 }
 
 /// A type, linked to a wasm type, that links itself on first request
@@ -20,77 +25,127 @@ pub(crate) trait WasmTyGen: TyGen {
     // Argument `ty` is passed in from a lazy evaluation of `Self::gen`
     fn make_const(
         ty: naga::Handle<naga::Type>,
-        working: &mut WorkingModule,
+        working: &mut ActiveModule,
         value: Self::WasmTy,
     ) -> build::Result<naga::Handle<naga::Constant>>;
 }
 
-pub(crate) struct LazyTy<I: TyGen> {
+#[perfect_derive(Default)]
+pub(crate) struct LazyTy<I> {
+    generating: AtomicBool,
     handle: OnceCell<build::Result<naga::Handle<naga::Type>>>,
     _phantom: PhantomData<I>,
 }
 
-impl<I: TyGen> LazyTy<I> {
-    pub(crate) fn new() -> Self {
-        Self {
-            handle: OnceCell::new(),
-            _phantom: PhantomData,
-        }
-    }
+impl<I: TyGen> Generator for LazyTy<I> {
+    type Generated = naga::Handle<naga::Type>;
 
-    pub(crate) fn get(
+    fn gen<Ps: super::GenerationParameters>(
         &self,
-        working: &mut WorkingModule,
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
+    ) -> crate::assembled_module::build::Result<Self::Generated> {
+        self.handle
+            .get_or_init(|| {
+                if self
+                    .generating
+                    .fetch_or(true, std::sync::atomic::Ordering::AcqRel)
+                {
+                    panic!("loop detected in std objects when generating type")
+                }
+                I::gen(module, others)
+                // No need to clear self.generating since we generate once
+            })
+            .clone()
+    }
+}
+
+pub(crate) struct UVec3Gen;
+impl TyGen for UVec3Gen {
+    fn gen<Ps: super::GenerationParameters>(
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
     ) -> build::Result<naga::Handle<naga::Type>> {
-        self.handle.get_or_init(|| I::gen(working)).clone()
+        let naga_ty = naga::Type {
+            name: None,
+            inner: naga::TypeInner::Vector {
+                size: naga::VectorSize::Tri,
+                kind: naga::ScalarKind::Uint,
+                width: 4,
+            },
+        };
+
+        Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
 }
 
-impl<I: WasmTyGen> LazyTy<I> {
-    pub(crate) fn make_const(
-        &self,
-        working: &mut WorkingModule,
-        value: I::WasmTy,
-    ) -> build::Result<naga::Handle<naga::Constant>> {
-        let ty = self.get(working)?;
-        I::make_const(ty, working, value)
+pub(crate) struct U32Gen;
+impl TyGen for U32Gen {
+    fn gen<Ps: super::GenerationParameters>(
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
+    ) -> build::Result<naga::Handle<naga::Type>> {
+        let naga_ty = naga::Type {
+            name: None,
+            inner: naga::TypeInner::Scalar {
+                kind: naga::ScalarKind::Uint,
+                width: 4,
+            },
+        };
+
+        Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
 }
 
-pub(crate) struct StdTySet {
-    pub(crate) workgroup_argument: LazyTy<self::naga_tys::UVec3Gen>,
-    pub(crate) global_invocation_id: LazyTy<self::naga_tys::U32Gen>,
-    pub(crate) address: LazyTy<self::naga_tys::U32Gen>,
+pub(crate) struct WordArrayBufferGen;
+impl TyGen for WordArrayBufferGen {
+    fn gen<Ps: super::GenerationParameters>(
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
+    ) -> build::Result<naga::Handle<naga::Type>> {
+        let word_ty = others.u32.gen(module, others)?;
 
-    pub(crate) wasm_i32: LazyTy<self::base_tys::WasmI32Gen>,
-    pub(crate) wasm_i64: LazyTy<self::base_tys::WasmI64Gen>,
-    pub(crate) wasm_f32: LazyTy<self::base_tys::WasmF32Gen>,
-    pub(crate) wasm_f64: LazyTy<self::base_tys::WasmF64Gen>,
-    pub(crate) wasm_v128: LazyTy<self::base_tys::WasmV128Gen>,
-    pub(crate) wasm_func_ref: LazyTy<self::base_tys::WasmFuncRefGen>,
-    pub(crate) wasm_extern_ref: LazyTy<self::base_tys::WasmExternRefGen>,
+        let word_array_ty = module.types.insert(
+            naga::Type {
+                name: None,
+                inner: naga::TypeInner::Array {
+                    base: word_ty,
+                    size: naga::ArraySize::Dynamic,
+                    stride: 4,
+                },
+            },
+            naga::Span::UNDEFINED,
+        );
 
-    pub(crate) wasm_i32_array_buffer: LazyTy<self::buffer_tys::I32ArrayBufferGen>,
-    pub(crate) wasm_flags_buffer: LazyTy<self::buffer_tys::FlagsBufferGen>,
+        Ok(word_array_ty)
+    }
 }
 
-impl StdTySet {
-    pub(crate) fn new() -> Self {
-        Self {
-            workgroup_argument: LazyTy::new(),
-            global_invocation_id: LazyTy::new(),
-            address: LazyTy::new(),
+pub(crate) struct FlagsBufferGen {}
+impl TyGen for FlagsBufferGen {
+    fn gen<Ps: super::GenerationParameters>(
+        module: &mut naga::Module,
+        others: &super::StdObjectsGenerator<Ps>,
+    ) -> build::Result<naga::Handle<naga::Type>> {
+        let word_ty = others.u32.gen(module, others)?;
 
-            wasm_i32: LazyTy::new(),
-            wasm_i64: LazyTy::new(),
-            wasm_f32: LazyTy::new(),
-            wasm_f64: LazyTy::new(),
-            wasm_v128: LazyTy::new(),
-            wasm_func_ref: LazyTy::new(),
-            wasm_extern_ref: LazyTy::new(),
+        let flag_members = vec![naga::StructMember {
+            name: Some("trap_flag".to_owned()),
+            ty: word_ty,
+            binding: None,
+            offset: TRAP_FLAG_INDEX * 4,
+        }];
+        let flags_ty = module.types.insert(
+            naga::Type {
+                name: Some("wasm_flags".to_owned()),
+                inner: naga::TypeInner::Struct {
+                    span: u32::try_from(flag_members.len() * 4).expect("static size"),
+                    members: flag_members,
+                },
+            },
+            naga::Span::UNDEFINED,
+        );
 
-            wasm_i32_array_buffer: LazyTy::new(),
-            wasm_flags_buffer: LazyTy::new(),
-        }
+        Ok(flags_ty)
     }
 }
