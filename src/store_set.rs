@@ -1,5 +1,4 @@
 pub mod builder;
-pub mod calling;
 
 use wgpu_lazybuffers_macros::lazy_mappable;
 

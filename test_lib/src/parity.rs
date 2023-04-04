@@ -3,7 +3,7 @@
 
 use wasm_types::{Ieee32, Ieee64};
 use wasmtime::Trap;
-use wgpu_async::wrap_wgpu;
+use wgpu_async::wrap_to_async;
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
 pub trait ParityType {
@@ -103,16 +103,17 @@ pub fn test_parity<Input: ParityType, Output: ParityType>(
             .await
             .unwrap();
 
-        let (device, queue) = wrap_wgpu(device, queue);
+        let (device, queue) = wrap_to_async(device, queue);
 
         let chunk_size = 1024;
         let memory_system = MemorySystem::new(
-            device.clone(),
+            &device,
             BufferRingConfig {
                 chunk_size,
                 total_transfer_buffers: 2,
             },
-        ).unwrap();
+        )
+        .unwrap();
 
         let module = wasm_gpu::Module::new(
             &wasm_gpu::WasmFeatures::default(),

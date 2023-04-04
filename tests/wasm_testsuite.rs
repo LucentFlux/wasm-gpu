@@ -14,7 +14,7 @@ use wast::{
     parser::{parse, ParseBuffer},
     QuoteWat, Wast, WastDirective, WastExecute, WastInvoke, WastRet, Wat,
 };
-use wgpu_async::{wrap_wgpu, AsyncQueue};
+use wgpu_async::{wrap_to_async, AsyncQueue};
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
 #[wasm_gpu_test_gen::wast("tests/testsuite/*.wast")]
@@ -47,10 +47,10 @@ pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
         .await
         .unwrap();
 
-    let (device, queue) = wrap_wgpu(device, queue);
+    let (device, queue) = wrap_to_async(device, queue);
 
     let memory_system = MemorySystem::new(
-        device.clone(),
+        &device,
         // Low memory footprint
         BufferRingConfig {
             chunk_size: 1024,

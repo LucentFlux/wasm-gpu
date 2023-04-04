@@ -35,6 +35,7 @@ impl UnmappedMemoryInstanceSet {
             repetitions: instance_count,
             usages: wgpu::BufferUsages::STORAGE,
             locking_size: None,
+            transfer_size: None,
         };
         let memory = source
             .try_duplicate_interleave(memory_system, queue, &cfg)

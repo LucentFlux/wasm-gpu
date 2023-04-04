@@ -36,6 +36,7 @@ impl UnmappedMutableGlobalsInstanceSet {
                         repetitions: count,
                         usages: wgpu::BufferUsages::STORAGE,
                         locking_size: None,
+                        transfer_size: None,
                     },
                 )
                 .await?,

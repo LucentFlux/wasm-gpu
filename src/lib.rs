@@ -36,7 +36,6 @@ mod wasm_gpu {
     pub use crate::externs::NamedExtern;
     // Store
     pub use store_set::builder::MappedStoreSetBuilder; // Don't need to expose the unmapped version
-    pub use store_set::calling::Caller;
     pub use store_set::DeviceStoreSet;
     // Instance
     pub use instance::ModuleInstanceReferences;
@@ -45,6 +44,20 @@ mod wasm_gpu {
     pub use instance::func::UntypedFuncPtr;
     // Typing
     pub use typed::*;
+
+    // Constants
+    /// The limits required for evaluating wasm on the gpu.
+    pub fn downlevel_wasm_defaults() -> wgpu::Limits {
+        let limits = wgpu::Limits {
+            max_bindings_per_bind_group: 10,
+            max_storage_buffers_per_shader_stage: 10,
+            ..wgpu::Limits::downlevel_webgl2_defaults()
+        };
+
+        //assert!(limits.check_limits(&wgpu::Limits::downlevel_defaults()));
+
+        limits
+    }
 }
 
 pub use wasm_gpu::*;

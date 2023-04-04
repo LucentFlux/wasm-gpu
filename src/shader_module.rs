@@ -2,7 +2,8 @@ use std::{borrow::Cow, collections::BTreeMap};
 
 use elsa::FrozenMap;
 use itertools::Itertools;
-use spirv_tools::opt::Optimizer;
+use std::collections::HashSet;
+use wasm_gpu_funcgen::Tuneables;
 use wasm_gpu_funcgen::{get_entry_name, AssembledModule, BINDING_TUPLES};
 use wasm_gpu_funcgen::{
     DATA_BINDING_INDEX, ELEMENT_BINDING_INDEX, FLAGS_BINDING_INDEX, IMMUTABLE_GLOBAL_BINDING_INDEX,
@@ -12,6 +13,9 @@ use wasm_gpu_funcgen::{
 use wasm_types::FuncRef;
 use wgpu::{BindGroupLayoutDescriptor, ShaderModule};
 use wgpu_async::{AsyncQueue, WgpuFuture};
+
+#[cfg(feature = "opt")]
+use spirv_tools::opt::Optimizer;
 
 pub struct Bindings<'a> {
     pub data: &'a wgpu::Buffer,
@@ -135,17 +139,25 @@ impl WasmShaderModule {
     fn make_spv_shader_module(
         device: &wgpu::Device,
         assembled: &AssembledModule,
+        tuneables: &Tuneables,
     ) -> anyhow::Result<wgpu::ShaderModule> {
-        let mut opt = spirv_tools::opt::create(Some(spirv_tools::TargetEnv::Vulkan_1_2));
+        let (target_env, lang_version) = (spirv_tools::TargetEnv::Vulkan_1_0, (1, 0));
+
+        let mut opt = spirv_tools::opt::create(Some(target_env));
         opt.register_performance_passes();
+
+        let mut capabilities = naga::FastHashSet::from_iter([naga::back::spv::Capability::Kernel]);
+        if tuneables.hardware_supports_f64 {
+            capabilities.insert(naga::back::spv::Capability::Float64);
+        }
 
         let module = &assembled.module;
         let module_info = &assembled.module_info;
         let hlsl_options = naga::back::spv::Options {
-            lang_version: (1, 2),
+            lang_version,
             flags: naga::back::spv::WriterFlags::empty(),
             binding_map: BTreeMap::new(),
-            capabilities: None,
+            capabilities: Some(capabilities),
             bounds_check_policies: naga::proc::BoundsCheckPolicies {
                 index: naga::proc::index::BoundsCheckPolicy::Unchecked,
                 buffer: naga::proc::index::BoundsCheckPolicy::Unchecked,
@@ -183,8 +195,9 @@ impl WasmShaderModule {
     fn make_shader_module(
         device: &wgpu::Device,
         assembled: &AssembledModule,
+        tuneables: &Tuneables,
     ) -> wgpu::ShaderModule {
-        match Self::make_spv_shader_module(device, assembled) {
+        match Self::make_spv_shader_module(device, assembled, tuneables) {
             Ok(writer) => writer,
             // Fall back to naga
             Err(e) => {
@@ -198,12 +211,17 @@ impl WasmShaderModule {
     fn make_shader_module(
         device: &wgpu::Device,
         assembled: &AssembledModule,
+        _tuneables: &Tuneables,
     ) -> wgpu::ShaderModule {
         Self::make_naga_shader_module(device, assembled)
     }
 
-    pub(crate) fn make(device: &wgpu::Device, assembled: &AssembledModule) -> Self {
-        let shader = Self::make_shader_module(device, assembled);
+    pub(crate) fn make(
+        device: &wgpu::Device,
+        assembled: &AssembledModule,
+        tuneables: &Tuneables,
+    ) -> Self {
+        let shader = Self::make_shader_module(device, assembled, tuneables);
 
         let binding_entries = BINDING_TUPLES
             .clone()

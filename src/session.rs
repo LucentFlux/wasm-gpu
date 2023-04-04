@@ -101,6 +101,7 @@ impl<'a> Session<'a> {
                 size: output_length,
                 initial_data: None,
                 locking_size: output_length,
+                transfer_size: 4096,
                 label,
             })
             .await
@@ -120,6 +121,7 @@ impl<'a> Session<'a> {
                 size: flags_length,
                 initial_data: None,
                 locking_size: flags_length,
+                transfer_size: 4096,
                 label,
             })
             .await
@@ -202,7 +204,7 @@ impl<'a> Session<'a> {
                     .try_read_slice_with_locks(
                         &queue,
                         output_offset..output_offset + byte_count,
-                        &flags_lock_collection,
+                        &output_lock_collection,
                     )
                     .await?;
 

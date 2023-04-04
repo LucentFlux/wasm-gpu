@@ -14,7 +14,7 @@ pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: true,
+            force_fallback_adapter: false,
             compatible_surface: None,
         })
         .await
@@ -25,21 +25,21 @@ pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
             &wgpu::DeviceDescriptor {
                 label: None,
                 features: wgpu::Features::empty(),
-                limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                limits: crate::downlevel_wasm_defaults(),
             },
             None,
         )
         .await
         .expect("");
 
-    let (device, queue) = wgpu_async::wrap_wgpu(device, queue);
+    let (device, queue) = wgpu_async::wrap_to_async(device, queue);
 
     let conf = BufferRingConfig {
         // Minimal memory footprint for tests
         chunk_size: 1024,
         total_transfer_buffers: 2,
     };
-    let memory_system = MemorySystem::new(device, conf).unwrap();
+    let memory_system = MemorySystem::new(&device, conf).unwrap();
 
     return (memory_system, queue);
 }

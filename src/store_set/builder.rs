@@ -283,7 +283,7 @@ impl MappedStoreSetBuilder {
         let assembled_module = AssembledModule::assemble(&assembleable_functions, &tuneables)
             .map_err(BuilderCompleteError::BuildError)?;
 
-        let shader_module = WasmShaderModule::make(queue.device(), &assembled_module);
+        let shader_module = WasmShaderModule::make(queue.device(), &assembled_module, &tuneables);
 
         Ok(CompletedBuilder {
             label,

@@ -51,6 +51,7 @@ impl MappedMutableGlobalsInstanceBuilder {
                 label: &format!("{}_mutable_globals_buffer", module_label),
                 usages: wgpu::BufferUsages::empty(),
                 locking_size: 1024,
+                transfer_size: 4096,
             }),
             head: 0,
             cap_set: CapabilityStore::new(0),

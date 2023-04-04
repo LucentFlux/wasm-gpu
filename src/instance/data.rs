@@ -41,6 +41,7 @@ impl MappedDataInstance {
                 label: &format!("{}_data_buffer", module_label),
                 usages: wgpu::BufferUsages::STORAGE,
                 locking_size: 8192,
+                transfer_size: 4096,
             }),
             cap_set: CapabilityStore::new(0),
             head: 0,

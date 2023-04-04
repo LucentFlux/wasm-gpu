@@ -1,5 +1,5 @@
 use wasm_gpu::{imports, PanicOnAny, Tuneables};
-use wgpu_async::wrap_wgpu;
+use wgpu_async::wrap_to_async;
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
 #[tokio::main]
@@ -30,16 +30,17 @@ async fn main() -> anyhow::Result<()> {
         .await
         .unwrap();
 
-    let (device, queue) = wrap_wgpu(device, queue);
+    let (device, queue) = wrap_to_async(device, queue);
 
     let chunk_size = 16 * 1024;
     let memory_system = MemorySystem::new(
-        device.clone(),
+        &device,
         BufferRingConfig {
             chunk_size,
             total_transfer_buffers: 1024,
         },
-    ).unwrap();
+    )
+    .unwrap();
 
     // wasm setup
     let wat = r#"

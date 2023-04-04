@@ -36,6 +36,7 @@ impl MappedElementInstance {
             label: &format!("{}_element_buffer", module_label),
             usages: wgpu::BufferUsages::STORAGE,
             locking_size: 8192,
+            transfer_size: 4096,
         });
         Self {
             references,

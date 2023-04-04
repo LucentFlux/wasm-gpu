@@ -36,6 +36,7 @@ impl MappedImmutableGlobalsInstance {
             label: &format!("{}_immutable_globals_buffer", module_label),
             usages: wgpu::BufferUsages::STORAGE,
             locking_size: 1024,
+            transfer_size: 4096,
         });
         Self {
             immutables,

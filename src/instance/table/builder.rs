@@ -46,6 +46,7 @@ impl MappedTableInstanceSetBuilder {
                 label: &format!("{}_table_buffer", module_label),
                 usages: wgpu::BufferUsages::empty(),
                 locking_size: 128,
+                transfer_size: 4096,
             }),
             cap_set: CapabilityStore::new(0),
         }

@@ -48,6 +48,7 @@ impl MappedMemoryInstanceSetBuilder {
                 label: &format!("{}_memory_buffer", module_label),
                 usages: wgpu::BufferUsages::empty(),
                 locking_size: 8192,
+                transfer_size: 4096,
             }),
             cap_set: CapabilityStore::new(0),
         }
