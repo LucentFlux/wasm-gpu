@@ -1,4 +1,4 @@
-use crate::assembled_module::build;
+use crate::build;
 use crate::std_objects::Generator;
 use crate::std_objects::{GenerationParameters, StdObjectsGenerator};
 use crate::{

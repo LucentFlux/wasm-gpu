@@ -3,13 +3,10 @@ use std::{marker::PhantomData, sync::atomic::AtomicBool};
 use once_cell::sync::OnceCell;
 use perfect_derive::perfect_derive;
 
-use crate::{
-    assembled_module::{build, ActiveModule},
-    TRAP_FLAG_INDEX,
-};
+use crate::{build, TRAP_FLAG_INDEX};
 use wasm_types::WasmTyVal;
 
-use super::Generator;
+use super::{Generator, StdObjects};
 
 /// A type that attaches itself to a module the first time it is requested
 pub(crate) trait TyGen {
@@ -17,6 +14,7 @@ pub(crate) trait TyGen {
         module: &mut naga::Module,
         others: &super::StdObjectsGenerator<Ps>,
     ) -> build::Result<naga::Handle<naga::Type>>;
+    fn size_bytes() -> u32;
 }
 
 /// A type, linked to a wasm type, that links itself on first request
@@ -24,8 +22,8 @@ pub(crate) trait WasmTyGen: TyGen {
     type WasmTy: WasmTyVal;
     // Argument `ty` is passed in from a lazy evaluation of `Self::gen`
     fn make_const(
-        ty: naga::Handle<naga::Type>,
-        working: &mut ActiveModule,
+        module: &mut naga::Module,
+        objects: &StdObjects,
         value: Self::WasmTy,
     ) -> build::Result<naga::Handle<naga::Constant>>;
 }
@@ -37,6 +35,12 @@ pub(crate) struct LazyTy<I> {
     _phantom: PhantomData<I>,
 }
 
+impl<I: TyGen> LazyTy<I> {
+    pub(crate) fn size_bytes() -> u32 {
+        I::size_bytes()
+    }
+}
+
 impl<I: TyGen> Generator for LazyTy<I> {
     type Generated = naga::Handle<naga::Type>;
 
@@ -44,7 +48,7 @@ impl<I: TyGen> Generator for LazyTy<I> {
         &self,
         module: &mut naga::Module,
         others: &super::StdObjectsGenerator<Ps>,
-    ) -> crate::assembled_module::build::Result<Self::Generated> {
+    ) -> build::Result<Self::Generated> {
         self.handle
             .get_or_init(|| {
                 if self
@@ -77,6 +81,10 @@ impl TyGen for UVec3Gen {
 
         Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
+
+    fn size_bytes() -> u32 {
+        12
+    }
 }
 
 pub(crate) struct U32Gen;
@@ -94,6 +102,10 @@ impl TyGen for U32Gen {
         };
 
         Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
+    }
+
+    fn size_bytes() -> u32 {
+        4
     }
 }
 
@@ -118,6 +130,10 @@ impl TyGen for WordArrayBufferGen {
         );
 
         Ok(word_array_ty)
+    }
+
+    fn size_bytes() -> u32 {
+        0 // Dynamic arrays have no static size
     }
 }
 
@@ -147,5 +163,9 @@ impl TyGen for FlagsBufferGen {
         );
 
         Ok(flags_ty)
+    }
+
+    fn size_bytes() -> u32 {
+        4
     }
 }

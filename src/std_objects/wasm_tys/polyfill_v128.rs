@@ -1,14 +1,14 @@
 use wasm_types::V128;
 
 use crate::{
-    assembled_module::{build, ActiveModule},
-    declare_function,
+    build, declare_function,
     module_ext::{FunctionExt, ModuleExt},
     naga_expr,
     std_objects::{
+        std_consts::ConstGen,
         std_fns::BufferFnGen,
         std_tys::{TyGen, WasmTyGen},
-        GenerationParameters, Generator, StdObjectsGenerator, WasmTyImpl,
+        GenerationParameters, Generator, StdObjects, StdObjectsGenerator, WasmTyImpl,
     },
 };
 
@@ -17,6 +17,7 @@ use crate::{
 pub(crate) struct PolyfillV128;
 impl WasmTyImpl<V128> for PolyfillV128 {
     type TyGen = PolyfillV128TyGen;
+    type DefaultGen = PolyfillV128DefaultGen;
     type ReadGen = PolyfillV128ReadGen;
     type WriteGen = PolyfillV128WriteGen;
 }
@@ -38,48 +39,70 @@ impl TyGen for PolyfillV128TyGen {
 
         Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
+
+    fn size_bytes() -> u32 {
+        16
+    }
+}
+fn make_const_impl(
+    module: &mut naga::Module,
+    ty: naga::Handle<naga::Type>,
+    value: V128,
+) -> naga::Handle<naga::Constant> {
+    let bytes = value.to_le_bytes();
+    let inner = naga::ConstantInner::Composite {
+        ty,
+        components: bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| {
+                let word = u32::from_le_bytes(*bytes);
+                let word =
+                    u32::try_from(word & 0xFFFFFFFF).expect("truncated word always fits in u32");
+                module.constants.append(
+                    naga::Constant {
+                        name: None,
+                        specialization: None,
+                        inner: naga::ConstantInner::Scalar {
+                            width: 4,
+                            value: naga::ScalarValue::Uint(word.into()),
+                        },
+                    },
+                    naga::Span::UNDEFINED,
+                )
+            })
+            .collect(),
+    };
+    module.constants.append(
+        naga::Constant {
+            name: None,
+            specialization: None,
+            inner,
+        },
+        naga::Span::UNDEFINED,
+    )
 }
 impl WasmTyGen for PolyfillV128TyGen {
     type WasmTy = V128;
 
     fn make_const(
-        ty: naga::Handle<naga::Type>,
-        working: &mut ActiveModule,
+        module: &mut naga::Module,
+        objects: &StdObjects,
         value: Self::WasmTy,
     ) -> build::Result<naga::Handle<naga::Constant>> {
-        let bytes = value.to_le_bytes();
-        let inner = naga::ConstantInner::Composite {
-            ty,
-            components: bytes
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .map(|bytes| {
-                    let word = u32::from_le_bytes(*bytes);
-                    let word = u32::try_from(word & 0xFFFFFFFF)
-                        .expect("truncated word always fits in u32");
-                    working.module.constants.append(
-                        naga::Constant {
-                            name: None,
-                            specialization: None,
-                            inner: naga::ConstantInner::Scalar {
-                                width: 4,
-                                value: naga::ScalarValue::Uint(word.into()),
-                            },
-                        },
-                        naga::Span::UNDEFINED,
-                    )
-                })
-                .collect(),
-        };
-        Ok(working.module.constants.append(
-            naga::Constant {
-                name: None,
-                specialization: None,
-                inner,
-            },
-            naga::Span::UNDEFINED,
-        ))
+        Ok(make_const_impl(module, objects.v128.ty, value))
+    }
+}
+
+pub(crate) struct PolyfillV128DefaultGen;
+impl ConstGen for PolyfillV128DefaultGen {
+    fn gen<Ps: crate::std_objects::GenerationParameters>(
+        module: &mut naga::Module,
+        others: &crate::std_objects::StdObjectsGenerator<Ps>,
+    ) -> build::Result<naga::Handle<naga::Constant>> {
+        let ty = others.v128.ty.gen(module, others)?;
+        Ok(make_const_impl(module, ty, V128::from_bits(0)))
     }
 }
 

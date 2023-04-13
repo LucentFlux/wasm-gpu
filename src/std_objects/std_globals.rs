@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use once_cell::sync::OnceCell;
 use perfect_derive::perfect_derive;
 
-use crate::assembled_module::build;
+use crate::build;
 
 use super::Generator;
 
@@ -39,7 +39,7 @@ impl<I: GlobalGen> Generator for LazyGlobal<I> {
         &self,
         module: &mut naga::Module,
         others: &super::StdObjectsGenerator<Ps>,
-    ) -> crate::assembled_module::build::Result<Self::Generated> {
+    ) -> build::Result<Self::Generated> {
         self.handle.get_or_init(|| I::gen(module, others)).clone()
     }
 }
@@ -61,7 +61,7 @@ macro_rules! std_bindings {
                     &self,
                     module: &mut naga::Module,
                     others: &super::StdObjectsGenerator<Ps>,
-                ) -> build::Result<Self::Generated> {
+                ) -> crate::build::Result<Self::Generated> {
                     $(
                         let $name = self.$name.gen(module, others)?;
                     )*
@@ -83,5 +83,7 @@ macro_rules! std_bindings {
 }
 
 std_bindings! {
-    struct StdBindingsGenerator { memory, mutable_globals, immutable_globals, tables, data, elements, input, output, stack, flags } => pub(crate) struct StdBindings;
+    struct StdBindingsGenerator {
+        memory, mutable_globals, immutable_globals, tables, data, elements, input, output, stack, flags
+    } => pub(crate) struct StdBindings;
 }

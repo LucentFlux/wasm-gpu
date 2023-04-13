@@ -1,4 +1,4 @@
-use super::build;
+use crate::build;
 
 pub(crate) mod native_f32;
 pub(crate) mod native_i32;
@@ -12,7 +12,7 @@ fn make_64_bit_const_from_2vec32(
     ty: naga::Handle<naga::Type>,
     module: &mut naga::Module,
     value: i64,
-) -> build::Result<naga::Handle<naga::Constant>> {
+) -> naga::Handle<naga::Constant> {
     let inner = naga::ConstantInner::Composite {
         ty: ty.clone(),
         components: (0..2)
@@ -34,12 +34,12 @@ fn make_64_bit_const_from_2vec32(
             })
             .collect(),
     };
-    Ok(module.constants.append(
+    module.constants.append(
         naga::Constant {
             name: None,
             specialization: None,
             inner,
         },
         naga::Span::UNDEFINED,
-    ))
+    )
 }

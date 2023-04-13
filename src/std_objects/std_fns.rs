@@ -3,7 +3,7 @@ use std::{marker::PhantomData, sync::atomic::AtomicBool};
 use once_cell::sync::OnceCell;
 use perfect_derive::perfect_derive;
 
-use crate::assembled_module::build;
+use crate::build;
 
 use super::{GenerationParameters, Generator};
 
@@ -29,7 +29,7 @@ impl<I: FnGen> Generator for LazyFn<I> {
         &self,
         module: &mut naga::Module,
         others: &super::StdObjectsGenerator<Ps>,
-    ) -> crate::assembled_module::build::Result<Self::Generated> {
+    ) -> build::Result<Self::Generated> {
         self.handle
             .get_or_init(|| {
                 if self
@@ -109,7 +109,7 @@ impl<I: BufferFnGen, B: BufferExtraction> Generator for LazyBufferFn<I, B> {
         &self,
         module: &mut naga::Module,
         others: &super::StdObjectsGenerator<Ps>,
-    ) -> crate::assembled_module::build::Result<Self::Generated> {
+    ) -> build::Result<Self::Generated> {
         self.0.gen(module, others)
     }
 }

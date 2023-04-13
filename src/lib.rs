@@ -57,34 +57,79 @@ pub const IO_ARGUMENT_ALIGNMENT_WORDS: u32 = 1;
 // Alignment between sets of WASM value arguments fro each invocation when doing I/O in 4-byte words
 pub const IO_INVOCATION_ALIGNMENT_WORDS: u32 = 1;
 
+mod active_function;
+mod active_module;
 mod assembled_module;
-mod brain_func_gen;
-mod call_graph;
-mod config;
-mod func;
-mod func_gen;
-mod function_collection;
+mod brain_function;
+mod function_lookup;
 mod module_ext;
-mod references;
 mod std_objects;
 mod traps;
+mod wasm_front;
 
 pub use assembled_module::AssembledModule;
-pub use assembled_module::BuildError;
-pub use config::Tuneables;
-pub use func::FuncAccessible;
-pub use func::FuncData;
-pub use func::FuncInstance;
-pub use func::FuncUnit;
-pub use func::FuncsInstance;
-pub use func::FunctionModuleData;
-pub use func_gen::get_entry_name;
-pub use references::DataIndex;
-pub use references::ElementIndex;
-pub use references::GlobalImmutableIndex;
-pub use references::GlobalIndex;
-pub use references::GlobalMutableIndex;
-pub use references::MemoryIndex;
-pub use references::TableIndex;
 pub use traps::trap_to_u32;
 pub use traps::u32_to_trap;
+pub use wasm_front::DataIndex;
+pub use wasm_front::ElementIndex;
+pub use wasm_front::FuncAccessible;
+pub use wasm_front::FuncData;
+pub use wasm_front::FuncUnit;
+pub use wasm_front::FuncsInstance;
+pub use wasm_front::FunctionModuleData;
+pub use wasm_front::GlobalImmutableIndex;
+pub use wasm_front::GlobalIndex;
+pub use wasm_front::GlobalMutableIndex;
+pub use wasm_front::MemoryIndex;
+pub use wasm_front::TableIndex;
+
+#[derive(Debug, Copy, Clone)]
+pub struct Tuneables {
+    /// If set to true, the translator will output f64 instructions. If false,
+    /// a polyfill will be used
+    pub hardware_supports_f64: bool,
+    /// The size of the workgroups per invocation, with y and z being set to 1
+    pub workgroup_size: u32,
+}
+
+impl Default for Tuneables {
+    fn default() -> Self {
+        Self {
+            hardware_supports_f64: false,
+            workgroup_size: 256,
+        }
+    }
+}
+
+pub fn get_entry_name(funcref: wasm_types::FuncRef) -> String {
+    format!(
+        "__wasm_entry_function_{}",
+        funcref.as_u32().unwrap_or(u32::MAX)
+    )
+}
+
+#[derive(thiserror::Error, Debug, Clone)]
+pub enum BuildError {
+    #[error("wasm contained an unsupported instruction {instruction_opcode:?}")]
+    UnsupportedInstructionError {
+        instruction_opcode: wasm_opcodes::OpCode,
+    },
+    #[error("wasm contained an unsupported type {wasm_type:?}")]
+    UnsupportedTypeError { wasm_type: wasmparser::ValType },
+    #[error("wasm had {0:?} that consisted of more than 4 billion elements, and so was not addressable on the GPU's 32-bit architecture")]
+    BoundsExceeded(ExceededComponent),
+}
+
+#[derive(thiserror::Error, Debug, Clone)]
+pub enum ExceededComponent {
+    #[error("function return type")]
+    ReturnType,
+    #[error("function parameter list")]
+    ParameterCount,
+}
+
+pub(crate) mod build {
+    use crate::BuildError;
+
+    pub type Result<V> = std::result::Result<V, BuildError>;
+}

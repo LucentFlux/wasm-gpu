@@ -1,12 +1,12 @@
 use crate::{
-    assembled_module::{build, ActiveModule},
-    declare_function,
+    build, declare_function,
     module_ext::{FunctionExt, ModuleExt},
     naga_expr,
     std_objects::{
+        std_consts::ConstGen,
         std_fns::BufferFnGen,
         std_tys::{TyGen, WasmTyGen},
-        GenerationParameters, Generator, StdObjectsGenerator, WasmTyImpl,
+        GenerationParameters, Generator, StdObjects, StdObjectsGenerator, WasmTyImpl,
     },
 };
 
@@ -14,6 +14,7 @@ use crate::{
 pub(crate) struct PolyfillI64;
 impl WasmTyImpl<i64> for PolyfillI64 {
     type TyGen = PolyfillI64TyGen;
+    type DefaultGen = PolyfillI64DefaultGen;
     type ReadGen = PolyfillI64ReadGen;
     type WriteGen = PolyfillI64WriteGen;
 }
@@ -35,16 +36,38 @@ impl TyGen for PolyfillI64TyGen {
 
         Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
+
+    fn size_bytes() -> u32 {
+        8
+    }
 }
 impl WasmTyGen for PolyfillI64TyGen {
     type WasmTy = i64;
 
     fn make_const(
-        ty: naga::Handle<naga::Type>,
-        working: &mut ActiveModule,
+        module: &mut naga::Module,
+        objects: &StdObjects,
         value: Self::WasmTy,
     ) -> build::Result<naga::Handle<naga::Constant>> {
-        super::make_64_bit_const_from_2vec32(ty, &mut working.module, value)
+        Ok(super::make_64_bit_const_from_2vec32(
+            objects.i64.ty,
+            module,
+            value,
+        ))
+    }
+}
+
+pub(crate) struct PolyfillI64DefaultGen;
+impl ConstGen for PolyfillI64DefaultGen {
+    fn gen<Ps: crate::std_objects::GenerationParameters>(
+        module: &mut naga::Module,
+        others: &crate::std_objects::StdObjectsGenerator<Ps>,
+    ) -> build::Result<naga::Handle<naga::Constant>> {
+        Ok(super::make_64_bit_const_from_2vec32(
+            others.i64.ty.gen(module, others)?,
+            module,
+            0,
+        ))
     }
 }
 

@@ -1,14 +1,14 @@
 use wasm_types::FuncRef;
 
 use crate::{
-    assembled_module::{build, ActiveModule},
-    declare_function,
+    build, declare_function,
     module_ext::{FunctionExt, ModuleExt},
     naga_expr,
     std_objects::{
+        std_consts::ConstGen,
         std_fns::BufferFnGen,
         std_tys::{TyGen, WasmTyGen},
-        Generator, WasmTyImpl,
+        Generator, StdObjects, WasmTyImpl,
     },
 };
 
@@ -16,6 +16,7 @@ use crate::{
 pub(crate) struct PolyfillFuncRef;
 impl WasmTyImpl<FuncRef> for PolyfillFuncRef {
     type TyGen = PolyfillFuncRefTyGen;
+    type DefaultGen = PolyfillFuncRefDefaultGen;
     type ReadGen = PolyfillFuncRefReadGen;
     type WriteGen = PolyfillFuncRefWriteGen;
 }
@@ -25,7 +26,7 @@ impl TyGen for PolyfillFuncRefTyGen {
     fn gen<Ps: crate::std_objects::GenerationParameters>(
         module: &mut naga::Module,
         _others: &crate::std_objects::StdObjectsGenerator<Ps>,
-    ) -> crate::assembled_module::build::Result<naga::Handle<naga::Type>> {
+    ) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {
             name: Some("FuncRef".to_owned()),
             inner: naga::TypeInner::Scalar {
@@ -36,26 +37,43 @@ impl TyGen for PolyfillFuncRefTyGen {
 
         Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
+
+    fn size_bytes() -> u32 {
+        4
+    }
+}
+fn make_const_impl(module: &mut naga::Module, value: FuncRef) -> naga::Handle<naga::Constant> {
+    module.constants.append(
+        naga::Constant {
+            name: None,
+            specialization: None,
+            inner: naga::ConstantInner::Scalar {
+                width: 4,
+                value: naga::ScalarValue::Uint(value.as_u32().unwrap_or(u32::MAX).into()),
+            },
+        },
+        naga::Span::UNDEFINED,
+    )
 }
 impl WasmTyGen for PolyfillFuncRefTyGen {
     type WasmTy = FuncRef;
 
     fn make_const(
-        _ty: naga::Handle<naga::Type>,
-        working: &mut ActiveModule,
+        module: &mut naga::Module,
+        _objects: &StdObjects,
         value: Self::WasmTy,
     ) -> build::Result<naga::Handle<naga::Constant>> {
-        Ok(working.module.constants.append(
-            naga::Constant {
-                name: None,
-                specialization: None,
-                inner: naga::ConstantInner::Scalar {
-                    width: 4,
-                    value: naga::ScalarValue::Uint(value.as_u32().unwrap_or(u32::MAX).into()),
-                },
-            },
-            naga::Span::UNDEFINED,
-        ))
+        Ok(make_const_impl(module, value))
+    }
+}
+
+pub(crate) struct PolyfillFuncRefDefaultGen;
+impl ConstGen for PolyfillFuncRefDefaultGen {
+    fn gen<Ps: crate::std_objects::GenerationParameters>(
+        module: &mut naga::Module,
+        others: &crate::std_objects::StdObjectsGenerator<Ps>,
+    ) -> build::Result<naga::Handle<naga::Constant>> {
+        Ok(make_const_impl(module, FuncRef::none()))
     }
 }
 
@@ -76,8 +94,7 @@ impl BufferFnGen for PolyfillFuncRefReadGen {
 
         let input_ref = module.fn_mut(function_handle).append_global(buffer);
 
-        let read_word = naga_expr!(module, function_handle => input_ref[word_address]);
-        let read_value = naga_expr!(module, function_handle => Load(read_word));
+        let read_value = naga_expr!(module, function_handle => Load(input_ref[word_address]));
         module.fn_mut(function_handle).push_return(read_value);
 
         Ok(function_handle)
