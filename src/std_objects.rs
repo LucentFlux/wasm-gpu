@@ -9,7 +9,7 @@ use self::{
     std_consts::ConstGen,
     std_fns::{BufferFnGen, FromInputBuffer, FromMemoryBuffer, FromOutputBuffer},
     std_globals::{StdBindings, StdBindingsGenerator},
-    std_tys::{LazyTy, U32Gen, UVec3Gen, WasmTyGen},
+    std_tys::{U32Gen, UVec3Gen, WasmTyGen},
     wasm_tys::{
         native_f32::NativeF32, native_i32::NativeI32, pollyfill_extern_ref::PolyfillExternRef,
         pollyfill_func_ref::PolyfillFuncRef, polyfill_f64::PolyfillF64, polyfill_i64::PolyfillI64,
@@ -242,11 +242,7 @@ impl StdObjects {
         }
     }
 
-    pub(crate) fn get_default_value(
-        &self,
-        module: &mut naga::Module,
-        val_ty: ValType,
-    ) -> naga::Handle<naga::Constant> {
+    pub(crate) fn get_default_value(&self, val_ty: ValType) -> naga::Handle<naga::Constant> {
         match val_ty {
             ValType::I32 => self.i32.default,
             ValType::I64 => self.i64.default,

@@ -23,15 +23,6 @@ pub(crate) struct LazyGlobal<I: GlobalGen> {
     _phantom: PhantomData<I>,
 }
 
-impl<I: GlobalGen> LazyGlobal<I> {
-    pub(crate) fn new() -> Self {
-        Self {
-            handle: OnceCell::new(),
-            _phantom: PhantomData,
-        }
-    }
-}
-
 impl<I: GlobalGen> Generator for LazyGlobal<I> {
     type Generated = naga::Handle<naga::GlobalVariable>;
 

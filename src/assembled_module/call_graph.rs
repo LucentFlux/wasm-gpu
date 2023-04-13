@@ -113,7 +113,7 @@ impl CallGraph {
     }
 }
 
-pub(super) struct CallOrder {
+pub(crate) struct CallOrder {
     //ASSERT for all x, y: order[lookup[x.to_func_ref()]] == x && lookup[order[y].to_func_ref()] == y
     order: Vec<FuncRef>,
     lookup: HashMap<FuncRef, usize>,
@@ -132,5 +132,9 @@ impl CallOrder {
 
     pub(super) fn get_in_order(&self) -> &Vec<FuncRef> {
         &self.order
+    }
+
+    pub(crate) fn can_f1_call_f2(&self, f1: FuncRef, f2: FuncRef) -> bool {
+        self.lookup.get(&f1).cloned() < self.lookup.get(&f2).cloned()
     }
 }

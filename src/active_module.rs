@@ -5,9 +5,9 @@ use crate::active_function::EntryFunction;
 use crate::active_function::InternalFunction;
 use crate::brain_function::BrainFunction;
 use crate::build;
+use crate::std_objects::StdObjects;
 use crate::FuncUnit;
 use crate::Tuneables;
-use crate::{std_objects::StdObjects, FuncsInstance};
 use wasm_types::FuncRef;
 
 /// A module that we're currently building. Essentially a wrapper around a &mut naga::Module, but
@@ -48,11 +48,7 @@ impl<'a> ActiveModule<'a> {
     }
 
     /// Forward declare a shader entry function
-    pub(crate) fn declare_entry_function(
-        &mut self,
-        ptr: FuncRef,
-        function_data: &FuncUnit,
-    ) -> EntryFunction {
+    pub(crate) fn declare_entry_function(&mut self, ptr: FuncRef) -> EntryFunction {
         EntryFunction::append_declaration_to(
             &mut self.module,
             &self.std_objs,

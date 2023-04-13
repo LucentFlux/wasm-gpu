@@ -1,6 +1,5 @@
 use crate::{
     active_function::InternalFunction,
-    build,
     function_lookup::FunctionLookup,
     module_ext::{FunctionSignature, ModuleExt},
 };

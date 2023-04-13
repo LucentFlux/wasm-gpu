@@ -8,7 +8,7 @@ use crate::{
     IO_INVOCATION_ALIGNMENT_WORDS,
 };
 
-use super::{ActiveEntryFunction, ActiveInternalFunction};
+use super::ActiveEntryFunction;
 
 /// A return type for a wasm-originated function
 #[derive(Debug, Clone)]
@@ -99,7 +99,7 @@ impl WasmFnResTy {
             let location = naga_expr! {function => location + (U32(word_offset))};
 
             let i_res = u32::try_from(i_res)
-                .map_err(|e| BuildError::BoundsExceeded(ExceededComponent::ReturnType))?;
+                .map_err(|_| BuildError::BoundsExceeded(ExceededComponent::ReturnType))?;
             let result = naga_expr! {function => value[const i_res]};
 
             let store_fn = function.std_objects().get_write_output_fn(*val_ty);

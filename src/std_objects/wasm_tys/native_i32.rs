@@ -69,7 +69,7 @@ pub(crate) struct NativeI32DefaultGen;
 impl ConstGen for NativeI32DefaultGen {
     fn gen<Ps: crate::std_objects::GenerationParameters>(
         module: &mut naga::Module,
-        others: &crate::std_objects::StdObjectsGenerator<Ps>,
+        _others: &crate::std_objects::StdObjectsGenerator<Ps>,
     ) -> build::Result<naga::Handle<naga::Constant>> {
         Ok(make_const_impl(module, 0))
     }

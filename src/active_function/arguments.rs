@@ -6,7 +6,7 @@ use crate::{
     IO_INVOCATION_ALIGNMENT_WORDS,
 };
 
-use super::{ActiveFunction, ActiveInternalFunction};
+use super::ActiveFunction;
 
 /// An argument in a function
 #[derive(Debug, Copy, Clone)]

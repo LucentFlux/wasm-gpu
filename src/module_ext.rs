@@ -1,9 +1,5 @@
 //! Provide a collection of shorthand and opinionated methods extending base naga objects.
 
-use wasmparser::ValType;
-
-use crate::std_objects::StdObjects;
-
 mod sealed {
     pub trait ModuleSealed {}
     impl ModuleSealed for naga::Module {}
@@ -81,12 +77,6 @@ pub(crate) trait FunctionExt: self::sealed::FunctionSealed {
         name: String,
         ty: naga::Handle<naga::Type>,
         init: Option<naga::Handle<naga::Constant>>,
-    ) -> naga::Handle<naga::LocalVariable>;
-    fn new_wasm_local(
-        &mut self,
-        name: String,
-        val_ty: ValType,
-        std_objects: &StdObjects,
     ) -> naga::Handle<naga::LocalVariable>;
 
     // Shorthand expression generation
@@ -192,15 +182,6 @@ impl FunctionExt for naga::Function {
             naga::Statement::Store { pointer, value },
             naga::Span::UNDEFINED,
         );
-    }
-
-    fn new_wasm_local(
-        &mut self,
-        name: String,
-        val_ty: ValType,
-        std_objects: &StdObjects,
-    ) -> naga::Handle<naga::LocalVariable> {
-        todo!()
     }
 }
 

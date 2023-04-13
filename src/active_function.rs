@@ -6,24 +6,15 @@ mod locals;
 mod mvp;
 mod results;
 
-use std::{
-    collections::HashMap,
-    ops::{Deref, DerefMut},
-};
+use std::collections::HashMap;
 
-use itertools::Itertools;
 use naga::Handle;
 use wasm_opcodes::OperatorByProposal;
-use wasm_types::{FuncRef, ValTypeByteCount};
-use wasmparser::{FuncType, ValType};
+use wasm_types::FuncRef;
 
 use crate::{
-    build, get_entry_name,
-    module_ext::{FunctionSignature, ModuleExt},
-    naga_expr,
-    std_objects::{self, StdObjects},
-    BuildError, ExceededComponent, FuncUnit, IO_ARGUMENT_ALIGNMENT_WORDS,
-    IO_INVOCATION_ALIGNMENT_WORDS,
+    build, get_entry_name, module_ext::ModuleExt, naga_expr, std_objects::StdObjects, BuildError,
+    ExceededComponent, FuncUnit,
 };
 
 use self::results::WasmFnResTy;
@@ -31,10 +22,7 @@ use self::{
     arguments::{EntryArguments, UniversalArguments, WasmFnArgs},
     locals::FnLocals,
 };
-use self::{
-    block_gen::populate_block,
-    body_gen::{populate_base_fn_body, FunctionBodyInformation},
-};
+use self::{block_gen::populate_block, body_gen::FunctionBodyInformation};
 
 use crate::active_module::ActiveModule;
 
@@ -329,17 +317,16 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
         ty: &WasmFnResTy,
         instance_index: naga::Handle<naga::Expression>,
         value: naga::Handle<naga::Expression>,
-    ) {
+    ) -> build::Result<()> {
         let base_index = self.io_base_index(ty.word_alignment(), instance_index);
 
-        ty.append_store_at(self, base_index, value);
+        ty.append_store_at(self, base_index, value)
     }
 
     /// Generates function that extracts arguments from buffer, calls base function,
     /// then writes results to output buffer
     pub(crate) fn populate_entry_function(
         &mut self,
-        base_function_definition: &FuncUnit,
         base_function: naga::Handle<naga::Function>,
         arguments: &WasmFnArgs,
         results_ty: &Option<WasmFnResTy>,
@@ -371,7 +358,7 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
 
         // Write outputs
         if let Some((results_ty, results_expr)) = results {
-            self.store_output(results_ty, instance_index, results_expr);
+            self.store_output(results_ty, instance_index, results_expr)?;
         }
 
         return Ok(());

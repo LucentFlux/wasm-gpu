@@ -23,7 +23,7 @@ impl FnLocal {
         local_ty: ValType,
     ) -> Self {
         let ty = std_objects.get_val_type(local_ty);
-        let init = std_objects.get_default_value(module, local_ty);
+        let init = std_objects.get_default_value(local_ty);
         let function = module.fn_mut(function);
         let i_local = function.local_variables.len();
         let local = function.new_local(format! {"local_{}", i_local}, ty, Some(init));

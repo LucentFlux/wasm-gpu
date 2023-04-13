@@ -35,12 +35,6 @@ pub(crate) struct LazyTy<I> {
     _phantom: PhantomData<I>,
 }
 
-impl<I: TyGen> LazyTy<I> {
-    pub(crate) fn size_bytes() -> u32 {
-        I::size_bytes()
-    }
-}
-
 impl<I: TyGen> Generator for LazyTy<I> {
     type Generated = naga::Handle<naga::Type>;
 
@@ -68,7 +62,7 @@ pub(crate) struct UVec3Gen;
 impl TyGen for UVec3Gen {
     fn gen<Ps: super::GenerationParameters>(
         module: &mut naga::Module,
-        others: &super::StdObjectsGenerator<Ps>,
+        _others: &super::StdObjectsGenerator<Ps>,
     ) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {
             name: None,
@@ -91,7 +85,7 @@ pub(crate) struct U32Gen;
 impl TyGen for U32Gen {
     fn gen<Ps: super::GenerationParameters>(
         module: &mut naga::Module,
-        others: &super::StdObjectsGenerator<Ps>,
+        _others: &super::StdObjectsGenerator<Ps>,
     ) -> build::Result<naga::Handle<naga::Type>> {
         let naga_ty = naga::Type {
             name: None,

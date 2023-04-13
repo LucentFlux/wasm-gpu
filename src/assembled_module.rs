@@ -8,7 +8,6 @@ use naga::valid::ValidationError;
 use naga::WithSpan;
 
 use crate::active_module::ActiveModule;
-use crate::std_objects::{FullPolyfill, StdObjects};
 use crate::wasm_front::FuncsInstance;
 use crate::{build, Tuneables};
 
@@ -132,12 +131,12 @@ impl AssembledModule {
                 .expect("call order doesn't invent functions");
             let base_function = active_module.declare_base_function(*ptr, function_data);
             base_functions.insert(*ptr, base_function);
-            let entry_function = active_module.declare_entry_function(*ptr, function_data);
+            let entry_function = active_module.declare_entry_function(*ptr);
             entry_functions.insert(*ptr, entry_function);
         }
 
         // Declare brain function
-        let mut brain_function = active_module.declare_brain_function();
+        let brain_function = active_module.declare_brain_function();
 
         // Declare recursive functions after brain
         for ptr in call_order.get_in_order() {
@@ -164,12 +163,7 @@ impl AssembledModule {
             //populate_stack_function(&mut module, function_data, &call_order, stack_functions.lookup(&ptr.to_func_ref()))?;
 
             let mut entry_function = entry_functions.lookup_mut(&mut active_module, &ptr);
-            entry_function.populate_entry_function(
-                function_data,
-                base_handle,
-                &base_args,
-                &base_res,
-            )?;
+            entry_function.populate_entry_function(base_handle, &base_args, &base_res)?;
         }
 
         // Populate monofunctions

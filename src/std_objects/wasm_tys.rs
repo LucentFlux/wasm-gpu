@@ -1,5 +1,3 @@
-use crate::build;
-
 pub(crate) mod native_f32;
 pub(crate) mod native_i32;
 pub(crate) mod pollyfill_extern_ref;
