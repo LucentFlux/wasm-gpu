@@ -1,7 +1,6 @@
 //! A collection of hand-written programs and tests that they evaluate to the expected result.
 //! Uses Wasmtime as a reference implementation
 use wasm_gpu_test_lib::test_parity;
-use wasm_types::{Ieee32, Ieee64};
 
 #[test]
 fn bare_return_i32() {
@@ -38,7 +37,7 @@ fn bare_return_i64() {
 
 #[test]
 fn bare_return_f32() {
-    test_parity::<(), Ieee32>(
+    test_parity::<(), f32>(
         r#"
         (module
             (func $f (result f32)
@@ -54,7 +53,7 @@ fn bare_return_f32() {
 
 #[test]
 fn bare_return_f64() {
-    test_parity::<(), Ieee64>(
+    test_parity::<(), f64>(
         r#"
         (module
             (func $f (result f64)

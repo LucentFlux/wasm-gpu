@@ -2,7 +2,7 @@ use crate::capabilities::CapabilityStore;
 use crate::impl_immutable_ptr;
 use crate::instance::global::{impl_global_get, impl_global_push};
 use std::mem::size_of;
-use wasm_types::{ExternRef, FuncRef, Ieee32, Ieee64, Val, WasmTyVal, V128};
+use wasm_types::{ExternRef, FuncRef, Val, WasmTyVal, V128};
 use wasmparser::{GlobalType, ValType};
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;

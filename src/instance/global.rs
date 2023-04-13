@@ -17,8 +17,8 @@ macro_rules! impl_global_get {
             match &ptr.content_type() {
                 ValType::I32 => self.try_get_val::<i32>(queue, ptr).await,
                 ValType::I64 => self.try_get_val::<i64>(queue, ptr).await,
-                ValType::F32 => self.try_get_val::<Ieee32>(queue, ptr).await,
-                ValType::F64 => self.try_get_val::<Ieee64>(queue, ptr).await,
+                ValType::F32 => self.try_get_val::<f32>(queue, ptr).await,
+                ValType::F64 => self.try_get_val::<f64>(queue, ptr).await,
                 ValType::V128 => self.try_get_val::<V128>(queue, ptr).await,
                 ValType::FuncRef => self.try_get_val::<FuncRef>(queue, ptr).await,
                 ValType::ExternRef => self.try_get_val::<ExternRef>(queue, ptr).await,

@@ -153,7 +153,7 @@ impl WasmShaderModule {
 
         let module = &assembled.module;
         let module_info = &assembled.module_info;
-        let hlsl_options = naga::back::spv::Options {
+        let spv_options = naga::back::spv::Options {
             lang_version,
             flags: naga::back::spv::WriterFlags::empty(),
             binding_map: BTreeMap::new(),
@@ -167,8 +167,7 @@ impl WasmShaderModule {
             zero_initialize_workgroup_memory:
                 naga::back::spv::ZeroInitializeWorkgroupMemoryMode::None,
         };
-        let mut writer =
-            naga::back::spv::Writer::new(&hlsl_options).map_err(anyhow::Error::from)?;
+        let mut writer = naga::back::spv::Writer::new(&spv_options).map_err(anyhow::Error::from)?;
 
         let mut words = Vec::new();
         writer

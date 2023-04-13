@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 use wasm_gpu::NamedExtern;
 use wasm_gpu::{MappedStoreSetBuilder, ModuleInstanceReferences, Tuneables, WasmFeatures};
-use wasm_types::{Ieee32, Ieee64, Val, V128};
+use wasm_types::{Val, V128};
 use wast::core::{HeapType, NanPattern, V128Pattern, WastRetCore};
 use wast::lexer::Lexer;
 use wast::token::{Float32, Float64, Id, Index, Span};
@@ -370,17 +370,17 @@ async fn test_assert_trap<'a>(
     assert!(ret.is_err())
 }
 
-fn f32_matches(got: Ieee32, expected: &NanPattern<Float32>) -> bool {
+fn f32_matches(got: f32, expected: &NanPattern<Float32>) -> bool {
     match expected {
-        NanPattern::CanonicalNan | NanPattern::ArithmeticNan => got.to_float().is_nan(),
-        NanPattern::Value(v) => v.bits == got.bits(),
+        NanPattern::CanonicalNan | NanPattern::ArithmeticNan => got.is_nan(),
+        NanPattern::Value(v) => v.bits == got.to_bits(),
     }
 }
 
-fn f64_matches(got: Ieee64, expected: &NanPattern<Float64>) -> bool {
+fn f64_matches(got: f64, expected: &NanPattern<Float64>) -> bool {
     match expected {
-        NanPattern::CanonicalNan | NanPattern::ArithmeticNan => got.to_float().is_nan(),
-        NanPattern::Value(v) => v.bits == got.bits(),
+        NanPattern::CanonicalNan | NanPattern::ArithmeticNan => got.is_nan(),
+        NanPattern::Value(v) => v.bits == got.to_bits(),
     }
 }
 
@@ -403,14 +403,14 @@ fn vec_matches(got: V128, expected: &V128Pattern) -> bool {
             .into_iter()
             .array_chunks::<4>()
             .into_iter()
-            .map(|i| Ieee32::from_le_bytes(i))
+            .map(|i| f32::from_le_bytes(i))
             .zip(v)
             .all(|(got, expected)| f32_matches(got, expected)),
         V128Pattern::F64x2(v) => bs
             .into_iter()
             .array_chunks::<8>()
             .into_iter()
-            .map(|i| Ieee64::from_le_bytes(i))
+            .map(|i| f64::from_le_bytes(i))
             .zip(v)
             .all(|(got, expected)| f64_matches(got, expected)),
     }

@@ -52,6 +52,6 @@ rand = "0.8"
 pollster = "0.2"
 
 [features]
-# default = ["opt", "debug_hlsl_out"]                     # TODO: Remove this when not debugging
+default = ["opt", "debug_hlsl_out"]                     # TODO: Remove this when not debugging
 opt = ["dep:spirv-tools", "wgpu/spirv", "naga/spv-out"]
 debug_hlsl_out = ["naga/hlsl-out"]

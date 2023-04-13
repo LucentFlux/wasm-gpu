@@ -22,7 +22,7 @@ use crate::{DeviceStoreSet, Module, Tuneables};
 use perfect_derive::perfect_derive;
 use std::sync::Arc;
 use wasm_gpu_funcgen::{AssembledModule, BuildError};
-use wasm_types::{ExternRef, FuncRef, Ieee32, Ieee64, Val, V128};
+use wasm_types::{ExternRef, FuncRef, Val, V128};
 use wasmparser::{Operator, ValType};
 use wgpu::BufferAsyncError;
 use wgpu_async::async_device::OutOfMemoryError;
@@ -46,8 +46,8 @@ pub(crate) async fn interpret_constexpr<'data>(
         match expr {
             Operator::I32Const { value } => stack.push(Val::I32(*value)),
             Operator::I64Const { value } => stack.push(Val::I64(*value)),
-            Operator::F32Const { value } => stack.push(Val::F32(Ieee32::from(*value))),
-            Operator::F64Const { value } => stack.push(Val::F64(Ieee64::from(*value))),
+            Operator::F32Const { value } => stack.push(Val::F32(f32::from_bits(value.bits()))),
+            Operator::F64Const { value } => stack.push(Val::F64(f64::from_bits(value.bits()))),
             Operator::V128Const { value } => stack.push(Val::V128(V128::from(*value))),
             Operator::RefNull { ty } => match ty {
                 ValType::FuncRef => stack.push(Val::FuncRef(FuncRef::none())),

@@ -7,7 +7,7 @@ use futures::future::BoxFuture;
 use futures::FutureExt;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
-use wasm_gpu_funcgen::{FuncAccessible, FuncData, FuncInstance, FuncUnit};
+use wasm_gpu_funcgen::{FuncAccessible, FuncData, FuncUnit};
 use wasm_types::{FuncRef, Val, WasmTyVec};
 use wgpu::BufferAsyncError;
 use wgpu_async::{AsyncQueue, OutOfMemoryError};
@@ -39,11 +39,11 @@ impl FuncsInstance {
         let ptr = self.wasm_functions.len();
         let ty = func_data.ty.clone();
         self.wasm_functions
-            .push_within_capacity(FuncUnit::LocalFunction(FuncInstance {
-                func_data,
+            .push_within_capacity(FuncUnit {
+                data: func_data,
                 // Imports have to be filled in later
                 accessible: Arc::clone(&EMPTY_ACCESSABLE),
-            }))
+            })
             .expect("calls to `reserve` should be made before registering");
 
         return UntypedFuncPtr::new(ptr, self.cap_set.get_cap(), ty);
@@ -57,9 +57,7 @@ impl FuncsInstance {
             .get_mut(ptr.ptr)
             .expect("if the pointer is valid, the pointed value must exist");
 
-        match instance {
-            FuncUnit::LocalFunction(instance) => instance.accessible = accessible,
-        }
+        instance.accessible = accessible;
     }
 
     pub fn all_ptrs(&self) -> Vec<UntypedFuncPtr> {
@@ -67,9 +65,7 @@ impl FuncsInstance {
             .iter()
             .enumerate()
             .map(|(ptr, func)| {
-                let ty = match func {
-                    FuncUnit::LocalFunction(instance) => instance.func_data.ty.clone(),
-                };
+                let ty = func.data.ty.clone();
                 UntypedFuncPtr::new(ptr, self.cap_set.get_cap(), ty)
             })
             .collect_vec()

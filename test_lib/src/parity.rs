@@ -1,7 +1,6 @@
 //! A collection of hand-written programs and tests that they evaluate to the expected result.
 //! Uses Wasmtime as a reference implementation
 
-use wasm_types::{Ieee32, Ieee64};
 use wasmtime::Trap;
 use wgpu_async::wrap_to_async;
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
@@ -43,21 +42,21 @@ impl ParityType for i64 {
     }
 }
 
-impl ParityType for Ieee32 {
+impl ParityType for f32 {
     type WasmTimeTy = f32;
-    type GpuTy = Ieee32;
+    type GpuTy = f32;
 
     fn from_gpu(val: Self::GpuTy) -> Self::WasmTimeTy {
-        val.to_float()
+        val
     }
 }
 
-impl ParityType for Ieee64 {
+impl ParityType for f64 {
     type WasmTimeTy = f64;
-    type GpuTy = Ieee64;
+    type GpuTy = f64;
 
     fn from_gpu(val: Self::GpuTy) -> Self::WasmTimeTy {
-        val.to_float()
+        val
     }
 }
 
