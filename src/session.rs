@@ -1,11 +1,16 @@
 use std::sync::Arc;
 
+use crate::instance::func::UntypedFuncPtr;
 use crate::DeviceStoreSet;
-use crate::{instance::func::UntypedFuncPtr, shader_module::Bindings};
 use futures::{future::BoxFuture, FutureExt};
 use wasm_gpu_funcgen::{
     u32_to_trap, FLAGS_LEN_BYTES, IO_ARGUMENT_ALIGNMENT_WORDS, IO_INVOCATION_ALIGNMENT_WORDS,
     STACK_LEN_BYTES, TRAP_FLAG_INDEX,
+};
+use wasm_gpu_funcgen::{
+    DATA_BINDING_INDEX, ELEMENT_BINDING_INDEX, FLAGS_BINDING_INDEX, IMMUTABLE_GLOBAL_BINDING_INDEX,
+    INPUT_BINDING_INDEX, MEMORY_BINDING_INDEX, MUTABLE_GLOBAL_BINDING_INDEX, OUTPUT_BINDING_INDEX,
+    STACK_BINDING_INDEX, TABLE_BINDING_INDEX,
 };
 use wasm_types::{Val, ValTypeByteCount};
 use wasmparser::ValType;
@@ -17,6 +22,81 @@ use wgpu_lazybuffers::{
 
 pub(crate) type OutputType =
     Result<Vec<Result<Vec<Val>, wasmtime_environ::Trap>>, BufferAsyncError>;
+
+pub struct Bindings<'a> {
+    pub data: &'a wgpu::Buffer,
+    pub element: &'a wgpu::Buffer,
+    pub mutable_globals: &'a wgpu::Buffer,
+    pub immutable_globals: &'a wgpu::Buffer,
+    pub memory: &'a wgpu::Buffer,
+    pub table: &'a wgpu::Buffer,
+
+    pub flags: &'a wgpu::Buffer,
+    pub input: &'a wgpu::Buffer,
+    pub output: &'a wgpu::Buffer,
+    pub stack: &'a wgpu::Buffer,
+
+    /// When a buffer is empty (has size 0) we need to bind something else instead. This holds ownership of those buffers
+    empty_bindings: elsa::FrozenVec<Box<wgpu::Buffer>>,
+}
+
+impl<'a> Bindings<'a> {
+    fn conditionally_attach<'b>(
+        &'b self,
+        entries: &mut Vec<wgpu::BindGroupEntry<'b>>,
+        device: &wgpu::Device,
+        mut buffer: &'b wgpu::Buffer,
+        binding: u32,
+    ) {
+        if buffer.size() == 0 {
+            let new_empty_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("empty stand-in buffer"),
+                size: 32,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            });
+            buffer = self.empty_bindings.push_get(Box::new(new_empty_buffer));
+        }
+        entries.push(wgpu::BindGroupEntry {
+            binding,
+            resource: buffer.as_entire_binding(),
+        })
+    }
+    pub(crate) fn attach(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+    ) -> wgpu::BindGroup {
+        let mut entries = Vec::new();
+
+        self.conditionally_attach(&mut entries, device, self.data, DATA_BINDING_INDEX);
+        self.conditionally_attach(&mut entries, device, self.element, ELEMENT_BINDING_INDEX);
+        self.conditionally_attach(
+            &mut entries,
+            device,
+            self.mutable_globals,
+            MUTABLE_GLOBAL_BINDING_INDEX,
+        );
+        self.conditionally_attach(
+            &mut entries,
+            device,
+            self.immutable_globals,
+            IMMUTABLE_GLOBAL_BINDING_INDEX,
+        );
+        self.conditionally_attach(&mut entries, device, self.memory, MEMORY_BINDING_INDEX);
+        self.conditionally_attach(&mut entries, device, self.table, TABLE_BINDING_INDEX);
+        self.conditionally_attach(&mut entries, device, self.flags, FLAGS_BINDING_INDEX);
+        self.conditionally_attach(&mut entries, device, self.input, INPUT_BINDING_INDEX);
+        self.conditionally_attach(&mut entries, device, self.output, OUTPUT_BINDING_INDEX);
+        self.conditionally_attach(&mut entries, device, self.stack, STACK_BINDING_INDEX);
+
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout,
+            entries: &entries,
+        })
+    }
+}
 
 pub struct Session<'a> {
     stores: &'a mut DeviceStoreSet,
@@ -256,17 +336,7 @@ impl<'a> Session<'a> {
             )
             .await?;
 
-        let non_empty_binding = queue
-            .device()
-            .create_buffer(&wgpu::BufferDescriptor {
-                label: Some("non-empty buffer"),
-                size: 8,
-                usage: wgpu::BufferUsages::STORAGE,
-                mapped_at_creation: false,
-            })
-            .await?;
-
-        let mut bindings = Bindings {
+        let bindings = Bindings {
             data: self.stores.datas.buffer(),
             element: self.stores.elements.buffer(),
             immutable_globals: self.stores.immutable_globals.buffer(),
@@ -277,9 +347,8 @@ impl<'a> Session<'a> {
             input: &input,
             output: &output,
             stack: &stack,
+            empty_bindings: elsa::FrozenVec::new(),
         };
-
-        bindings.ensure_none_empty(&non_empty_binding);
 
         let flags = Arc::clone(&flags);
         let output = Arc::clone(&output);

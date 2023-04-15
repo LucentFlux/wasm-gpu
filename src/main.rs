@@ -45,12 +45,12 @@ async fn main() -> anyhow::Result<()> {
     // wasm setup
     let wat = r#"
         (module
-            (func $f (result i32)
-                (i32.const 42)
+            (func $f (param f64) (result f64)
+                local.get 0
             )
-            (export "fill_with_value" (func $f))
+            (export "pass_f64" (func $f))
         )
-    "#;
+        "#;
     let module = wasm_gpu::Module::new(
         &wasmparser::WasmFeatures::default(),
         wat.as_bytes(),
@@ -65,8 +65,8 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("could not instantiate all modules");
 
-    let function = instances.get_func("fill_with_value").unwrap();
-    let function = function.try_typed::<(), i32>().unwrap();
+    let function = instances.get_func("pass_f64").unwrap();
+    let function = function.try_typed::<f64, f64>().unwrap();
 
     let store_source = store_builder
         .complete(&queue)
@@ -78,25 +78,16 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("could not build stores");
 
-    let module = &store_source.get_module();
-    let module_info = &store_source.get_module_info();
-    let mut output_shader = String::new();
-    let hlsl_options = naga::back::hlsl::Options {
-        shader_model: naga::back::hlsl::ShaderModel::V6_0,
-        binding_map: naga::back::hlsl::BindingMap::new(),
-        fake_missing_bindings: true,
-        special_constants_binding: None,
-        push_constants_target: None,
-        zero_initialize_workgroup_memory: false,
-    };
-    let mut writer = naga::back::hlsl::Writer::new(&mut output_shader, &hlsl_options);
-    writer.write(module, module_info).unwrap();
-    println!("====================HLSL SHADER BEGIN====================");
-    println!("{}", output_shader);
-    println!("=====================HLSL SHADER END=====================");
+    println!("====================UNOPTIMIZED HLSL SHADER BEGIN====================");
+    println!("{}", store_source.generate_hlsl_source());
+    println!("=====================UNOPTIMIZED HLSL SHADER END=====================");
+
+    println!("====================OPTIMIZED HLSL SHADER BEGIN====================");
+    println!("{}", store_source.generate_optimised_hlsl_source().unwrap());
+    println!("=====================OPTIMIZED HLSL SHADER END=====================");
 
     let results = function
-        .call_all(&memory_system, &queue, &mut stores, vec![()])
+        .call_all(&memory_system, &queue, &mut stores, vec![1000.01f64])
         .await
         .unwrap()
         .await

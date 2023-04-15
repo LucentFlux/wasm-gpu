@@ -41,7 +41,7 @@ fn bare_return_f32() {
         r#"
         (module
             (func $f (result f32)
-                (f32.const 18.0000004)
+                (f32.const 19.000001)
             )
             (export "some_floaty_number" (func $f))
         )
@@ -57,12 +57,76 @@ fn bare_return_f64() {
         r#"
         (module
             (func $f (result f64)
-                (f64.const 1900.0000000000000004)
+                (f64.const 1900.000001)
             )
             (export "some_floatier_number" (func $f))
         )
         "#,
         "some_floatier_number",
         (),
+    )
+}
+
+#[test]
+fn pass_return_i32() {
+    test_parity::<i32, i32>(
+        r#"
+        (module
+            (func $f (param i32) (result i32)
+                local.get 0
+            )
+            (export "pass_i32" (func $f))
+        )
+        "#,
+        "pass_i32",
+        -1084,
+    )
+}
+
+#[test]
+fn pass_return_i64() {
+    test_parity::<i64, i64>(
+        r#"
+        (module
+            (func $f (param i64) (result i64)
+                local.get 0
+            )
+            (export "pass_i64" (func $f))
+        )
+        "#,
+        "pass_i64",
+        -9223372036854675804,
+    )
+}
+
+#[test]
+fn pass_return_f32() {
+    test_parity::<f32, f32>(
+        r#"
+        (module
+            (func $f (param f32) (result f32)
+                local.get 0
+            )
+            (export "pass_f32" (func $f))
+        )
+        "#,
+        "pass_f32",
+        1.0000001f32,
+    )
+}
+
+#[test]
+fn pass_return_f64() {
+    test_parity::<f64, f64>(
+        r#"
+        (module
+            (func $f (param f64) (result f64)
+                local.get 0
+            )
+            (export "pass_f64" (func $f))
+        )
+        "#,
+        "pass_f64",
+        1.000000000001f64,
     )
 }

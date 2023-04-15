@@ -1,11 +1,16 @@
 #![cfg(test)]
 
+use std::time::Duration;
+
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use wgpu_async::async_queue::AsyncQueue;
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
 pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
+    // Pause because egl doesn't like being spammed - Joe 13/04/2023
+    std::thread::sleep(Duration::from_millis(100));
+
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         dx12_shader_compiler: wgpu::Dx12Compiler::Fxc,
