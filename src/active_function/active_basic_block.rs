@@ -46,7 +46,9 @@ impl<'b, 'f: 'b, 'm: 'f> ActiveBasicBlock<'b, 'f, 'm> {
         self.stack.push(handle);
 
         if needs_emitting {
-            self.function.get_mut().push_emit(handle);
+            self.append(naga::Statement::Emit(naga::Range::new_from_bounds(
+                handle, handle,
+            )));
         }
     }
 
@@ -55,6 +57,11 @@ impl<'b, 'f: 'b, 'm: 'f> ActiveBasicBlock<'b, 'f, 'm> {
         self.stack
             .pop()
             .expect("wasm validation asserts local stack will not be empty")
+    }
+
+    /// Appends a statement to the current block
+    pub(crate) fn append(&mut self, statement: naga::Statement) {
+        self.statements.push(statement);
     }
 
     pub(crate) fn make_constant(

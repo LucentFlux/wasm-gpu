@@ -32,7 +32,15 @@ pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
             state.push(naga::Expression::Load { pointer: local_ptr });
             Ok(())
         }
-        MVPOperator::LocalSet { local_index } => unimplemented!(),
+        MVPOperator::LocalSet { local_index } => {
+            let local_ptr = state.local_ptr(*local_index);
+            let value = state.pop();
+            state.append(naga::Statement::Store {
+                pointer: local_ptr,
+                value,
+            });
+            Ok(())
+        }
         MVPOperator::Select => unimplemented!(),
         MVPOperator::LocalTee { local_index } => unimplemented!(),
         MVPOperator::GlobalGet { global_index } => unimplemented!(),
