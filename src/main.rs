@@ -45,10 +45,12 @@ async fn main() -> anyhow::Result<()> {
     // wasm setup
     let wat = r#"
         (module
-            (func $f (param f64) (result f64)
-                local.get 0
+            (func $f (param f64) (result f64) (local $l f64)
+                (local.get 0)
+                (local.set $l)
+                (local.get $l)
             )
-            (export "pass_f64" (func $f))
+            (export "pass_through_local_f64" (func $f))
         )
         "#;
     let module = wasm_gpu::Module::new(
