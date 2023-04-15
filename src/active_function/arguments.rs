@@ -12,9 +12,9 @@ use super::ActiveFunction;
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct FnArg {
     /// The type of the function argument
-    type_handle: naga::Handle<naga::Type>,
+    pub(crate) type_handle: naga::Handle<naga::Type>,
     /// The expression giving the parameter in the body of the function
-    expression_handle: naga::Handle<naga::Expression>,
+    pub(crate) expression_handle: naga::Handle<naga::Expression>,
 }
 
 impl FnArg {
@@ -65,8 +65,8 @@ impl FnArg {
 /// An argument in a function given by the wasm source
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct WasmFnArg {
-    arg: FnArg,
-    ty: ValType,
+    pub(crate) arg: FnArg,
+    pub(crate) ty: ValType,
 }
 
 impl WasmFnArg {
@@ -95,25 +95,6 @@ impl WasmFnArg {
         );
 
         return arg_result;
-    }
-
-    /// Generates a local in the function and a statement to assign this parameter to it, returning an expression
-    /// giving a pointer to the local
-    pub(crate) fn append_as_local<'f, 'm: 'f>(
-        &self,
-        function: &mut impl ActiveFunction<'f, 'm>,
-        local_name: String,
-    ) -> naga::Handle<naga::Expression> {
-        let ty = function.std_objects().get_val_type(self.ty);
-
-        let function = function.get_mut();
-        let local = function.new_local(local_name, ty, None);
-        let local_pointer = function.append_local(local);
-
-        let parameter_value = self.arg.expression_handle;
-        function.push_store(local_pointer, parameter_value);
-
-        return local_pointer;
     }
 }
 
@@ -173,20 +154,8 @@ impl WasmFnArgs {
         return arg_results;
     }
 
-    /// Wasm has parameters as assignable, where naga doesn't. So the first thing we do is assign all parameters to
-    /// locals. This is wasteful, but this first pass does not aim to output *optimised* shader code.
-    pub(crate) fn append_as_locals<'f, 'm: 'f>(
-        &self,
-        function: &mut impl ActiveFunction<'f, 'm>,
-    ) -> Vec<naga::Handle<naga::Expression>> {
-        let mut locals = Vec::new();
-
-        for (i_arg, arg) in self.args.iter().enumerate() {
-            let local = arg.append_as_local(function, format!("arg_local_{}", i_arg));
-            locals.push(local)
-        }
-
-        return locals;
+    pub(crate) fn iter(&self) -> std::slice::Iter<WasmFnArg> {
+        self.args.iter()
     }
 }
 

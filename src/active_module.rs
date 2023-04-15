@@ -37,7 +37,7 @@ impl<'a> ActiveModule<'a> {
         &mut self,
         ptr: FuncRef,
         function_data: &FuncUnit,
-    ) -> InternalFunction {
+    ) -> build::Result<InternalFunction> {
         InternalFunction::append_declaration_to(
             &mut self.module,
             &self.std_objs,
@@ -62,7 +62,7 @@ impl<'a> ActiveModule<'a> {
         &mut self,
         ptr: FuncRef,
         function_data: &FuncUnit,
-    ) -> InternalFunction {
+    ) -> build::Result<InternalFunction> {
         InternalFunction::append_declaration_to(
             &mut self.module,
             &self.std_objs,

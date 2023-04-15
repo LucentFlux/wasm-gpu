@@ -102,7 +102,7 @@ pub struct FuncUnit {
     pub accessible: Arc<FuncAccessible>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FuncsInstance {
     pub wasm_functions: Vec<FuncUnit>,
 }

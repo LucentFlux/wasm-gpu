@@ -91,7 +91,7 @@ impl InternalFunction {
         name_suffix: &str,
         ptr: FuncRef,
         function_definition: &FuncUnit,
-    ) -> Self {
+    ) -> build::Result<Self> {
         let name = get_entry_name(ptr) + name_suffix;
 
         let wasm_results =
@@ -112,15 +112,16 @@ impl InternalFunction {
             handle,
             std_objects,
             &function_definition.data.locals,
-        );
+            &wasm_arguments,
+        )?;
 
-        Self {
+        Ok(Self {
             handle,
             universal_arguments,
             wasm_arguments,
             wasm_results,
             locals,
-        }
+        })
     }
 }
 
@@ -150,30 +151,6 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
 
     /// Populates the body of a base function that doesn't use the stack.
     pub(crate) fn populate_base_function(&mut self, function: &FuncUnit) -> build::Result<()> {
-        let mut locals_ptrs_map = HashMap::new();
-
-        // Add locals
-        for (i_local, local) in self.data.locals.iter() {
-            locals_ptrs_map.insert(*i_local, local.expression);
-        }
-
-        // Get parameters as locals on the stack
-        for (i_param, local) in self
-            .data
-            .wasm_arguments
-            .append_as_locals(self)
-            .into_iter()
-            .enumerate()
-        {
-            let i_param = u32::try_from(i_param)
-                .map_err(|_| BuildError::BoundsExceeded(ExceededComponent::ParameterCount))?;
-            let popped = locals_ptrs_map.insert(i_param, local);
-            assert!(
-                popped.is_none(),
-                "function locals map should not have overlapping locals and parameters"
-            )
-        }
-
         // Parse instructions
         let accessible = &function.accessible;
         let module_data = function.data.module_data.as_ref();
@@ -185,7 +162,6 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
         let body_info = FunctionBodyInformation {
             accessible,
             module_data,
-            locals_ptrs_map: &locals_ptrs_map,
         };
         let entry_stack = vec![];
         let exit_stack = populate_block(self, &mut instructions, entry_stack, body_info)?;

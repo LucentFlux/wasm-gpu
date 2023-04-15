@@ -67,6 +67,9 @@ mod std_objects;
 mod traps;
 mod wasm_front;
 
+use std::error::Error;
+use std::fmt::Debug;
+
 pub use assembled_module::AssembledModule;
 pub use traps::trap_to_u32;
 pub use traps::u32_to_trap;
@@ -118,6 +121,82 @@ pub enum BuildError {
     UnsupportedTypeError { wasm_type: wasmparser::ValType },
     #[error("wasm had {0:?} that consisted of more than 4 billion elements, and so was not addressable on the GPU's 32-bit architecture")]
     BoundsExceeded(ExceededComponent),
+    #[error("one of our validation checks didn't hold. This is a bug in the wasm-gpu-funcgen crate, unless you have modified and fed back your own naga source, in which case your modifications may have been invalid: {0:?}")]
+    ValidationError(ValidationError),
+}
+
+#[derive(thiserror::Error, Debug, Clone)]
+pub enum ValidationError {
+    #[error("naga validation failed {0:?}")]
+    NagaValidationError(NagaValidationError),
+    #[error("the module contained no shader entry points")]
+    NoEntryPoints,
+    #[error("the module's binding at index {binding_index:?} for the {buffer_label:?} buffer was incompatible: got type {observed_buffer_type:?} but required type {required_buffer_type:?}")]
+    IncompatableBinding {
+        binding_index: u32,
+        buffer_label: String,
+        observed_buffer_type: naga::Type,
+        required_buffer_type: naga::Type,
+    },
+}
+
+#[derive(Clone)]
+pub struct NagaValidationError {
+    pub source: naga::valid::ValidationError,
+
+    // To help with debugging this crate, we collect loads more debug info on debug builds.
+    #[cfg(debug_assertions)]
+    pub module: naga::Module,
+    #[cfg(debug_assertions)]
+    pub tuneables: Tuneables,
+    #[cfg(debug_assertions)]
+    pub functions: FuncsInstance,
+    #[cfg(debug_assertions)]
+    pub capabilities: naga::valid::Capabilities,
+}
+
+impl Debug for NagaValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Output naga error
+        let mut naga_error = format! {"{}", self.source};
+        let mut src_err: &dyn Error = &self.source;
+        while let Some(next_err) = src_err.source() {
+            naga_error = format! {"{}: {}", naga_error, next_err};
+            src_err = next_err;
+        }
+        let mut output_struct = f.debug_struct("failed to validate naga module");
+        let output = output_struct.field("naga_error", &naga_error);
+
+        #[cfg(not(debug_assertions))]
+        return output.finish_non_exhaustive();
+
+        // Add on lots'a debugging info
+        let mut validation_pass_broken = None;
+        for flag in [
+            naga::valid::ValidationFlags::BINDINGS,
+            naga::valid::ValidationFlags::BLOCKS,
+            naga::valid::ValidationFlags::CONSTANTS,
+            naga::valid::ValidationFlags::CONTROL_FLOW_UNIFORMITY,
+            naga::valid::ValidationFlags::EXPRESSIONS,
+            naga::valid::ValidationFlags::STRUCT_LAYOUTS,
+        ] {
+            let flags = flag;
+            if naga::valid::Validator::new(flags, self.capabilities)
+                .validate(&self.module)
+                .is_err()
+            {
+                validation_pass_broken = Some(flag);
+                break;
+            }
+        }
+
+        return output
+            .field("module", &self.module)
+            .field("functions", &self.functions)
+            .field("tuneables", &self.tuneables)
+            .field("validation_pass", &validation_pass_broken)
+            .finish();
+    }
 }
 
 #[derive(thiserror::Error, Debug, Clone)]

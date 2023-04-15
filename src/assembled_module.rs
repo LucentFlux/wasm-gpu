@@ -9,7 +9,7 @@ use naga::WithSpan;
 
 use crate::active_module::ActiveModule;
 use crate::wasm_front::FuncsInstance;
-use crate::{build, Tuneables};
+use crate::{build, BuildError, Tuneables};
 
 /// All of the functions and trampolines for a module, in wgpu objects ready to be called.
 pub struct AssembledModule {
@@ -33,83 +33,53 @@ impl AssembledModule {
         }
     }
 
-    /// Invokes panic!, but with lots of debugging information about this module (on debug)
-    fn validation_panic(
-        err: WithSpan<ValidationError>,
-        module: &naga::Module,
-        tuneables: &Tuneables,
-        functions: &FuncsInstance,
-        capabilities: naga::valid::Capabilities,
-    ) -> ! {
-        let mut err_display = format! {"{}", err};
-        let mut src_err: &dyn Error = &err;
-        while let Some(next_err) = src_err.source() {
-            err_display = format! {"{}: {}", err_display, next_err};
-            src_err = next_err;
-        }
-
-        #[cfg(not(debug_assertions))]
-        panic!(
-            "failed to validate wasm-generated naga module: {}",
-            err_display
-        );
-
-        // Lots'a debugging info
-        let mut validation_pass_broken = None;
-        for flag in [
-            naga::valid::ValidationFlags::BINDINGS,
-            naga::valid::ValidationFlags::BLOCKS,
-            naga::valid::ValidationFlags::CONSTANTS,
-            naga::valid::ValidationFlags::CONTROL_FLOW_UNIFORMITY,
-            naga::valid::ValidationFlags::EXPRESSIONS,
-            naga::valid::ValidationFlags::STRUCT_LAYOUTS,
-        ] {
-            let flags = flag;
-            if naga::valid::Validator::new(flags, capabilities)
-                .validate(module)
-                .is_err()
-            {
-                validation_pass_broken = Some(flag);
-                break;
-            }
-        }
-        panic!(
-            "failed to validate wasm-generated naga module in pass {:?}: {}\n{{\nnaga_error: {:#?},\nnaga module: {:#?},\nwasm functions: {:#?},\ntuneables: {:#?}\n}}",
-            validation_pass_broken, err_display, err, module, functions, tuneables
-        )
-    }
-
     fn validate(
         module: &naga::Module,
         tuneables: &Tuneables,
         functions: &FuncsInstance,
-    ) -> naga::valid::ModuleInfo {
+        // True on debug, or if the module comes from outside this crate
+        validate_all: bool,
+    ) -> build::Result<naga::valid::ModuleInfo> {
         // Our own sanity checks
-        assert!(
-            !module.entry_points.is_empty(),
-            "some drivers don't like when a module contains no entry points"
-        );
+        if module.entry_points.is_empty() {
+            return Err(BuildError::ValidationError(
+                crate::ValidationError::NoEntryPoints,
+            ));
+        }
 
-        #[cfg(debug_assertions)]
-        let flags = naga::valid::ValidationFlags::all();
-        #[cfg(not(debug_assertions))]
-        let flags = naga::valid::ValidationFlags::empty();
+        let flags = if validate_all {
+            naga::valid::ValidationFlags::all()
+        } else {
+            naga::valid::ValidationFlags::empty()
+        };
 
         let capabilities = if tuneables.hardware_supports_f64 {
             naga::valid::Capabilities::FLOAT64
         } else {
             naga::valid::Capabilities::empty()
         };
-        let res = naga::valid::Validator::new(flags, capabilities).validate(&module);
+        let info = naga::valid::Validator::new(flags, capabilities)
+            .validate(&module)
+            .map_err(|source| {
+                BuildError::ValidationError(crate::ValidationError::NagaValidationError(
+                    crate::NagaValidationError {
+                        source: source.into_inner(),
+                        #[cfg(debug_assertions)]
+                        module: module.clone(),
+                        #[cfg(debug_assertions)]
+                        tuneables: tuneables.clone(),
+                        #[cfg(debug_assertions)]
+                        functions: functions.clone(),
+                        #[cfg(debug_assertions)]
+                        capabilities,
+                    },
+                ))
+            })?;
 
-        let info = match res {
-            Ok(info) => info,
-            Err(e) => Self::validation_panic(e, &module, tuneables, functions, capabilities),
-        };
-
-        return info;
+        return Ok(info);
     }
 
+    /// Converts wasm functions to a validated naga module
     pub fn assemble(functions: &FuncsInstance, tuneables: &Tuneables) -> build::Result<Self> {
         let mut module = naga::Module::default();
 
@@ -129,7 +99,7 @@ impl AssembledModule {
             let function_data = functions
                 .get(*ptr)
                 .expect("call order doesn't invent functions");
-            let base_function = active_module.declare_base_function(*ptr, function_data);
+            let base_function = active_module.declare_base_function(*ptr, function_data)?;
             base_functions.insert(*ptr, base_function);
             let entry_function = active_module.declare_entry_function(*ptr);
             entry_functions.insert(*ptr, entry_function);
@@ -143,7 +113,7 @@ impl AssembledModule {
             let function_data = functions
                 .get(*ptr)
                 .expect("call order doesn't invent functions");
-            let stack_function = active_module.declare_stack_function(*ptr, function_data);
+            let stack_function = active_module.declare_stack_function(*ptr, function_data)?;
             stack_functions.insert(*ptr, stack_function);
         }
 
@@ -172,7 +142,20 @@ impl AssembledModule {
         Self::appease_drivers(&mut module);
 
         Ok(Self {
-            module_info: Self::validate(&module, tuneables, functions),
+            module_info: Self::validate(&module, tuneables, functions, cfg!(debug_assert))?,
+            module,
+        })
+    }
+
+    /// Takes an arbitrary naga module and validates that it can be fed into the wasm-gpu engine, i.e. that
+    /// all of the correct bindings exist and that the module is a correctly typed module.
+    pub fn from_module(
+        module: naga::Module,
+        functions: &FuncsInstance,
+        tuneables: &Tuneables,
+    ) -> build::Result<Self> {
+        Ok(Self {
+            module_info: Self::validate(&module, tuneables, functions, true)?,
             module,
         })
     }

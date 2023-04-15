@@ -3,17 +3,14 @@ use crate::build;
 use wasm_opcodes::MVPOperator;
 use wasm_types::Val;
 
-fn const_val<'f, 'm: 'f, F: ActiveFunction<'f, 'm>>(
-    state: &mut ActiveBasicBlock<'_, 'f, 'm, F>,
-    val: Val,
-) -> build::Result<()> {
+fn const_val<'f, 'm: 'f>(state: &mut ActiveBasicBlock<'_, 'f, 'm>, val: Val) -> build::Result<()> {
     let val = state.make_constant(val)?;
     state.push(naga::Expression::Constant(val));
     Ok(())
 }
 
-pub(super) fn eat_mvp_operator<'f, 'm: 'f, F: ActiveFunction<'f, 'm>>(
-    state: &mut ActiveBasicBlock<'_, 'f, 'm, F>,
+pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
+    state: &mut ActiveBasicBlock<'_, 'f, 'm>,
     operator: &MVPOperator,
 ) -> build::Result<()> {
     match operator {
@@ -27,12 +24,16 @@ pub(super) fn eat_mvp_operator<'f, 'm: 'f, F: ActiveFunction<'f, 'm>>(
         MVPOperator::F64Const { value } => const_val(state, Val::F64(f64::from_bits(value.bits()))),
         MVPOperator::Unreachable => unimplemented!(),
         MVPOperator::Drop => {
-            /* Pass */
+            /* Pass for now */
             Ok(())
         }
-        MVPOperator::Select => unimplemented!(),
-        MVPOperator::LocalGet { local_index } => unimplemented!(),
+        MVPOperator::LocalGet { local_index } => {
+            let local_ptr = state.local_ptr(*local_index);
+            state.push(naga::Expression::Load { pointer: local_ptr });
+            Ok(())
+        }
         MVPOperator::LocalSet { local_index } => unimplemented!(),
+        MVPOperator::Select => unimplemented!(),
         MVPOperator::LocalTee { local_index } => unimplemented!(),
         MVPOperator::GlobalGet { global_index } => unimplemented!(),
         MVPOperator::GlobalSet { global_index } => unimplemented!(),

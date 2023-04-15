@@ -1,12 +1,13 @@
 use super::{
     active_basic_block::ActiveBasicBlock, body_gen::FunctionBodyInformation, ActiveFunction,
+    ActiveInternalFunction,
 };
 use crate::build;
 use wasm_opcodes::OperatorByProposal;
 
 /// A straight run-through block, where branches jump forwards. Eats tokens up to an End token.
-pub(crate) fn populate_block<'f, 'm: 'f, F: ActiveFunction<'f, 'm>>(
-    working: &mut F,
+pub(crate) fn populate_block<'f, 'm: 'f>(
+    working: &mut ActiveInternalFunction<'f, 'm>,
     instructions: &mut impl Iterator<Item = OperatorByProposal>,
     stack: Vec<naga::Handle<naga::Expression>>,
     func_body_info: FunctionBodyInformation,

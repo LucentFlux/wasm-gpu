@@ -2,16 +2,19 @@ use std::marker::PhantomData;
 
 use crate::{build, module_ext::FunctionExt, BuildError};
 
-use super::{body_gen::FunctionBodyInformation, mvp::eat_mvp_operator, ActiveFunction};
+use super::{
+    body_gen::FunctionBodyInformation, mvp::eat_mvp_operator, ActiveFunction,
+    ActiveInternalFunction,
+};
 use wasm_opcodes::OperatorByProposal;
 
 /// Everything used while running through basic block instructions to make naga functions.
 /// Parsing most instructions involves a straight run of values and operations. That straight run (or basic block)
 /// without control flow is eaten and converted by this. Since there is no control flow, expressions can be
 /// compounded without auxilliary assignments.
-pub(crate) struct ActiveBasicBlock<'b, 'f: 'b, 'm: 'f, F: ActiveFunction<'f, 'm>> {
+pub(crate) struct ActiveBasicBlock<'b, 'f: 'b, 'm: 'f> {
     // Global shader data, e.g. types or constants
-    function: &'b mut F,
+    function: &'b mut ActiveInternalFunction<'f, 'm>,
     _lifetimes: PhantomData<&'b mut &'f mut &'m mut ()>,
 
     // naga::Handles into the above module
@@ -22,7 +25,7 @@ pub(crate) struct ActiveBasicBlock<'b, 'f: 'b, 'm: 'f, F: ActiveFunction<'f, 'm>
     statements: Vec<naga::Statement>,
 }
 
-impl<'b, 'f: 'b, 'm: 'f, F: ActiveFunction<'f, 'm>> ActiveBasicBlock<'b, 'f, 'm, F> {
+impl<'b, 'f: 'b, 'm: 'f> ActiveBasicBlock<'b, 'f, 'm> {
     /// Pushes an expression on to the current stack
     pub(crate) fn push(&mut self, value: naga::Expression) {
         let needs_emitting = match &value {
@@ -63,7 +66,7 @@ impl<'b, 'f: 'b, 'm: 'f, F: ActiveFunction<'f, 'm>> ActiveBasicBlock<'b, 'f, 'm,
 
     /// Populates until a control flow instruction
     pub(crate) fn build(
-        function: &mut F,
+        function: &mut ActiveInternalFunction<'f, 'm>,
         instructions: &mut impl Iterator<Item = OperatorByProposal>,
         stack: Vec<naga::Handle<naga::Expression>>,
         func_body_info: FunctionBodyInformation,
@@ -101,5 +104,16 @@ impl<'b, 'f: 'b, 'm: 'f, F: ActiveFunction<'f, 'm>> ActiveBasicBlock<'b, 'f, 'm,
         }
 
         return Ok((state.stack, naga::Block::from_vec(state.statements)));
+    }
+
+    pub(crate) fn function<'a>(&'a self) -> &'a ActiveInternalFunction<'f, 'm>
+    where
+        'f: 'a,
+    {
+        self.function
+    }
+
+    pub(crate) fn local_ptr(&self, local_index: u32) -> naga::Handle<naga::Expression> {
+        self.function().data.locals.get(local_index).expression
     }
 }
