@@ -2,46 +2,11 @@ use wasm_types::ExternRef;
 
 use crate::{
     build, declare_function,
-    module_ext::{FunctionExt, ModuleExt},
+    module_ext::{BlockExt, FunctionExt, ModuleExt},
     naga_expr,
-    std_objects::{
-        std_consts::ConstGen,
-        std_fns::BufferFnGen,
-        std_tys::{TyGen, WasmTyGen},
-        Generator, StdObjects, WasmTyImpl,
-    },
+    std_objects::{std_fns::BufferFnGen, wasm_tys::WasmTyImpl, Generator, StdObjects},
 };
 
-/// An implementation of ExternRefs using the GPU's native u32 type
-pub(crate) struct PolyfillExternRef;
-impl WasmTyImpl<ExternRef> for PolyfillExternRef {
-    type TyGen = PolyfillExternRefTyGen;
-    type DefaultGen = PolyfillExternRefDefaultGen;
-    type ReadGen = PolyfillExternRefReadGen;
-    type WriteGen = PolyfillExternRefWriteGen;
-}
-
-pub(crate) struct PolyfillExternRefTyGen;
-impl TyGen for PolyfillExternRefTyGen {
-    fn gen<Ps: crate::std_objects::GenerationParameters>(
-        module: &mut naga::Module,
-        _others: &crate::std_objects::StdObjectsGenerator<Ps>,
-    ) -> build::Result<naga::Handle<naga::Type>> {
-        let naga_ty = naga::Type {
-            name: Some("ExternRef".to_owned()),
-            inner: naga::TypeInner::Scalar {
-                kind: naga::ScalarKind::Uint,
-                width: 4,
-            },
-        };
-
-        Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
-    }
-
-    fn size_bytes() -> u32 {
-        4
-    }
-}
 fn make_const_impl(module: &mut naga::Module, value: ExternRef) -> naga::Handle<naga::Constant> {
     module.constants.append(
         naga::Constant {
@@ -55,8 +20,20 @@ fn make_const_impl(module: &mut naga::Module, value: ExternRef) -> naga::Handle<
         naga::Span::UNDEFINED,
     )
 }
-impl WasmTyGen for PolyfillExternRefTyGen {
+
+/// An implementation of ExternRefs using the GPU's native u32 type
+pub(crate) struct PolyfillExternRef;
+impl WasmTyImpl for PolyfillExternRef {
     type WasmTy = ExternRef;
+
+    type TyGen = PolyfillExternRefTyGen;
+    type DefaultGen = PolyfillExternRefDefaultGen;
+    type ReadGen = PolyfillExternRefReadGen;
+    type WriteGen = PolyfillExternRefWriteGen;
+
+    fn size_bytes() -> u32 {
+        4
+    }
 
     fn make_const(
         module: &mut naga::Module,
@@ -67,12 +44,38 @@ impl WasmTyGen for PolyfillExternRefTyGen {
     }
 }
 
-pub(crate) struct PolyfillExternRefDefaultGen;
-impl ConstGen for PolyfillExternRefDefaultGen {
+#[derive(Default)]
+pub(crate) struct PolyfillExternRefTyGen;
+impl Generator for PolyfillExternRefTyGen {
+    type Generated = naga::Handle<naga::Type>;
+
     fn gen<Ps: crate::std_objects::GenerationParameters>(
+        &self,
         module: &mut naga::Module,
         _others: &crate::std_objects::StdObjectsGenerator<Ps>,
-    ) -> build::Result<naga::Handle<naga::Constant>> {
+    ) -> build::Result<naga::Handle<naga::Type>> {
+        let naga_ty = naga::Type {
+            name: Some("ExternRef".to_owned()),
+            inner: naga::TypeInner::Scalar {
+                kind: naga::ScalarKind::Uint,
+                width: 4,
+            },
+        };
+
+        Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct PolyfillExternRefDefaultGen;
+impl Generator for PolyfillExternRefDefaultGen {
+    type Generated = naga::Handle<naga::Constant>;
+
+    fn gen<Ps: crate::std_objects::GenerationParameters>(
+        &self,
+        module: &mut naga::Module,
+        _others: &crate::std_objects::StdObjectsGenerator<Ps>,
+    ) -> build::Result<Self::Generated> {
         Ok(make_const_impl(module, ExternRef::none()))
     }
 }
@@ -95,7 +98,7 @@ impl BufferFnGen for PolyfillExternRefReadGen {
         let input_ref = module.fn_mut(function_handle).append_global(buffer);
 
         let read_value = naga_expr!(module, function_handle => Load(input_ref[word_address]));
-        module.fn_mut(function_handle).push_return(read_value);
+        module.fn_mut(function_handle).body.push_return(read_value);
 
         Ok(function_handle)
     }
@@ -121,6 +124,7 @@ impl BufferFnGen for PolyfillExternRefWriteGen {
         let word = naga_expr!(module, function_handle => value as Uint);
         module
             .fn_mut(function_handle)
+            .body
             .push_store(write_word_loc, word);
 
         Ok(function_handle)

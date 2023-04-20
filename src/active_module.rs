@@ -77,11 +77,11 @@ impl<'a> ActiveModule<'a> {
         BrainFunction::append_declaration_to(&mut self.module)
     }
 
-    pub(crate) fn make_constant(
+    pub(crate) fn make_wasm_constant(
         &mut self,
         value: wasm_types::Val,
     ) -> build::Result<naga::Handle<naga::Constant>> {
-        self.std_objs.make_constant(&mut self.module, value)
+        self.std_objs.make_wasm_constant(&mut self.module, value)
     }
 }
 

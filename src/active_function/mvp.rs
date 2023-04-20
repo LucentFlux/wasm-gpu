@@ -2,9 +2,10 @@ use super::{active_basic_block::ActiveBasicBlock, ActiveFunction};
 use crate::build;
 use wasm_opcodes::MVPOperator;
 use wasm_types::Val;
+use wasmtime_environ::Trap;
 
 fn const_val<'f, 'm: 'f>(state: &mut ActiveBasicBlock<'_, 'f, 'm>, val: Val) -> build::Result<()> {
-    let val = state.make_constant(val)?;
+    let val = state.make_wasm_constant(val)?;
     state.push(naga::Expression::Constant(val));
     Ok(())
 }
@@ -22,7 +23,7 @@ pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
         MVPOperator::I64Const { value } => const_val(state, Val::I64(*value)),
         MVPOperator::F32Const { value } => const_val(state, Val::F32(f32::from_bits(value.bits()))),
         MVPOperator::F64Const { value } => const_val(state, Val::F64(f64::from_bits(value.bits()))),
-        MVPOperator::Unreachable => unimplemented!(),
+        MVPOperator::Unreachable => state.append_trap(Trap::UnreachableCodeReached),
         MVPOperator::Drop => {
             /* Pass for now */
             Ok(())
@@ -41,8 +42,16 @@ pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
             });
             Ok(())
         }
+        MVPOperator::LocalTee { local_index } => {
+            let local_ptr = state.local_ptr(*local_index);
+            let value = state.peek();
+            state.append(naga::Statement::Store {
+                pointer: local_ptr,
+                value,
+            });
+            Ok(())
+        }
         MVPOperator::Select => unimplemented!(),
-        MVPOperator::LocalTee { local_index } => unimplemented!(),
         MVPOperator::GlobalGet { global_index } => unimplemented!(),
         MVPOperator::GlobalSet { global_index } => unimplemented!(),
         MVPOperator::I32Load { memarg } => unimplemented!(),
@@ -107,7 +116,12 @@ pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
         MVPOperator::I32Clz => unimplemented!(),
         MVPOperator::I32Ctz => unimplemented!(),
         MVPOperator::I32Popcnt => unimplemented!(),
-        MVPOperator::I32Add => unimplemented!(),
+        MVPOperator::I32Add => {
+            let rhs = state.pop();
+            let lhs = state.pop();
+            let func = state.std_objects().i32.add;
+            state.call(func, vec![lhs, rhs])
+        }
         MVPOperator::I32Sub => unimplemented!(),
         MVPOperator::I32Mul => unimplemented!(),
         MVPOperator::I32DivS => unimplemented!(),

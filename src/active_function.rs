@@ -59,11 +59,11 @@ pub(crate) trait ActiveFunction<'f, 'm: 'f> {
     {
         &self.get_module().std_objs
     }
-    fn make_constant(
+    fn make_wasm_constant(
         &mut self,
         value: wasm_types::Val,
     ) -> build::Result<naga::Handle<naga::Constant>> {
-        self.get_module_mut().make_constant(value)
+        self.get_module_mut().make_wasm_constant(value)
     }
 }
 

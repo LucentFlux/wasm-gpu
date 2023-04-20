@@ -4,7 +4,7 @@ use wasmparser::ValType;
 
 use crate::{
     build,
-    module_ext::{FunctionExt, ModuleExt},
+    module_ext::{BlockExt, FunctionExt, ModuleExt},
     std_objects::StdObjects,
     BuildError, ExceededComponent,
 };
@@ -77,7 +77,7 @@ impl FnLocals {
             // Immediately assign value to local
             let parameter_value = parameter.arg.expression_handle;
             let function = module.fn_mut(function);
-            function.push_store(local.expression, parameter_value);
+            function.body.push_store(local.expression, parameter_value);
 
             let popped = locals.insert(i_param, local);
             assert!(

@@ -2,48 +2,14 @@ use wasm_types::V128;
 
 use crate::{
     build, declare_function,
-    module_ext::{FunctionExt, ModuleExt},
+    module_ext::{BlockExt, FunctionExt, ModuleExt},
     naga_expr,
     std_objects::{
-        std_consts::ConstGen,
-        std_fns::BufferFnGen,
-        std_tys::{TyGen, WasmTyGen},
-        GenerationParameters, Generator, StdObjects, StdObjectsGenerator, WasmTyImpl,
+        std_fns::BufferFnGen, wasm_tys::WasmTyImpl, GenerationParameters, Generator, StdObjects,
+        StdObjectsGenerator,
     },
 };
 
-/// An implementation of v128s using a 4-vector of u32s. Calling this a Polyfill is a slight stretch
-/// since a v128 is almost exactly an ivec4, but some things don't map perfectly so it's a polyfill.
-pub(crate) struct PolyfillV128;
-impl WasmTyImpl<V128> for PolyfillV128 {
-    type TyGen = PolyfillV128TyGen;
-    type DefaultGen = PolyfillV128DefaultGen;
-    type ReadGen = PolyfillV128ReadGen;
-    type WriteGen = PolyfillV128WriteGen;
-}
-
-pub(crate) struct PolyfillV128TyGen;
-impl TyGen for PolyfillV128TyGen {
-    fn gen<Ps: crate::std_objects::GenerationParameters>(
-        module: &mut naga::Module,
-        _others: &crate::std_objects::StdObjectsGenerator<Ps>,
-    ) -> build::Result<naga::Handle<naga::Type>> {
-        let naga_ty = naga::Type {
-            name: Some("v128".to_owned()),
-            inner: naga::TypeInner::Vector {
-                size: naga::VectorSize::Quad,
-                kind: naga::ScalarKind::Uint,
-                width: 4,
-            },
-        };
-
-        Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
-    }
-
-    fn size_bytes() -> u32 {
-        16
-    }
-}
 fn make_const_impl(
     module: &mut naga::Module,
     ty: naga::Handle<naga::Type>,
@@ -83,8 +49,21 @@ fn make_const_impl(
         naga::Span::UNDEFINED,
     )
 }
-impl WasmTyGen for PolyfillV128TyGen {
+
+/// An implementation of v128s using a 4-vector of u32s. Calling this a Polyfill is a slight stretch
+/// since a v128 is almost exactly an ivec4, but some things don't map perfectly so it's a polyfill.
+pub(crate) struct PolyfillV128;
+impl WasmTyImpl for PolyfillV128 {
     type WasmTy = V128;
+
+    type TyGen = PolyfillV128TyGen;
+    type DefaultGen = PolyfillV128DefaultGen;
+    type ReadGen = PolyfillV128ReadGen;
+    type WriteGen = PolyfillV128WriteGen;
+
+    fn size_bytes() -> u32 {
+        16
+    }
 
     fn make_const(
         module: &mut naga::Module,
@@ -95,12 +74,39 @@ impl WasmTyGen for PolyfillV128TyGen {
     }
 }
 
-pub(crate) struct PolyfillV128DefaultGen;
-impl ConstGen for PolyfillV128DefaultGen {
+#[derive(Default)]
+pub(crate) struct PolyfillV128TyGen;
+impl Generator for PolyfillV128TyGen {
+    type Generated = naga::Handle<naga::Type>;
+
     fn gen<Ps: crate::std_objects::GenerationParameters>(
+        &self,
+        module: &mut naga::Module,
+        _others: &crate::std_objects::StdObjectsGenerator<Ps>,
+    ) -> build::Result<naga::Handle<naga::Type>> {
+        let naga_ty = naga::Type {
+            name: Some("v128".to_owned()),
+            inner: naga::TypeInner::Vector {
+                size: naga::VectorSize::Quad,
+                kind: naga::ScalarKind::Uint,
+                width: 4,
+            },
+        };
+
+        Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct PolyfillV128DefaultGen;
+impl Generator for PolyfillV128DefaultGen {
+    type Generated = naga::Handle<naga::Constant>;
+
+    fn gen<Ps: crate::std_objects::GenerationParameters>(
+        &self,
         module: &mut naga::Module,
         others: &crate::std_objects::StdObjectsGenerator<Ps>,
-    ) -> build::Result<naga::Handle<naga::Constant>> {
+    ) -> build::Result<Self::Generated> {
         let ty = others.v128.ty.gen(module, others)?;
         Ok(make_const_impl(module, ty, V128::from_bits(0)))
     }
@@ -133,7 +139,7 @@ impl BufferFnGen for PolyfillV128ReadGen {
             (Load(read_word3)),
             (Load(read_word4))
         ));
-        module.fn_mut(function_handle).push_return(read_value);
+        module.fn_mut(function_handle).body.push_return(read_value);
 
         Ok(function_handle)
     }
@@ -165,10 +171,22 @@ impl BufferFnGen for PolyfillV128WriteGen {
         let write_word_loc4 = naga_expr!(module, handle => output_ref[word_address + (U32(3))]);
         let word4 = naga_expr!(module, handle => value[const 3]);
 
-        module.fn_mut(handle).push_store(write_word_loc1, word1);
-        module.fn_mut(handle).push_store(write_word_loc2, word2);
-        module.fn_mut(handle).push_store(write_word_loc3, word3);
-        module.fn_mut(handle).push_store(write_word_loc4, word4);
+        module
+            .fn_mut(handle)
+            .body
+            .push_store(write_word_loc1, word1);
+        module
+            .fn_mut(handle)
+            .body
+            .push_store(write_word_loc2, word2);
+        module
+            .fn_mut(handle)
+            .body
+            .push_store(write_word_loc3, word3);
+        module
+            .fn_mut(handle)
+            .body
+            .push_store(write_word_loc4, word4);
 
         Ok(handle)
     }

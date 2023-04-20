@@ -1,5 +1,22 @@
 use wasmtime_environ::Trap;
 
+pub(crate) const ALL_TRAPS: [Trap; 14] = [
+    Trap::StackOverflow,
+    Trap::MemoryOutOfBounds,
+    Trap::HeapMisaligned,
+    Trap::TableOutOfBounds,
+    Trap::IndirectCallToNull,
+    Trap::BadSignature,
+    Trap::IntegerOverflow,
+    Trap::IntegerDivisionByZero,
+    Trap::BadConversionToInteger,
+    Trap::UnreachableCodeReached,
+    Trap::Interrupt,
+    Trap::AlwaysTrapAdapter,
+    Trap::OutOfFuel,
+    Trap::AtomicWaitNonSharedMemory,
+];
+
 pub fn trap_to_u32(trap: Option<Trap>) -> u32 {
     let trap = match trap {
         None => return 0,

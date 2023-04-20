@@ -63,7 +63,7 @@ macro_rules! std_bindings {
                 }
             }
 
-
+            #[derive(Clone)]
             $vis struct $fin_struct_name {
                 $(
                     $vis $name: naga::Handle<naga::GlobalVariable>,

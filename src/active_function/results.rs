@@ -1,3 +1,4 @@
+use crate::module_ext::BlockExt;
 use crate::{active_function::ActiveFunction, build};
 use crate::{naga_expr, BuildError, ExceededComponent};
 use wasm_types::ValTypeByteCount;
@@ -84,8 +85,9 @@ impl WasmFnResTy {
         func: &mut naga::Function,
         components: Vec<naga::Handle<naga::Expression>>,
     ) {
-        let struct_build = func.append_compose_push_emit(self.handle, components);
-        func.push_return(struct_build);
+        let struct_build = func.append_compose(self.handle, components);
+        func.body.push_emit(struct_build);
+        func.body.push_return(struct_build);
     }
 
     pub(crate) fn append_store_at<'f, 'm: 'f>(

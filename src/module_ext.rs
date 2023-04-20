@@ -9,6 +9,8 @@ mod sealed {
     impl TypesSealed for naga::UniqueArena<naga::Type> {}
     pub trait FunctionSealed {}
     impl FunctionSealed for naga::Function {}
+    pub trait BlockSealed {}
+    impl BlockSealed for naga::Block {}
 }
 
 pub(crate) trait ModuleExt: self::sealed::ModuleSealed {
@@ -84,25 +86,20 @@ pub(crate) trait FunctionExt: self::sealed::FunctionSealed {
         &mut self,
         global: naga::Handle<naga::GlobalVariable>,
     ) -> naga::Handle<naga::Expression>;
+    fn append_constant(
+        &mut self,
+        constant: naga::Handle<naga::Constant>,
+    ) -> naga::Handle<naga::Expression>;
     fn append_fn_argument(&mut self, argument_index: u32) -> naga::Handle<naga::Expression>;
     fn append_local(
         &mut self,
         local: naga::Handle<naga::LocalVariable>,
     ) -> naga::Handle<naga::Expression>;
-    fn append_compose_push_emit(
+    fn append_compose(
         &mut self,
         ty: naga::Handle<naga::Type>,
         components: Vec<naga::Handle<naga::Expression>>,
     ) -> naga::Handle<naga::Expression>;
-
-    // Shorthand statement addition
-    fn push_emit(&mut self, expression: naga::Handle<naga::Expression>);
-    fn push_return(&mut self, expression: naga::Handle<naga::Expression>);
-    fn push_store(
-        &mut self,
-        pointer: naga::Handle<naga::Expression>,
-        value: naga::Handle<naga::Expression>,
-    );
 }
 impl FunctionExt for naga::Function {
     fn new_local(
@@ -130,6 +127,13 @@ impl FunctionExt for naga::Function {
             naga::Span::UNDEFINED,
         )
     }
+    fn append_constant(
+        &mut self,
+        constant: naga::Handle<naga::Constant>,
+    ) -> naga::Handle<naga::Expression> {
+        self.expressions
+            .append(naga::Expression::Constant(constant), naga::Span::UNDEFINED)
+    }
     fn append_fn_argument(&mut self, argument_index: u32) -> naga::Handle<naga::Expression> {
         self.expressions.append(
             naga::Expression::FunctionArgument(argument_index),
@@ -145,7 +149,7 @@ impl FunctionExt for naga::Function {
             naga::Span::UNDEFINED,
         )
     }
-    fn append_compose_push_emit(
+    fn append_compose(
         &mut self,
         ty: naga::Handle<naga::Type>,
         components: Vec<naga::Handle<naga::Expression>>,
@@ -154,19 +158,31 @@ impl FunctionExt for naga::Function {
             naga::Expression::Compose { ty, components },
             naga::Span::UNDEFINED,
         );
-        self.push_emit(expression);
-
         return expression;
     }
+}
 
+pub(crate) trait BlockExt: self::sealed::BlockSealed {
+    // Shorthand statement addition
+    fn push_emit(&mut self, expression: naga::Handle<naga::Expression>);
+    fn push_return(&mut self, expression: naga::Handle<naga::Expression>);
+    fn push_store(
+        &mut self,
+        pointer: naga::Handle<naga::Expression>,
+        value: naga::Handle<naga::Expression>,
+    );
+    fn push_kill(&mut self);
+}
+
+impl BlockExt for naga::Block {
     fn push_emit(&mut self, expression: naga::Handle<naga::Expression>) {
-        self.body.push(
+        self.push(
             naga::Statement::Emit(naga::Range::new_from_bounds(expression, expression)),
             naga::Span::UNDEFINED,
         );
     }
     fn push_return(&mut self, expression: naga::Handle<naga::Expression>) {
-        self.body.push(
+        self.push(
             naga::Statement::Return {
                 value: Some(expression),
             },
@@ -178,10 +194,13 @@ impl FunctionExt for naga::Function {
         pointer: naga::Handle<naga::Expression>,
         value: naga::Handle<naga::Expression>,
     ) {
-        self.body.push(
+        self.push(
             naga::Statement::Store { pointer, value },
             naga::Span::UNDEFINED,
         );
+    }
+    fn push_kill(&mut self) {
+        self.push(naga::Statement::Kill, naga::Span::UNDEFINED);
     }
 }
 
@@ -214,6 +233,8 @@ macro_rules! declare_function {
     (@match_fn_name $fn_name:tt) => {stringify!{$fn_name}.to_owned()};
 
     ($module:expr => fn $fn_name:tt ( $($arg_name:ident : $arg_ty:tt),* $(,)? ) $(-> $ret_ty:tt)?) => {{
+        #[allow(unused_mut)]
+        #[allow(unused_assignments)]
         let mut result = None;
         $(
             result = Some($ret_ty);

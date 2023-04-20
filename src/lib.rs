@@ -1,6 +1,7 @@
 #![feature(macro_metavar_expr)]
 #![feature(slice_as_chunks)]
 #![feature(int_roundings)]
+#![feature(specialization)]
 
 pub const MEMORY_BINDING_INDEX: u32 = 0;
 pub const MEMORY_BINDING_READ_ONLY: bool = false;

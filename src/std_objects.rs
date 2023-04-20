@@ -1,15 +1,31 @@
-use perfect_derive::perfect_derive;
+mod flags;
+mod std_consts;
+mod std_fns;
+mod std_globals;
+mod std_tys;
+mod wasm_tys;
+
+use std::collections::HashMap;
+use std::marker::PhantomData;
+use std::ops::Deref;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
+use once_cell::unsync::OnceCell;
 use wasm_types::{ExternRef, FuncRef, Val, WasmTyVal, V128};
 use wasmparser::ValType;
+use wasmtime_environ::Trap;
 
 use crate::std_objects::std_tys::TyGen;
 use crate::{build, Tuneables};
 
+use self::flags::TrapConstantsGen;
+use self::std_fns::FromFlagsBuffer;
 use self::{
     std_consts::ConstGen,
     std_fns::{BufferFnGen, FromInputBuffer, FromMemoryBuffer, FromOutputBuffer},
     std_globals::{StdBindings, StdBindingsGenerator},
-    std_tys::{U32Gen, UVec3Gen, WasmTyGen},
+    std_tys::{U32Gen, UVec3Gen},
     wasm_tys::{
         native_f32::NativeF32, native_i32::NativeI32, pollyfill_extern_ref::PolyfillExternRef,
         pollyfill_func_ref::PolyfillFuncRef, polyfill_f64::PolyfillF64, polyfill_i64::PolyfillI64,
@@ -17,14 +33,16 @@ use self::{
     },
 };
 
-mod std_consts;
-mod std_fns;
-mod std_globals;
-mod std_tys;
-mod wasm_tys;
-
-pub(crate) trait Generator {
-    type Generated;
+/// Something that can take the set of standard objects to be inserted into a module, and which will insert
+/// itself into said module. This allows a runtime-traversal of the instantiation DAG.
+///
+/// This whole trait setup may seem excessive, but in essence it provides separation between every standard
+/// object, allowing the set of standard objects in a wasm shader to be extended and modified without having to
+/// worry about the order in which objects must be instantiated. An optimising compiler will remove nearly all of
+/// this type bloat and produce the monofunction that we would have hand-written ourselves, but which would be
+/// completely unmaintainable.
+pub(crate) trait Generator: Default {
+    type Generated: Clone;
 
     fn gen<Ps: GenerationParameters>(
         &self,
@@ -33,156 +51,176 @@ pub(crate) trait Generator {
     ) -> build::Result<Self::Generated>;
 }
 
-/// Some different implemetations are switched out based on GPU features. By representing these
-/// options in the type system, we can ensure at compile time that we have covered every case.
-/// The alternative is to patten match on a set of configuration values every time we generate
-/// anything. This is clearly more foolproof.
-///
-/// This struct represents an implementation for a wasm value (i32, i64, etc) that can be read,
-/// written and manipulated. We then instantiate this into a `TyInstance` once we see a module.
-pub(crate) trait WasmTyImpl<WasmTy: WasmTyVal> {
-    type TyGen: WasmTyGen<WasmTy = WasmTy> + 'static;
-    type DefaultGen: ConstGen;
-    type ReadGen: BufferFnGen;
-    type WriteGen: BufferFnGen;
+/// Sometimes during development we may have multiple dependents (DAG rather than a tree), or we may
+/// accidentally create a cyclic initialisation graph. Placing a generator in this struct solves both of
+/// these issues by lazily only evaluating a node once, and panicking if, while generating the object, the
+/// method is re-entered.
+#[perfect_derive::perfect_derive(Default)]
+struct LazyGenerator<I: Generator> {
+    inner: I,
+    generating: AtomicBool,
+    result: OnceCell<build::Result<I::Generated>>,
 }
 
-/// An instantable type in a module.
-#[perfect_derive(Default)]
-pub(crate) struct TyInstanceGenerator<WasmTy: WasmTyVal, T: WasmTyImpl<WasmTy>> {
-    pub(crate) ty: std_tys::LazyTy<T::TyGen>,
-    pub(crate) default: std_consts::LazyConst<T::DefaultGen>,
-    pub(crate) read_input: std_fns::LazyBufferFn<T::ReadGen, FromInputBuffer>,
-    pub(crate) write_output: std_fns::LazyBufferFn<T::WriteGen, FromOutputBuffer>,
-    pub(crate) read_memory: std_fns::LazyBufferFn<T::ReadGen, FromMemoryBuffer>,
-    pub(crate) write_memory: std_fns::LazyBufferFn<T::WriteGen, FromMemoryBuffer>,
-}
-
-impl<WasmTy: WasmTyVal, T: WasmTyImpl<WasmTy>> Generator for TyInstanceGenerator<WasmTy, T> {
-    type Generated = TyInstance<<T::TyGen as WasmTyGen>::WasmTy>;
+impl<I: Generator> Generator for LazyGenerator<I> {
+    type Generated = I::Generated;
 
     fn gen<Ps: GenerationParameters>(
         &self,
         module: &mut naga::Module,
         others: &StdObjectsGenerator<Ps>,
     ) -> build::Result<Self::Generated> {
-        let ty = self.ty.gen(module, others)?;
-        let default = self.default.gen(module, others)?;
-        let size_bytes = T::TyGen::size_bytes();
-        let read_input = self.read_input.gen(module, others)?;
-        let write_output = self.write_output.gen(module, others)?;
-        let read_memory = self.read_memory.gen(module, others)?;
-        let write_memory = self.write_memory.gen(module, others)?;
-        Ok(Self::Generated {
-            make_const: Box::new(<T::TyGen as WasmTyGen>::make_const),
-            size_bytes,
-            ty,
-            default,
-            read_input,
-            write_output,
-            read_memory,
-            write_memory,
-        })
+        self.result
+            .get_or_init(|| {
+                if self
+                    .generating
+                    .fetch_or(true, std::sync::atomic::Ordering::AcqRel)
+                {
+                    panic!("loop detected in std objects when generating type")
+                }
+                self.inner.gen(module, others)
+                // No need to clear self.generating since we generate once
+            })
+            .clone()
     }
 }
 
-/// An instanted type in a module.
-pub(crate) struct TyInstance<Ty: WasmTyVal> {
-    pub(crate) ty: naga::Handle<naga::Type>,
-    pub(crate) default: naga::Handle<naga::Constant>,
-    /// May be different from wasm type size if we're using some interesting polyfill.
-    pub(crate) size_bytes: u32,
-    pub(crate) read_input: naga::Handle<naga::Function>,
-    pub(crate) write_output: naga::Handle<naga::Function>,
-    pub(crate) read_memory: naga::Handle<naga::Function>,
-    pub(crate) write_memory: naga::Handle<naga::Function>,
-    pub(crate) make_const: Box<
-        dyn Fn(&mut naga::Module, &StdObjects, Ty) -> build::Result<naga::Handle<naga::Constant>>,
-    >,
+impl<I: Generator> Deref for LazyGenerator<I> {
+    type Target = I;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
+
+macro_rules! generator_struct {
+    (
+        $vis:vis struct $generator_name:ident $(<$($generator_generic:ident : $generator_generic_ty:path),* $(,)?>)?
+            => $generated_name:ident $(<$($generated_generic:ident : $generated_generic_ty:path),* $(,)?>)?
+        {
+            $(
+                $field_vis:vis $field:ident : $generator:ty => $generated:ty
+            ),* $(,)?
+        }
+
+        impl $(<$($generator_impl_generic:ident : $generator_impl_generic_ty:path),* $(,)?>)? Generator for $generator_name_2:ident $(<$($generator_generic_param:ident),* $(,)?>)? {
+            type Generated = $generated_name_2:ty;
+
+            ...
+        }
+    ) => {
+        $vis struct $generator_name $(<$($generator_generic: $generator_generic_ty),*>)* {
+            $(
+                $field: crate::std_objects::LazyGenerator<$generator>
+            ),*
+        }
+
+        #[perfect_derive::perfect_derive(Clone)]
+        $vis struct $generated_name $(<$($generated_generic: $generated_generic_ty),*>)* {
+            $(
+                $field_vis $field: $generated
+            ),*
+        }
+
+        impl $(<$($generator_impl_generic: $generator_impl_generic_ty),*>)? Default for $generator_name_2 $(<$($generator_generic_param),*>)? {
+            fn default() -> Self {
+                Self {
+                    $(
+                        $field: <crate::std_objects::LazyGenerator<$generator>>::default()
+                    ),*
+                }
+            }
+        }
+
+        impl $(<$($generator_impl_generic: $generator_impl_generic_ty),*>)? Generator for $generator_name_2 $(<$($generator_generic_param),*>)? {
+            type Generated = $generated_name_2;
+
+            fn gen<InnerPs: crate::std_objects::GenerationParameters>(
+                &self,
+                module: &mut naga::Module,
+                others: &crate::std_objects::StdObjectsGenerator<InnerPs>,
+            ) -> build::Result<Self::Generated> {
+                $(
+                    let $field = self.$field.gen(module, others)?;
+                )*
+
+                Ok(Self::Generated {
+                    $(
+                        $field
+                    ),*
+                })
+            }
+        }
+    };
+}
+use generator_struct;
 
 /// All swappable parts of module generation
+///
+/// Some different implemetations are switched out based on GPU features. By representing these
+/// options in the type system, we can ensure at compile time that we have covered every case.
+/// The alternative is to patten match on a set of configuration values every time we generate
+/// anything. This is clearly more foolproof.
 pub(crate) trait GenerationParameters {
-    type I32: WasmTyImpl<i32>;
-    type I64: WasmTyImpl<i64>;
-    type F32: WasmTyImpl<f32>;
-    type F64: WasmTyImpl<f64>;
-    type V128: WasmTyImpl<V128>;
-    type FuncRef: WasmTyImpl<FuncRef>;
-    type ExternRef: WasmTyImpl<ExternRef>;
+    type I32: wasm_tys::WasmNumericTyImpl<WasmTy = i32>;
+    type I64: wasm_tys::WasmNumericTyImpl<WasmTy = i64>;
+    type F32: wasm_tys::WasmNumericTyImpl<WasmTy = f32>;
+    type F64: wasm_tys::WasmNumericTyImpl<WasmTy = f64>;
+    type V128: wasm_tys::WasmTyImpl<WasmTy = V128>;
+    type FuncRef: wasm_tys::WasmTyImpl<WasmTy = FuncRef>;
+    type ExternRef: wasm_tys::WasmTyImpl<WasmTy = ExternRef>;
 }
 
-/// A specific lazy instantiation of standard objects to use
-#[perfect_derive(Default)]
-pub(crate) struct StdObjectsGenerator<Ps: GenerationParameters> {
-    u32: std_tys::LazyTy<U32Gen>,
-    uvec3: std_tys::LazyTy<UVec3Gen>,
+generator_struct! {
+    pub(crate) struct StdObjectsGenerator<Ps: GenerationParameters>
+        => StdObjects
+    {
+        pub(crate) u32: U32Gen => naga::Handle<naga::Type>,
+        pub(crate) uvec3: UVec3Gen => naga::Handle<naga::Type>,
 
-    word_array_buffer_ty: std_tys::LazyTy<std_tys::WordArrayBufferGen>,
-    flags_buffer_ty: std_tys::LazyTy<std_tys::FlagsBufferGen>,
+        pub(crate) word_array_buffer_ty: std_tys::WordArrayBufferGen => naga::Handle<naga::Type>,
+        pub(crate) flags_buffer_ty: std_tys::FlagsBufferGen => naga::Handle<naga::Type>,
 
-    i32: TyInstanceGenerator<i32, Ps::I32>,
-    i64: TyInstanceGenerator<i64, Ps::I64>,
-    f32: TyInstanceGenerator<f32, Ps::F32>,
-    f64: TyInstanceGenerator<f64, Ps::F64>,
-    v128: TyInstanceGenerator<V128, Ps::V128>,
-    func_ref: TyInstanceGenerator<FuncRef, Ps::FuncRef>,
-    extern_ref: TyInstanceGenerator<ExternRef, Ps::ExternRef>,
+        pub(crate) trap_fn: std_fns::BufferFn<flags::TrapFnGen, FromFlagsBuffer> => naga::Handle<naga::Function>,
 
-    bindings: StdBindingsGenerator,
+        pub(crate) trap_values: TrapConstantsGen => HashMap<Option<Trap>, naga::Handle<naga::Constant>>,
+
+        pub(crate) i32: wasm_tys::NumericTyInstanceGenerator<i32, Ps::I32> => wasm_tys::NumericTyInstance<i32>,
+        pub(crate) i64: wasm_tys::NumericTyInstanceGenerator<i64, Ps::I64> => wasm_tys::NumericTyInstance<i64>,
+        pub(crate) f32: wasm_tys::NumericTyInstanceGenerator<f32, Ps::F32> => wasm_tys::NumericTyInstance<f32>,
+        pub(crate) f64: wasm_tys::NumericTyInstanceGenerator<f64, Ps::F64> => wasm_tys::NumericTyInstance<f64>,
+        pub(crate) v128: wasm_tys::WasmTyInstanceGenerator<V128, Ps::V128> => wasm_tys::WasmTyInstance<V128>,
+        pub(crate) func_ref: wasm_tys::WasmTyInstanceGenerator<FuncRef, Ps::FuncRef> => wasm_tys::WasmTyInstance<FuncRef>,
+        pub(crate) extern_ref: wasm_tys::WasmTyInstanceGenerator<ExternRef, Ps::ExternRef> => wasm_tys::WasmTyInstance<ExternRef>,
+
+        pub(crate) bindings: StdBindingsGenerator => StdBindings,
+    }
+
+    impl<Ps: GenerationParameters> Generator for StdObjectsGenerator<Ps> {
+        type Generated = StdObjects;
+
+        ...
+    }
 }
 
 impl<Ps: GenerationParameters> StdObjectsGenerator<Ps> {
     fn gen(&self, module: &mut naga::Module) -> build::Result<StdObjects> {
-        let u32 = self.u32.gen(module, self)?;
-        let uvec3 = self.uvec3.gen(module, self)?;
-
-        let word_array_buffer_ty = self.word_array_buffer_ty.gen(module, self)?;
-        let flags_buffer_ty = self.flags_buffer_ty.gen(module, self)?;
-
-        let i32 = self.i32.gen(module, self)?;
-        let i64 = self.i64.gen(module, self)?;
-        let f32 = self.f32.gen(module, self)?;
-        let f64 = self.f64.gen(module, self)?;
-        let v128 = self.v128.gen(module, self)?;
-        let func_ref = self.func_ref.gen(module, self)?;
-        let extern_ref = self.extern_ref.gen(module, self)?;
-
-        let bindings = self.bindings.gen(module, self)?;
-
-        Ok(StdObjects {
-            u32,
-            uvec3,
-            word_array_buffer_ty,
-            flags_buffer_ty,
-            i32,
-            i64,
-            f32,
-            f64,
-            v128,
-            func_ref,
-            extern_ref,
-            bindings,
-        })
+        <Self as Generator>::gen(&self, module, &self)
     }
 }
 
-pub(crate) struct StdObjects {
-    pub(crate) u32: naga::Handle<naga::Type>,
-    pub(crate) uvec3: naga::Handle<naga::Type>,
-
-    pub(crate) word_array_buffer_ty: naga::Handle<naga::Type>,
-    pub(crate) flags_buffer_ty: naga::Handle<naga::Type>,
-
-    pub(crate) i32: TyInstance<i32>,
-    pub(crate) i64: TyInstance<i64>,
-    pub(crate) f32: TyInstance<f32>,
-    pub(crate) f64: TyInstance<f64>,
-    pub(crate) v128: TyInstance<V128>,
-    pub(crate) func_ref: TyInstance<FuncRef>,
-    pub(crate) extern_ref: TyInstance<ExternRef>,
-
-    pub(crate) bindings: StdBindings,
+macro_rules! extract_type_field {
+    ($self:ident, $val_ty:ident => element.$($field_accessor:tt)*) => {
+        match $val_ty {
+            ValType::I32 => $self.i32.base.$($field_accessor)*,
+            ValType::I64 => $self.i64.base.$($field_accessor)*,
+            ValType::F32 => $self.f32.base.$($field_accessor)*,
+            ValType::F64 => $self.f64.base.$($field_accessor)*,
+            ValType::V128 => $self.v128.$($field_accessor)*,
+            ValType::FuncRef => $self.func_ref.$($field_accessor)*,
+            ValType::ExternRef => $self.extern_ref.$($field_accessor)*,
+        }
+    };
 }
 
 impl StdObjects {
@@ -201,41 +239,25 @@ impl StdObjects {
 
     /// Get's a WASM val type's naga type
     pub(crate) fn get_val_type(&self, val_ty: ValType) -> naga::Handle<naga::Type> {
-        match val_ty {
-            ValType::I32 => self.i32.ty,
-            ValType::I64 => self.i64.ty,
-            ValType::F32 => self.f32.ty,
-            ValType::F64 => self.f64.ty,
-            ValType::V128 => self.v128.ty,
-            ValType::FuncRef => self.func_ref.ty,
-            ValType::ExternRef => self.extern_ref.ty,
-        }
+        extract_type_field!(self, val_ty => element.ty)
     }
 
     /// Get's a WASM val type's naga type
     pub(crate) fn get_val_size_bytes(&self, val_ty: ValType) -> u32 {
-        match val_ty {
-            ValType::I32 => self.i32.size_bytes,
-            ValType::I64 => self.i64.size_bytes,
-            ValType::F32 => self.f32.size_bytes,
-            ValType::F64 => self.f64.size_bytes,
-            ValType::V128 => self.v128.size_bytes,
-            ValType::FuncRef => self.func_ref.size_bytes,
-            ValType::ExternRef => self.extern_ref.size_bytes,
-        }
+        extract_type_field!(self, val_ty => element.size_bytes)
     }
 
     /// Makes a new constant from the value
-    pub(crate) fn make_constant(
+    pub(crate) fn make_wasm_constant(
         &self,
         module: &mut naga::Module,
         value: Val,
     ) -> build::Result<naga::Handle<naga::Constant>> {
         match value {
-            Val::I32(value) => (self.i32.make_const)(module, self, value),
-            Val::I64(value) => (self.i64.make_const)(module, self, value),
-            Val::F32(value) => (self.f32.make_const)(module, self, value),
-            Val::F64(value) => (self.f64.make_const)(module, self, value),
+            Val::I32(value) => (self.i32.base.make_const)(module, self, value),
+            Val::I64(value) => (self.i64.base.make_const)(module, self, value),
+            Val::F32(value) => (self.f32.base.make_const)(module, self, value),
+            Val::F64(value) => (self.f64.base.make_const)(module, self, value),
             Val::V128(value) => (self.v128.make_const)(module, self, value),
             Val::FuncRef(value) => (self.func_ref.make_const)(module, self, value),
             Val::ExternRef(value) => (self.extern_ref.make_const)(module, self, value),
@@ -243,39 +265,23 @@ impl StdObjects {
     }
 
     pub(crate) fn get_default_value(&self, val_ty: ValType) -> naga::Handle<naga::Constant> {
-        match val_ty {
-            ValType::I32 => self.i32.default,
-            ValType::I64 => self.i64.default,
-            ValType::F32 => self.f32.default,
-            ValType::F64 => self.f64.default,
-            ValType::V128 => self.v128.default,
-            ValType::FuncRef => self.func_ref.default,
-            ValType::ExternRef => self.extern_ref.default,
-        }
+        extract_type_field!(self, val_ty => element.default)
     }
 
     pub(crate) fn get_read_input_fn(&self, val_ty: ValType) -> naga::Handle<naga::Function> {
-        match val_ty {
-            ValType::I32 => self.i32.read_input,
-            ValType::I64 => self.i64.read_input,
-            ValType::F32 => self.f32.read_input,
-            ValType::F64 => self.f64.read_input,
-            ValType::V128 => self.v128.read_input,
-            ValType::FuncRef => self.func_ref.read_input,
-            ValType::ExternRef => self.extern_ref.read_input,
-        }
+        extract_type_field!(self, val_ty => element.read_input)
     }
 
     pub(crate) fn get_write_output_fn(&self, val_ty: ValType) -> naga::Handle<naga::Function> {
-        match val_ty {
-            ValType::I32 => self.i32.write_output,
-            ValType::I64 => self.i64.write_output,
-            ValType::F32 => self.f32.write_output,
-            ValType::F64 => self.f64.write_output,
-            ValType::V128 => self.v128.write_output,
-            ValType::FuncRef => self.func_ref.write_output,
-            ValType::ExternRef => self.extern_ref.write_output,
-        }
+        extract_type_field!(self, val_ty => element.write_output)
+    }
+
+    pub(crate) fn get_read_memory_fn(&self, val_ty: ValType) -> naga::Handle<naga::Function> {
+        extract_type_field!(self, val_ty => element.read_memory)
+    }
+
+    pub(crate) fn get_write_memory_fn(&self, val_ty: ValType) -> naga::Handle<naga::Function> {
+        extract_type_field!(self, val_ty => element.write_memory)
     }
 }
 
