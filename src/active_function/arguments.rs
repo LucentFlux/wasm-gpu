@@ -166,7 +166,7 @@ pub(crate) struct UniversalArguments {
 
 impl UniversalArguments {
     pub(crate) fn append_to(function: &mut naga::Function, std_objects: &StdObjects) -> Self {
-        let invocation_id = FnArg::append_to(function, std_objects.u32);
+        let invocation_id = FnArg::append_to(function, std_objects.word);
 
         Self { invocation_id }
     }

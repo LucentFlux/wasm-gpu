@@ -1,9 +1,13 @@
+use std::sync::Arc;
+
 use crate::{
     build, declare_function,
     module_ext::{BlockExt, FunctionExt, ModuleExt},
     naga_expr,
-    std_objects::{std_fns::BufferFnGen, wasm_tys::WasmTyImpl, Generator, StdObjects},
+    std_objects::std_objects_gen,
 };
+
+use super::{i32_instance_gen, I32Gen};
 
 fn make_const_impl(module: &mut naga::Module, value: i32) -> naga::Handle<naga::Constant> {
     module.constants.append(
@@ -21,37 +25,11 @@ fn make_const_impl(module: &mut naga::Module, value: i32) -> naga::Handle<naga::
 
 /// An implementation of i32s using the GPU's native i32 type
 pub(crate) struct NativeI32;
-impl WasmTyImpl for NativeI32 {
-    type WasmTy = i32;
-
-    type TyGen = NativeI32TyGen;
-    type DefaultGen = NativeI32DefaultGen;
-    type ReadGen = NativeI32ReadGen;
-    type WriteGen = NativeI32WriteGen;
-
-    fn size_bytes() -> u32 {
-        4
-    }
-
-    fn make_const(
+impl I32Gen for NativeI32 {
+    fn gen_ty(
         module: &mut naga::Module,
-        _objects: &StdObjects,
-        value: Self::WasmTy,
-    ) -> build::Result<naga::Handle<naga::Constant>> {
-        Ok(make_const_impl(module, value))
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct NativeI32TyGen;
-impl Generator for NativeI32TyGen {
-    type Generated = naga::Handle<naga::Type>;
-
-    fn gen<Ps: crate::std_objects::GenerationParameters>(
-        &self,
-        module: &mut naga::Module,
-        _others: &crate::std_objects::StdObjectsGenerator<Ps>,
-    ) -> build::Result<Self::Generated> {
+        _others: super::i32_instance_gen::TyRequirements,
+    ) -> build::Result<super::i32_instance_gen::Ty> {
         let naga_ty = naga::Type {
             name: None,
             inner: naga::TypeInner::Scalar {
@@ -62,70 +40,139 @@ impl Generator for NativeI32TyGen {
 
         Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
-}
 
-#[derive(Default)]
-pub(crate) struct NativeI32DefaultGen;
-impl Generator for NativeI32DefaultGen {
-    type Generated = naga::Handle<naga::Constant>;
-
-    fn gen<Ps: crate::std_objects::GenerationParameters>(
-        &self,
+    fn gen_default(
         module: &mut naga::Module,
-        _others: &crate::std_objects::StdObjectsGenerator<Ps>,
-    ) -> build::Result<Self::Generated> {
+        _others: super::i32_instance_gen::DefaultRequirements,
+    ) -> build::Result<super::i32_instance_gen::Default> {
         Ok(make_const_impl(module, 0))
+    }
+
+    fn gen_size_bytes(
+        _module: &mut naga::Module,
+        _others: super::i32_instance_gen::SizeBytesRequirements,
+    ) -> build::Result<super::i32_instance_gen::SizeBytes> {
+        Ok(4)
+    }
+
+    fn gen_make_const(
+        _module: &mut naga::Module,
+        _others: super::i32_instance_gen::MakeConstRequirements,
+    ) -> build::Result<super::i32_instance_gen::MakeConst> {
+        Ok(Arc::new(Box::new(|module, _, value| {
+            Ok(make_const_impl(module, value))
+        })))
+    }
+
+    fn gen_read_input(
+        module: &mut naga::Module,
+        others: super::i32_instance_gen::ReadInputRequirements,
+    ) -> build::Result<super::i32_instance_gen::ReadInput> {
+        gen_read(
+            module,
+            others.word,
+            others.ty,
+            others.bindings.input,
+            "input",
+        )
+    }
+
+    fn gen_write_output(
+        module: &mut naga::Module,
+        others: super::i32_instance_gen::WriteOutputRequirements,
+    ) -> build::Result<super::i32_instance_gen::WriteOutput> {
+        gen_write(
+            module,
+            others.word,
+            others.ty,
+            others.bindings.output,
+            "output",
+        )
+    }
+
+    fn gen_read_memory(
+        module: &mut naga::Module,
+        others: super::i32_instance_gen::ReadMemoryRequirements,
+    ) -> build::Result<super::i32_instance_gen::ReadMemory> {
+        gen_read(
+            module,
+            others.word,
+            others.ty,
+            others.bindings.memory,
+            "memory",
+        )
+    }
+
+    fn gen_write_memory(
+        module: &mut naga::Module,
+        others: super::i32_instance_gen::WriteMemoryRequirements,
+    ) -> build::Result<super::i32_instance_gen::WriteMemory> {
+        gen_write(
+            module,
+            others.word,
+            others.ty,
+            others.bindings.memory,
+            "memory",
+        )
+    }
+
+    fn gen_add(
+        module: &mut naga::Module,
+        others: super::i32_instance_gen::AddRequirements,
+    ) -> build::Result<super::i32_instance_gen::Add> {
+        let (function_handle, lhs, rhs) = declare_function! {
+            module => fn i32_add(lhs: others.ty, rhs: others.ty) -> others.ty
+        };
+
+        let res = naga_expr!(module, function_handle => lhs + rhs);
+        module.fn_mut(function_handle).body.push_return(res);
+
+        Ok(function_handle)
     }
 }
 
 // fn<buffer>(word_address: u32) -> i32
-pub(crate) struct NativeI32ReadGen;
-impl BufferFnGen for NativeI32ReadGen {
-    fn gen<Ps: crate::std_objects::GenerationParameters>(
-        module: &mut naga::Module,
-        others: &crate::std_objects::StdObjectsGenerator<Ps>,
-        buffer: naga::Handle<naga::GlobalVariable>,
-    ) -> build::Result<naga::Handle<naga::Function>> {
-        let address_ty = others.u32.gen(module, others)?;
-        let i32_ty = others.i32.base.ty.gen(module, others)?;
+fn gen_read(
+    module: &mut naga::Module,
+    address_ty: std_objects_gen::Word,
+    i32_ty: i32_instance_gen::Ty,
+    buffer: naga::Handle<naga::GlobalVariable>,
+    buffer_name: &str,
+) -> build::Result<naga::Handle<naga::Function>> {
+    let fn_name = format!("read_i32_from_{}", buffer_name);
+    let (function_handle, word_address) = declare_function! {
+        module => fn {fn_name}(word_address: address_ty) -> i32_ty
+    };
 
-        let (function_handle, word_address) = declare_function! {
-            module => fn read_i32(word_address: address_ty) -> i32_ty
-        };
+    let input_ref = module.fn_mut(function_handle).append_global(buffer);
 
-        let input_ref = module.fn_mut(function_handle).append_global(buffer);
+    let read_word = naga_expr!(module, function_handle => input_ref[word_address]);
+    let read_value = naga_expr!(module, function_handle => Load(read_word) as Sint);
+    module.fn_mut(function_handle).body.push_return(read_value);
 
-        let read_word = naga_expr!(module, function_handle => input_ref[word_address]);
-        let read_value = naga_expr!(module, function_handle => Load(read_word) as Sint);
-        module.fn_mut(function_handle).body.push_return(read_value);
-
-        Ok(function_handle)
-    }
+    Ok(function_handle)
 }
 
 // fn<buffer>(word_address: u32, value: i32)
-pub(crate) struct NativeI32WriteGen;
-impl BufferFnGen for NativeI32WriteGen {
-    fn gen<Ps: crate::std_objects::GenerationParameters>(
-        module: &mut naga::Module,
-        others: &crate::std_objects::StdObjectsGenerator<Ps>,
-        buffer: naga::Handle<naga::GlobalVariable>,
-    ) -> build::Result<naga::Handle<naga::Function>> {
-        let address_ty = others.u32.gen(module, others)?;
-        let i32_ty = others.i32.base.ty.gen(module, others)?;
+fn gen_write(
+    module: &mut naga::Module,
+    address_ty: std_objects_gen::Word,
+    i32_ty: i32_instance_gen::Ty,
+    buffer: naga::Handle<naga::GlobalVariable>,
+    buffer_name: &str,
+) -> build::Result<naga::Handle<naga::Function>> {
+    let fn_name = format!("write_i32_to_{}", buffer_name);
+    let (function_handle, word_address, value) = declare_function! {
+        module => fn {fn_name}(word_address: address_ty, value: i32_ty)
+    };
 
-        let (function_handle, word_address, value) = declare_function! {
-            module => fn write_i32(word_address: address_ty, value: i32_ty)
-        };
+    let output_ref = module.fn_mut(function_handle).append_global(buffer);
+    let write_word_loc = naga_expr!(module, function_handle => output_ref[word_address]);
+    let word = naga_expr!(module, function_handle => value as Uint);
+    module
+        .fn_mut(function_handle)
+        .body
+        .push_store(write_word_loc, word);
 
-        let output_ref = module.fn_mut(function_handle).append_global(buffer);
-        let write_word_loc = naga_expr!(module, function_handle => output_ref[word_address]);
-        let word = naga_expr!(module, function_handle => value as Uint);
-        module
-            .fn_mut(function_handle)
-            .body
-            .push_store(write_word_loc, word);
-
-        Ok(function_handle)
-    }
+    Ok(function_handle)
 }

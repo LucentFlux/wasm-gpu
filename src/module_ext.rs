@@ -232,7 +232,7 @@ macro_rules! declare_function {
     (@match_fn_name {$fn_name_var:expr}) => {$fn_name_var.to_owned()};
     (@match_fn_name $fn_name:tt) => {stringify!{$fn_name}.to_owned()};
 
-    ($module:expr => fn $fn_name:tt ( $($arg_name:ident : $arg_ty:tt),* $(,)? ) $(-> $ret_ty:tt)?) => {{
+    ($module:expr => fn $fn_name:tt ( $($arg_name:ident : $arg_ty:expr),* $(,)? ) $(-> $ret_ty:expr)?) => {{
         #[allow(unused_mut)]
         #[allow(unused_assignments)]
         let mut result = None;
@@ -276,6 +276,7 @@ macro_rules! naga_expr {
         #[allow(unused)]
         let constants = &mut $module.constants;
         let expressions = &mut function.expressions;
+        #[allow(unused)]
         let block = &mut function.body;
         $crate::naga_expr!(@inner constants, expressions, block => $($expression)*)
     }};
@@ -327,6 +328,30 @@ macro_rules! naga_expr {
         let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
         let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
         let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Divide, left, right }, naga::Span::UNDEFINED);
+        $crate::naga_expr!(@emit $block => handle)
+    }};
+    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt > $($rhs:tt)*) => {{
+        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
+        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
+        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Greater, left, right }, naga::Span::UNDEFINED);
+        $crate::naga_expr!(@emit $block => handle)
+    }};
+    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt >= $($rhs:tt)*) => {{
+        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
+        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
+        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::GreaterEqual, left, right }, naga::Span::UNDEFINED);
+        $crate::naga_expr!(@emit $block => handle)
+    }};
+    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt < $($rhs:tt)*) => {{
+        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
+        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
+        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Less, left, right }, naga::Span::UNDEFINED);
+        $crate::naga_expr!(@emit $block => handle)
+    }};
+    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt <= $($rhs:tt)*) => {{
+        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
+        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
+        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::LessEqual, left, right }, naga::Span::UNDEFINED);
         $crate::naga_expr!(@emit $block => handle)
     }};
 

@@ -1,11 +1,15 @@
+use std::sync::Arc;
+
 use wasm_types::ExternRef;
 
 use crate::{
     build, declare_function,
     module_ext::{BlockExt, FunctionExt, ModuleExt},
     naga_expr,
-    std_objects::{std_fns::BufferFnGen, wasm_tys::WasmTyImpl, Generator, StdObjects},
+    std_objects::std_objects_gen,
 };
+
+use super::{extern_ref_instance_gen, ExternRefGen};
 
 fn make_const_impl(module: &mut naga::Module, value: ExternRef) -> naga::Handle<naga::Constant> {
     module.constants.append(
@@ -23,37 +27,11 @@ fn make_const_impl(module: &mut naga::Module, value: ExternRef) -> naga::Handle<
 
 /// An implementation of ExternRefs using the GPU's native u32 type
 pub(crate) struct PolyfillExternRef;
-impl WasmTyImpl for PolyfillExternRef {
-    type WasmTy = ExternRef;
-
-    type TyGen = PolyfillExternRefTyGen;
-    type DefaultGen = PolyfillExternRefDefaultGen;
-    type ReadGen = PolyfillExternRefReadGen;
-    type WriteGen = PolyfillExternRefWriteGen;
-
-    fn size_bytes() -> u32 {
-        4
-    }
-
-    fn make_const(
+impl ExternRefGen for PolyfillExternRef {
+    fn gen_ty(
         module: &mut naga::Module,
-        _objects: &StdObjects,
-        value: Self::WasmTy,
-    ) -> build::Result<naga::Handle<naga::Constant>> {
-        Ok(make_const_impl(module, value))
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct PolyfillExternRefTyGen;
-impl Generator for PolyfillExternRefTyGen {
-    type Generated = naga::Handle<naga::Type>;
-
-    fn gen<Ps: crate::std_objects::GenerationParameters>(
-        &self,
-        module: &mut naga::Module,
-        _others: &crate::std_objects::StdObjectsGenerator<Ps>,
-    ) -> build::Result<naga::Handle<naga::Type>> {
+        _others: super::extern_ref_instance_gen::TyRequirements,
+    ) -> build::Result<super::extern_ref_instance_gen::Ty> {
         let naga_ty = naga::Type {
             name: Some("ExternRef".to_owned()),
             inner: naga::TypeInner::Scalar {
@@ -64,69 +42,124 @@ impl Generator for PolyfillExternRefTyGen {
 
         Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
-}
 
-#[derive(Default)]
-pub(crate) struct PolyfillExternRefDefaultGen;
-impl Generator for PolyfillExternRefDefaultGen {
-    type Generated = naga::Handle<naga::Constant>;
-
-    fn gen<Ps: crate::std_objects::GenerationParameters>(
-        &self,
+    fn gen_default(
         module: &mut naga::Module,
-        _others: &crate::std_objects::StdObjectsGenerator<Ps>,
-    ) -> build::Result<Self::Generated> {
+        _others: super::extern_ref_instance_gen::DefaultRequirements,
+    ) -> build::Result<super::extern_ref_instance_gen::Default> {
         Ok(make_const_impl(module, ExternRef::none()))
+    }
+
+    fn gen_size_bytes(
+        _module: &mut naga::Module,
+        _others: super::extern_ref_instance_gen::SizeBytesRequirements,
+    ) -> build::Result<super::extern_ref_instance_gen::SizeBytes> {
+        Ok(4)
+    }
+
+    fn gen_make_const(
+        _module: &mut naga::Module,
+        _others: super::extern_ref_instance_gen::MakeConstRequirements,
+    ) -> build::Result<super::extern_ref_instance_gen::MakeConst> {
+        Ok(Arc::new(Box::new(|module, _, value| {
+            Ok(make_const_impl(module, value))
+        })))
+    }
+
+    fn gen_read_input(
+        module: &mut naga::Module,
+        others: super::extern_ref_instance_gen::ReadInputRequirements,
+    ) -> build::Result<super::extern_ref_instance_gen::ReadInput> {
+        gen_read(
+            module,
+            others.word,
+            others.ty,
+            others.bindings.input,
+            "input",
+        )
+    }
+
+    fn gen_write_output(
+        module: &mut naga::Module,
+        others: super::extern_ref_instance_gen::WriteOutputRequirements,
+    ) -> build::Result<super::extern_ref_instance_gen::WriteOutput> {
+        gen_write(
+            module,
+            others.word,
+            others.ty,
+            others.bindings.output,
+            "output",
+        )
+    }
+
+    fn gen_read_memory(
+        module: &mut naga::Module,
+        others: super::extern_ref_instance_gen::ReadMemoryRequirements,
+    ) -> build::Result<super::extern_ref_instance_gen::ReadMemory> {
+        gen_read(
+            module,
+            others.word,
+            others.ty,
+            others.bindings.memory,
+            "memory",
+        )
+    }
+
+    fn gen_write_memory(
+        module: &mut naga::Module,
+        others: super::extern_ref_instance_gen::WriteMemoryRequirements,
+    ) -> build::Result<super::extern_ref_instance_gen::WriteMemory> {
+        gen_write(
+            module,
+            others.word,
+            others.ty,
+            others.bindings.memory,
+            "memory",
+        )
     }
 }
 
 // fn<buffer>(word_address: u32) -> extern_ref
-pub(crate) struct PolyfillExternRefReadGen;
-impl BufferFnGen for PolyfillExternRefReadGen {
-    fn gen<Ps: crate::std_objects::GenerationParameters>(
-        module: &mut naga::Module,
-        others: &crate::std_objects::StdObjectsGenerator<Ps>,
-        buffer: naga::Handle<naga::GlobalVariable>,
-    ) -> build::Result<naga::Handle<naga::Function>> {
-        let address_ty = others.u32.gen(module, others)?;
-        let extern_ref_ty = others.extern_ref.ty.gen(module, others)?;
+fn gen_read(
+    module: &mut naga::Module,
+    address_ty: std_objects_gen::Word,
+    extern_ref_ty: extern_ref_instance_gen::Ty,
+    buffer: naga::Handle<naga::GlobalVariable>,
+    buffer_name: &str,
+) -> build::Result<naga::Handle<naga::Function>> {
+    let fn_name = format!("read_extern_ref_from_{}", buffer_name);
+    let (function_handle, word_address) = declare_function! {
+        module => fn {fn_name}(word_address: address_ty) -> extern_ref_ty
+    };
 
-        let (function_handle, word_address) = declare_function! {
-            module => fn read_extern_ref(word_address: address_ty) -> extern_ref_ty
-        };
+    let input_ref = module.fn_mut(function_handle).append_global(buffer);
 
-        let input_ref = module.fn_mut(function_handle).append_global(buffer);
+    let read_value = naga_expr!(module, function_handle => Load(input_ref[word_address]));
+    module.fn_mut(function_handle).body.push_return(read_value);
 
-        let read_value = naga_expr!(module, function_handle => Load(input_ref[word_address]));
-        module.fn_mut(function_handle).body.push_return(read_value);
-
-        Ok(function_handle)
-    }
+    Ok(function_handle)
 }
 
 // fn<buffer>(word_address: u32, value: extern_ref)
-pub(crate) struct PolyfillExternRefWriteGen;
-impl BufferFnGen for PolyfillExternRefWriteGen {
-    fn gen<Ps: crate::std_objects::GenerationParameters>(
-        module: &mut naga::Module,
-        others: &crate::std_objects::StdObjectsGenerator<Ps>,
-        buffer: naga::Handle<naga::GlobalVariable>,
-    ) -> build::Result<naga::Handle<naga::Function>> {
-        let address_ty = others.u32.gen(module, others)?;
-        let extern_ref_ty = others.extern_ref.ty.gen(module, others)?;
+fn gen_write(
+    module: &mut naga::Module,
+    address_ty: std_objects_gen::Word,
+    extern_ref_ty: extern_ref_instance_gen::Ty,
+    buffer: naga::Handle<naga::GlobalVariable>,
+    buffer_name: &str,
+) -> build::Result<naga::Handle<naga::Function>> {
+    let fn_name = format!("write_extern_ref_to_{}", buffer_name);
+    let (function_handle, word_address, value) = declare_function! {
+        module => fn {fn_name}(word_address: address_ty, value: extern_ref_ty)
+    };
 
-        let (function_handle, word_address, value) = declare_function! {
-            module => fn write_extern_ref(word_address: address_ty, value: extern_ref_ty)
-        };
+    let output_ref = module.fn_mut(function_handle).append_global(buffer);
+    let write_word_loc = naga_expr!(module, function_handle => output_ref[word_address]);
+    let word = naga_expr!(module, function_handle => value as Uint);
+    module
+        .fn_mut(function_handle)
+        .body
+        .push_store(write_word_loc, word);
 
-        let output_ref = module.fn_mut(function_handle).append_global(buffer);
-        let write_word_loc = naga_expr!(module, function_handle => output_ref[word_address]);
-        let word = naga_expr!(module, function_handle => value as Uint);
-        module
-            .fn_mut(function_handle)
-            .body
-            .push_store(write_word_loc, word);
-
-        Ok(function_handle)
-    }
+    Ok(function_handle)
 }

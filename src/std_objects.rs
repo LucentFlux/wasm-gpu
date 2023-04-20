@@ -1,31 +1,17 @@
+mod bindings;
 mod flags;
-mod std_consts;
-mod std_fns;
-mod std_globals;
-mod std_tys;
 mod wasm_tys;
 
-use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::ops::Deref;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::{collections::HashMap, marker::PhantomData};
 
-use once_cell::unsync::OnceCell;
-use wasm_types::{ExternRef, FuncRef, Val, WasmTyVal, V128};
+use wasm_types::Val;
 use wasmparser::ValType;
 use wasmtime_environ::Trap;
 
-use crate::std_objects::std_tys::TyGen;
-use crate::{build, Tuneables};
+use crate::{build, Tuneables, FLAGS_LEN_BYTES, TRAP_FLAG_INDEX};
 
-use self::flags::TrapConstantsGen;
-use self::std_fns::FromFlagsBuffer;
 use self::{
-    std_consts::ConstGen,
-    std_fns::{BufferFnGen, FromInputBuffer, FromMemoryBuffer, FromOutputBuffer},
-    std_globals::{StdBindings, StdBindingsGenerator},
-    std_tys::{U32Gen, UVec3Gen},
+    bindings::StdBindings,
     wasm_tys::{
         native_f32::NativeF32, native_i32::NativeI32, pollyfill_extern_ref::PolyfillExternRef,
         pollyfill_func_ref::PolyfillFuncRef, polyfill_f64::PolyfillF64, polyfill_i64::PolyfillI64,
@@ -33,127 +19,123 @@ use self::{
     },
 };
 
-/// Something that can take the set of standard objects to be inserted into a module, and which will insert
-/// itself into said module. This allows a runtime-traversal of the instantiation DAG.
-///
-/// This whole trait setup may seem excessive, but in essence it provides separation between every standard
-/// object, allowing the set of standard objects in a wasm shader to be extended and modified without having to
-/// worry about the order in which objects must be instantiated. An optimising compiler will remove nearly all of
-/// this type bloat and produce the monofunction that we would have hand-written ourselves, but which would be
-/// completely unmaintainable.
-pub(crate) trait Generator: Default {
-    type Generated: Clone;
-
-    fn gen<Ps: GenerationParameters>(
-        &self,
-        module: &mut naga::Module,
-        others: &StdObjectsGenerator<Ps>,
-    ) -> build::Result<Self::Generated>;
-}
-
-/// Sometimes during development we may have multiple dependents (DAG rather than a tree), or we may
-/// accidentally create a cyclic initialisation graph. Placing a generator in this struct solves both of
-/// these issues by lazily only evaluating a node once, and panicking if, while generating the object, the
-/// method is re-entered.
-#[perfect_derive::perfect_derive(Default)]
-struct LazyGenerator<I: Generator> {
-    inner: I,
-    generating: AtomicBool,
-    result: OnceCell<build::Result<I::Generated>>,
-}
-
-impl<I: Generator> Generator for LazyGenerator<I> {
-    type Generated = I::Generated;
-
-    fn gen<Ps: GenerationParameters>(
-        &self,
-        module: &mut naga::Module,
-        others: &StdObjectsGenerator<Ps>,
-    ) -> build::Result<Self::Generated> {
-        self.result
-            .get_or_init(|| {
-                if self
-                    .generating
-                    .fetch_or(true, std::sync::atomic::Ordering::AcqRel)
-                {
-                    panic!("loop detected in std objects when generating type")
-                }
-                self.inner.gen(module, others)
-                // No need to clear self.generating since we generate once
-            })
-            .clone()
-    }
-}
-
-impl<I: Generator> Deref for LazyGenerator<I> {
-    type Target = I;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
+/// Produces a struct of generated things within a module, which may each reference previously generated things
+/// (using closure syntax) when being generated, as well as a trait that can be implemented to generate each of the
+/// subsequent parts of the self-referential struct. Note that we mean self-referential in the Naga way, not the
+/// traditional rust way - that is, we use the handles to objects within the module to generate other objects.
 macro_rules! generator_struct {
     (
-        $vis:vis struct $generator_name:ident $(<$($generator_generic:ident : $generator_generic_ty:path),* $(,)?>)?
-            => $generated_name:ident $(<$($generated_generic:ident : $generated_generic_ty:path),* $(,)?>)?
+        $vis:vis struct $generated_name:ident $(<$($generated_generic:ident : $generated_generic_ty:path),* $(,)?>)?
+            $( ( $($parameter:ident: $param_ty:ty),* $(,)? ) )? // Parameters to the whole struct generation
         {
             $(
-                $field_vis:vis $field:ident : $generator:ty => $generated:ty
+                $field:ident : $(|$($requirement:ident),* $(,)?|)? $generated:ty
             ),* $(,)?
-        }
-
-        impl $(<$($generator_impl_generic:ident : $generator_impl_generic_ty:path),* $(,)?>)? Generator for $generator_name_2:ident $(<$($generator_generic_param:ident),* $(,)?>)? {
-            type Generated = $generated_name_2:ty;
-
-            ...
-        }
+        } with $trait_vis:vis trait $trait_name:ident;
     ) => {
-        $vis struct $generator_name $(<$($generator_generic: $generator_generic_ty),*>)* {
-            $(
-                $field: crate::std_objects::LazyGenerator<$generator>
-            ),*
-        }
+        paste::paste!{
+            mod [< $generated_name:snake _gen >] {
+                use super::*;
 
-        #[perfect_derive::perfect_derive(Clone)]
-        $vis struct $generated_name $(<$($generated_generic: $generated_generic_ty),*>)* {
-            $(
-                $field_vis $field: $generated
-            ),*
-        }
+                $($(
+                    pub(crate) type [< $parameter:camel >] = $param_ty;
+                )*)*
 
-        impl $(<$($generator_impl_generic: $generator_impl_generic_ty),*>)? Default for $generator_name_2 $(<$($generator_generic_param),*>)? {
-            fn default() -> Self {
-                Self {
-                    $(
-                        $field: <crate::std_objects::LazyGenerator<$generator>>::default()
-                    ),*
-                }
-            }
-        }
-
-        impl $(<$($generator_impl_generic: $generator_impl_generic_ty),*>)? Generator for $generator_name_2 $(<$($generator_generic_param),*>)? {
-            type Generated = $generated_name_2;
-
-            fn gen<InnerPs: crate::std_objects::GenerationParameters>(
-                &self,
-                module: &mut naga::Module,
-                others: &crate::std_objects::StdObjectsGenerator<InnerPs>,
-            ) -> build::Result<Self::Generated> {
                 $(
-                    let $field = self.$field.gen(module, others)?;
+                    pub(crate) type [< $field:camel >] = $generated;
+
+                    pub(crate) struct [< $field:camel Requirements >] {
+                        $( $(
+                            pub $requirement : [< $requirement:camel >],
+                        )* )*
+                    }
                 )*
 
-                Ok(Self::Generated {
+                // Bend hygine by using field names rather than variable identifiers - the hope is that
+                // the compiler removes all of the `unwrap`s involved in this method.
+                pub(super) struct [< Optional $generated_name >] $(<$($generated_generic: $generated_generic_ty),*>)* {
                     $(
-                        $field
-                    ),*
-                })
+                        pub(super) $field: Option<$generated>,
+                    )*
+                    $($(
+                        pub(super) $parameter: Option<$param_ty>,
+                    )*)*
+                }
+            }
+
+            #[perfect_derive::perfect_derive(Clone)]
+            $vis struct $generated_name $(<$($generated_generic: $generated_generic_ty),*>)* {
+                $(
+                    pub(crate) $field: $generated
+                ),*
+            }
+
+            $trait_vis trait $trait_name $(<$($generated_generic: $generated_generic_ty),*>)* {
+                $(
+                    fn [< gen_$field >](
+                        module: &mut naga::Module,
+                        others: [< $generated_name:snake _gen >]::[< $field:camel Requirements >]
+                    )
+                        -> build::Result<[< $generated_name:snake _gen >]::[< $field:camel >]>;
+                )*
+            }
+
+            impl $generated_name {
+                $trait_vis fn gen_from<T: $trait_name>(module: &mut naga::Module, $( $($parameter: $param_ty,)* )* ) -> build::Result<Self> {
+                    use [< $generated_name:snake _gen >]::*;
+
+                    let mut res = [< Optional $generated_name >] {
+                        $(
+                            $field: None,
+                        )*
+                        $($(
+                            $parameter: Some($parameter),
+                        )*)*
+                    };
+
+                    $(
+                        let params = [< $field:camel Requirements >] {
+                            $($($requirement: res.$requirement.unwrap(),)*)*
+                        };
+                        res.$field = Some(T::[< gen_$field >](module, params)?);
+                    )*
+
+                    Ok(Self { $(
+                        $field: res.$field.unwrap(),
+                    )* })
+                }
             }
         }
     };
 }
 use generator_struct;
+
+generator_struct! {
+    pub(crate) struct StdObjects
+    {
+        word: naga::Handle<naga::Type>,
+        word_max: naga::Handle<naga::Constant>, // Used for overflow calculations
+
+        uvec3: naga::Handle<naga::Type>,
+
+        word_array_buffer_ty: |word| naga::Handle<naga::Type>,
+        flags_ty: |word| naga::Handle<naga::Type>,
+        flags_array_buffer_ty: |flags_ty| naga::Handle<naga::Type>,
+
+        bindings: |word_array_buffer_ty, flags_array_buffer_ty| StdBindings,
+
+        trap_values: HashMap<Option<Trap>, naga::Handle<naga::Constant>>,
+        trap_fn: |word, bindings| naga::Handle<naga::Function>,
+
+        i32: |word, bindings, word_max| wasm_tys::I32Instance,
+        i64: |word, bindings, word_max| wasm_tys::I64Instance,
+        f32: |word, bindings, word_max| wasm_tys::F32Instance,
+        f64: |word, bindings, word_max| wasm_tys::F64Instance,
+        v128: |word, bindings, word_max| wasm_tys::V128Instance,
+        func_ref: |word, bindings, word_max| wasm_tys::FuncRefInstance,
+        extern_ref: |word, bindings, word_max| wasm_tys::ExternRefInstance,
+    } with trait GenStdObjects;
+}
 
 /// All swappable parts of module generation
 ///
@@ -162,60 +144,244 @@ use generator_struct;
 /// The alternative is to patten match on a set of configuration values every time we generate
 /// anything. This is clearly more foolproof.
 pub(crate) trait GenerationParameters {
-    type I32: wasm_tys::WasmNumericTyImpl<WasmTy = i32>;
-    type I64: wasm_tys::WasmNumericTyImpl<WasmTy = i64>;
-    type F32: wasm_tys::WasmNumericTyImpl<WasmTy = f32>;
-    type F64: wasm_tys::WasmNumericTyImpl<WasmTy = f64>;
-    type V128: wasm_tys::WasmTyImpl<WasmTy = V128>;
-    type FuncRef: wasm_tys::WasmTyImpl<WasmTy = FuncRef>;
-    type ExternRef: wasm_tys::WasmTyImpl<WasmTy = ExternRef>;
+    type I32: wasm_tys::I32Gen;
+    type I64: wasm_tys::I64Gen;
+    type F32: wasm_tys::F32Gen;
+    type F64: wasm_tys::F64Gen;
+    type V128: wasm_tys::V128Gen;
+    type FuncRef: wasm_tys::FuncRefGen;
+    type ExternRef: wasm_tys::ExternRefGen;
 }
 
-generator_struct! {
-    pub(crate) struct StdObjectsGenerator<Ps: GenerationParameters>
-        => StdObjects
-    {
-        pub(crate) u32: U32Gen => naga::Handle<naga::Type>,
-        pub(crate) uvec3: UVec3Gen => naga::Handle<naga::Type>,
+struct StdObjectsGenerator<Ps: GenerationParameters>(PhantomData<Ps>);
+impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
+    fn gen_word(
+        module: &mut naga::Module,
+        others: std_objects_gen::WordRequirements,
+    ) -> build::Result<std_objects_gen::Word> {
+        let naga_ty = naga::Type {
+            name: None,
+            inner: naga::TypeInner::Scalar {
+                kind: naga::ScalarKind::Uint,
+                width: 4,
+            },
+        };
 
-        pub(crate) word_array_buffer_ty: std_tys::WordArrayBufferGen => naga::Handle<naga::Type>,
-        pub(crate) flags_buffer_ty: std_tys::FlagsBufferGen => naga::Handle<naga::Type>,
-
-        pub(crate) trap_fn: std_fns::BufferFn<flags::TrapFnGen, FromFlagsBuffer> => naga::Handle<naga::Function>,
-
-        pub(crate) trap_values: TrapConstantsGen => HashMap<Option<Trap>, naga::Handle<naga::Constant>>,
-
-        pub(crate) i32: wasm_tys::NumericTyInstanceGenerator<i32, Ps::I32> => wasm_tys::NumericTyInstance<i32>,
-        pub(crate) i64: wasm_tys::NumericTyInstanceGenerator<i64, Ps::I64> => wasm_tys::NumericTyInstance<i64>,
-        pub(crate) f32: wasm_tys::NumericTyInstanceGenerator<f32, Ps::F32> => wasm_tys::NumericTyInstance<f32>,
-        pub(crate) f64: wasm_tys::NumericTyInstanceGenerator<f64, Ps::F64> => wasm_tys::NumericTyInstance<f64>,
-        pub(crate) v128: wasm_tys::WasmTyInstanceGenerator<V128, Ps::V128> => wasm_tys::WasmTyInstance<V128>,
-        pub(crate) func_ref: wasm_tys::WasmTyInstanceGenerator<FuncRef, Ps::FuncRef> => wasm_tys::WasmTyInstance<FuncRef>,
-        pub(crate) extern_ref: wasm_tys::WasmTyInstanceGenerator<ExternRef, Ps::ExternRef> => wasm_tys::WasmTyInstance<ExternRef>,
-
-        pub(crate) bindings: StdBindingsGenerator => StdBindings,
+        Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
 
-    impl<Ps: GenerationParameters> Generator for StdObjectsGenerator<Ps> {
-        type Generated = StdObjects;
+    fn gen_uvec3(
+        module: &mut naga::Module,
+        others: std_objects_gen::Uvec3Requirements,
+    ) -> build::Result<std_objects_gen::Uvec3> {
+        let naga_ty = naga::Type {
+            name: None,
+            inner: naga::TypeInner::Vector {
+                size: naga::VectorSize::Tri,
+                kind: naga::ScalarKind::Uint,
+                width: 4,
+            },
+        };
 
-        ...
+        Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
-}
 
-impl<Ps: GenerationParameters> StdObjectsGenerator<Ps> {
-    fn gen(&self, module: &mut naga::Module) -> build::Result<StdObjects> {
-        <Self as Generator>::gen(&self, module, &self)
+    fn gen_word_array_buffer_ty(
+        module: &mut naga::Module,
+        others: std_objects_gen::WordArrayBufferTyRequirements,
+    ) -> build::Result<std_objects_gen::WordArrayBufferTy> {
+        let word_array_ty = module.types.insert(
+            naga::Type {
+                name: None,
+                inner: naga::TypeInner::Array {
+                    base: others.word,
+                    size: naga::ArraySize::Dynamic,
+                    stride: 4,
+                },
+            },
+            naga::Span::UNDEFINED,
+        );
+
+        Ok(word_array_ty)
+    }
+
+    fn gen_flags_ty(
+        module: &mut naga::Module,
+        others: std_objects_gen::FlagsTyRequirements,
+    ) -> build::Result<std_objects_gen::FlagsTy> {
+        let flag_members = vec![naga::StructMember {
+            name: Some("trap_flag".to_owned()),
+            ty: others.word,
+            binding: None,
+            offset: TRAP_FLAG_INDEX * 4,
+        }];
+        let flags_ty = module.types.insert(
+            naga::Type {
+                name: Some("wasm_flags".to_owned()),
+                inner: naga::TypeInner::Struct {
+                    span: u32::try_from(flag_members.len() * 4).expect("static size"),
+                    members: flag_members,
+                },
+            },
+            naga::Span::UNDEFINED,
+        );
+
+        Ok(flags_ty)
+    }
+
+    fn gen_flags_array_buffer_ty(
+        module: &mut naga::Module,
+        others: std_objects_gen::FlagsArrayBufferTyRequirements,
+    ) -> build::Result<std_objects_gen::FlagsArrayBufferTy> {
+        let flags_array_ty = module.types.insert(
+            naga::Type {
+                name: None,
+                inner: naga::TypeInner::Array {
+                    base: others.flags_ty,
+                    size: naga::ArraySize::Dynamic,
+                    stride: FLAGS_LEN_BYTES,
+                },
+            },
+            naga::Span::UNDEFINED,
+        );
+
+        Ok(flags_array_ty)
+    }
+
+    fn gen_bindings(
+        module: &mut naga::Module,
+        others: std_objects_gen::BindingsRequirements,
+    ) -> build::Result<std_objects_gen::Bindings> {
+        StdBindings::gen(
+            module,
+            others.word_array_buffer_ty,
+            others.flags_array_buffer_ty,
+        )
+    }
+
+    fn gen_trap_values(
+        module: &mut naga::Module,
+        _others: std_objects_gen::TrapValuesRequirements,
+    ) -> build::Result<std_objects_gen::TrapValues> {
+        flags::make_trap_constants::<Ps>(module)
+    }
+
+    fn gen_trap_fn(
+        module: &mut naga::Module,
+        others: std_objects_gen::TrapFnRequirements,
+    ) -> build::Result<std_objects_gen::TrapFn> {
+        flags::gen_trap_function::<Ps>(module, others.word, others.bindings.flags)
+    }
+
+    fn gen_i32(
+        module: &mut naga::Module,
+        others: std_objects_gen::I32Requirements,
+    ) -> build::Result<std_objects_gen::I32> {
+        std_objects_gen::I32::gen_from::<Ps::I32>(
+            module,
+            others.word,
+            others.bindings,
+            others.word_max,
+        )
+    }
+
+    fn gen_i64(
+        module: &mut naga::Module,
+        others: std_objects_gen::I64Requirements,
+    ) -> build::Result<std_objects_gen::I64> {
+        std_objects_gen::I64::gen_from::<Ps::I64>(
+            module,
+            others.word,
+            others.bindings,
+            others.word_max,
+        )
+    }
+
+    fn gen_f32(
+        module: &mut naga::Module,
+        others: std_objects_gen::F32Requirements,
+    ) -> build::Result<std_objects_gen::F32> {
+        std_objects_gen::F32::gen_from::<Ps::F32>(
+            module,
+            others.word,
+            others.bindings,
+            others.word_max,
+        )
+    }
+
+    fn gen_f64(
+        module: &mut naga::Module,
+        others: std_objects_gen::F64Requirements,
+    ) -> build::Result<std_objects_gen::F64> {
+        std_objects_gen::F64::gen_from::<Ps::F64>(
+            module,
+            others.word,
+            others.bindings,
+            others.word_max,
+        )
+    }
+
+    fn gen_v128(
+        module: &mut naga::Module,
+        others: std_objects_gen::V128Requirements,
+    ) -> build::Result<std_objects_gen::V128> {
+        std_objects_gen::V128::gen_from::<Ps::V128>(
+            module,
+            others.word,
+            others.bindings,
+            others.word_max,
+        )
+    }
+
+    fn gen_func_ref(
+        module: &mut naga::Module,
+        others: std_objects_gen::FuncRefRequirements,
+    ) -> build::Result<std_objects_gen::FuncRef> {
+        std_objects_gen::FuncRef::gen_from::<Ps::FuncRef>(
+            module,
+            others.word,
+            others.bindings,
+            others.word_max,
+        )
+    }
+
+    fn gen_extern_ref(
+        module: &mut naga::Module,
+        others: std_objects_gen::ExternRefRequirements,
+    ) -> build::Result<std_objects_gen::ExternRef> {
+        std_objects_gen::ExternRef::gen_from::<Ps::ExternRef>(
+            module,
+            others.word,
+            others.bindings,
+            others.word_max,
+        )
+    }
+
+    fn gen_word_max(
+        module: &mut naga::Module,
+        _others: std_objects_gen::WordMaxRequirements,
+    ) -> build::Result<std_objects_gen::WordMax> {
+        Ok(module.constants.append(
+            naga::Constant {
+                name: Some("MAX_WORD".to_owned()),
+                specialization: None,
+                inner: naga::ConstantInner::Scalar {
+                    width: 4,
+                    value: naga::ScalarValue::Uint(u32::MAX as u64),
+                },
+            },
+            naga::Span::UNDEFINED,
+        ))
     }
 }
 
 macro_rules! extract_type_field {
     ($self:ident, $val_ty:ident => element.$($field_accessor:tt)*) => {
         match $val_ty {
-            ValType::I32 => $self.i32.base.$($field_accessor)*,
-            ValType::I64 => $self.i64.base.$($field_accessor)*,
-            ValType::F32 => $self.f32.base.$($field_accessor)*,
-            ValType::F64 => $self.f64.base.$($field_accessor)*,
+            ValType::I32 => $self.i32.$($field_accessor)*,
+            ValType::I64 => $self.i64.$($field_accessor)*,
+            ValType::F32 => $self.f32.$($field_accessor)*,
+            ValType::F64 => $self.f64.$($field_accessor)*,
             ValType::V128 => $self.v128.$($field_accessor)*,
             ValType::FuncRef => $self.func_ref.$($field_accessor)*,
             ValType::ExternRef => $self.extern_ref.$($field_accessor)*,
@@ -225,8 +391,7 @@ macro_rules! extract_type_field {
 
 impl StdObjects {
     pub(crate) fn new<Ps: GenerationParameters>(module: &mut naga::Module) -> build::Result<Self> {
-        let generator = StdObjectsGenerator::<Ps>::default();
-        generator.gen(module)
+        StdObjects::gen_from::<StdObjectsGenerator<Ps>>(module)
     }
 
     pub(crate) fn from_tuneables(
@@ -254,10 +419,10 @@ impl StdObjects {
         value: Val,
     ) -> build::Result<naga::Handle<naga::Constant>> {
         match value {
-            Val::I32(value) => (self.i32.base.make_const)(module, self, value),
-            Val::I64(value) => (self.i64.base.make_const)(module, self, value),
-            Val::F32(value) => (self.f32.base.make_const)(module, self, value),
-            Val::F64(value) => (self.f64.base.make_const)(module, self, value),
+            Val::I32(value) => (self.i32.make_const)(module, self, value),
+            Val::I64(value) => (self.i64.make_const)(module, self, value),
+            Val::F32(value) => (self.f32.make_const)(module, self, value),
+            Val::F64(value) => (self.f64.make_const)(module, self, value),
             Val::V128(value) => (self.v128.make_const)(module, self, value),
             Val::FuncRef(value) => (self.func_ref.make_const)(module, self, value),
             Val::ExternRef(value) => (self.extern_ref.make_const)(module, self, value),
