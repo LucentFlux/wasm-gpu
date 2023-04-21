@@ -40,9 +40,6 @@ tokio = { version = "1.22", features = ["rt", "rt-multi-thread", "macros"] }
 wast = "50.0"
 naga = { version = "0.11", features = ["clone"] }
 once_cell = "1.17"
-spirv-tools = { version = "0.9", optional = true, features = [
-    "use-compiled-tools",
-] }
 wasmtime-environ = "6"
 
 [dev-dependencies]
@@ -50,8 +47,3 @@ wasm-gpu-test-gen = { path = "test_gen" }
 wasm-gpu-test-lib = { path = "test_lib" }
 rand = "0.8"
 pollster = "0.2"
-
-[features]
-default = ["opt", "hlsl_out"]                     # TODO: Remove this when not debugging
-opt = ["dep:spirv-tools", "wgpu/spirv", "naga/spv-out"]
-hlsl_out = ["naga/spv-in", "naga/hlsl-out"]

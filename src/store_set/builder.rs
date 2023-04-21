@@ -283,11 +283,23 @@ impl MappedStoreSetBuilder {
         let assembled_module = AssembledModule::assemble(&assembleable_functions, &tuneables)
             .map_err(BuilderCompleteError::BuildError)?;
 
-        let shader_module = WasmShaderModule::make(queue.device(), &assembled_module, &tuneables);
+        // Try to optimise
+        let mut module = &assembled_module;
+        let optimised_module = assembled_module.optimise();
+        match &optimised_module {
+            Ok(optimised_module) => module = optimised_module,
+            // Fall back to naga, or panic on debug
+            Err(e) => {
+                if cfg!(debug_asserts) {
+                    panic!("failed to create optimised spir-v: {:?}", e);
+                }
+            }
+        }
+
+        let shader_module = WasmShaderModule::make(queue.device(), module);
 
         Ok(CompletedBuilder {
             label,
-            tuneables,
             tables,
             memories,
             mutable_globals,
@@ -313,8 +325,6 @@ pub struct CompletedBuilder {
     datas: Arc<UnmappedDataInstance>,
     functions: Arc<FuncsInstance>,
 
-    tuneables: Tuneables,
-
     /// We build the actual spir-v at builder completion, then copy it out to all store sets as they're
     /// instantiated. However all the information for the module can be rebuilt from the above data, so
     /// hoisting this is for optimisation reasons.
@@ -322,77 +332,9 @@ pub struct CompletedBuilder {
     assembled_module: AssembledModule,
 }
 
-const HLSL_OUT_OPTIONS: naga::back::hlsl::Options = naga::back::hlsl::Options {
-    shader_model: naga::back::hlsl::ShaderModel::V6_0,
-    binding_map: naga::back::hlsl::BindingMap::new(),
-    fake_missing_bindings: true,
-    special_constants_binding: None,
-    push_constants_target: None,
-    zero_initialize_workgroup_memory: false,
-};
-
 impl CompletedBuilder {
-    pub fn get_module(&self) -> &naga::Module {
-        &self.assembled_module.module
-    }
-
-    pub fn get_module_info(&self) -> &naga::valid::ModuleInfo {
-        &self.assembled_module.module_info
-    }
-
-    #[cfg(feature = "hlsl_out")]
-    /// Converts our internal representation to HLSL and passes it back as a string of source code.
-    ///
-    /// This method is intended for debugging; the outputted source is intended to be as close as possible
-    /// to the shader module that will be run, but no guarantee is made that compiling this souce will give
-    /// the same shader module as will be executed.
-    pub fn generate_hlsl_source(&self) -> String {
-        let module = &self.get_module();
-        let module_info = &self.get_module_info();
-        let mut output_shader = String::new();
-
-        let hlsl_options = &HLSL_OUT_OPTIONS;
-        let mut writer = naga::back::hlsl::Writer::new(&mut output_shader, hlsl_options);
-        writer.write(module, module_info).unwrap();
-
-        return output_shader;
-    }
-
-    #[cfg(all(feature = "hlsl_out", feature = "opt"))]
-    /// Optimises our internal representation, then parses the optimised code and converts it to HLSL and
-    /// passes it back as a string of source code.
-    ///
-    /// This method is intended for debugging; the outputted source is intended to be as close as possible
-    /// to the shader module that will be run, but no guarantee is made that compiling this souce will give
-    /// the same shader module as will be executed.
-    pub fn generate_optimised_hlsl_source(&self) -> anyhow::Result<String> {
-        let module = &self.get_module();
-        let module_info = &self.get_module_info();
-
-        let naga_bytes = WasmShaderModule::optimise_to_spirv(module, module_info, &self.tuneables)?;
-
-        let spv_options = naga::front::spv::Options {
-            adjust_coordinate_space: false,
-            strict_capabilities: false,
-            block_ctx_dump_prefix: None,
-        };
-        let optimised_naga = naga::front::spv::parse_u8_slice(naga_bytes.as_bytes(), &spv_options)?;
-
-        let optimised_assembled = AssembledModule::from_module(
-            optimised_naga,
-            &self.functions.assembleable(),
-            &self.tuneables,
-        )?;
-
-        let module = &optimised_assembled.module;
-        let module_info = &optimised_assembled.module_info;
-
-        let mut output_shader = String::new();
-        let hlsl_options = &HLSL_OUT_OPTIONS;
-        let mut writer = naga::back::hlsl::Writer::new(&mut output_shader, hlsl_options);
-        writer.write(module, module_info).unwrap();
-
-        return Ok(output_shader);
+    pub fn get_module(&self) -> &AssembledModule {
+        &self.assembled_module
     }
 
     /// Takes the instructions provided to this builder and produces a collection of stores which can

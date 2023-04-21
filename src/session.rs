@@ -8,9 +8,9 @@ use wasm_gpu_funcgen::{
     STACK_LEN_BYTES, TRAP_FLAG_INDEX,
 };
 use wasm_gpu_funcgen::{
-    DATA_BINDING_INDEX, ELEMENT_BINDING_INDEX, FLAGS_BINDING_INDEX, IMMUTABLE_GLOBAL_BINDING_INDEX,
-    INPUT_BINDING_INDEX, MEMORY_BINDING_INDEX, MUTABLE_GLOBAL_BINDING_INDEX, OUTPUT_BINDING_INDEX,
-    STACK_BINDING_INDEX, TABLE_BINDING_INDEX,
+    DATA_BINDING_INDEX, ELEMENTS_BINDING_INDEX, FLAGS_BINDING_INDEX,
+    IMMUTABLE_GLOBALS_BINDING_INDEX, INPUT_BINDING_INDEX, MEMORY_BINDING_INDEX,
+    MUTABLE_GLOBALS_BINDING_INDEX, OUTPUT_BINDING_INDEX, STACK_BINDING_INDEX, TABLES_BINDING_INDEX,
 };
 use wasm_types::{Val, ValTypeByteCount};
 use wasmparser::ValType;
@@ -70,21 +70,21 @@ impl<'a> Bindings<'a> {
         let mut entries = Vec::new();
 
         self.conditionally_attach(&mut entries, device, self.data, DATA_BINDING_INDEX);
-        self.conditionally_attach(&mut entries, device, self.element, ELEMENT_BINDING_INDEX);
+        self.conditionally_attach(&mut entries, device, self.element, ELEMENTS_BINDING_INDEX);
         self.conditionally_attach(
             &mut entries,
             device,
             self.mutable_globals,
-            MUTABLE_GLOBAL_BINDING_INDEX,
+            MUTABLE_GLOBALS_BINDING_INDEX,
         );
         self.conditionally_attach(
             &mut entries,
             device,
             self.immutable_globals,
-            IMMUTABLE_GLOBAL_BINDING_INDEX,
+            IMMUTABLE_GLOBALS_BINDING_INDEX,
         );
         self.conditionally_attach(&mut entries, device, self.memory, MEMORY_BINDING_INDEX);
-        self.conditionally_attach(&mut entries, device, self.table, TABLE_BINDING_INDEX);
+        self.conditionally_attach(&mut entries, device, self.table, TABLES_BINDING_INDEX);
         self.conditionally_attach(&mut entries, device, self.flags, FLAGS_BINDING_INDEX);
         self.conditionally_attach(&mut entries, device, self.input, INPUT_BINDING_INDEX);
         self.conditionally_attach(&mut entries, device, self.output, OUTPUT_BINDING_INDEX);

@@ -202,3 +202,92 @@ fn pass_return_through_local_f64() {
         1.000001000001f64,
     )
 }
+
+/*
+#[test]
+fn unreachable_traps() {
+    test_parity::<(), ()>(
+        r#"
+        (module
+            (func $f
+                unreachable
+            )
+            (export "trap_unnreachable" (func $f))
+        )
+        "#,
+        "trap_unnreachable",
+        (),
+    )
+}*/
+
+#[test]
+fn add_5_i32() {
+    test_parity::<i32, i32>(
+        r#"
+        (module
+            (func $f (param i32) (result i32)
+                (local.get 0)
+                (i32.const 5)
+                (i32.add)
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        8192,
+    )
+}
+
+#[test]
+fn add_5_i64() {
+    test_parity::<i64, i64>(
+        r#"
+        (module
+            (func $f (param i64) (result i64)
+                (local.get 0)
+                (i64.const 5)
+                (i64.add)
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        -9223372036854675604,
+    )
+}
+
+#[test]
+fn add_5_f32() {
+    test_parity::<f32, f32>(
+        r#"
+        (module
+            (func $f (param f32) (result f32)
+                (local.get 0)
+                (f32.const 5)
+                (f32.add)
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        1.0001001f32,
+    )
+}
+
+#[test]
+fn add_5_f64() {
+    test_parity::<f64, f64>(
+        r#"
+        (module
+            (func $f (param f64) (result f64)
+                (local.get 0)
+                (f64.const 5)
+                (f64.add)
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        1.000001000001f64,
+    )
+}

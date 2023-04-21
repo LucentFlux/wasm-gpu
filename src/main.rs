@@ -80,13 +80,9 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("could not build stores");
 
-    println!("====================UNOPTIMIZED HLSL SHADER BEGIN====================");
-    println!("{}", store_source.generate_hlsl_source());
-    println!("=====================UNOPTIMIZED HLSL SHADER END=====================");
-
-    println!("====================OPTIMIZED HLSL SHADER BEGIN====================");
-    println!("{}", store_source.generate_optimised_hlsl_source().unwrap());
-    println!("=====================OPTIMIZED HLSL SHADER END=====================");
+    println!("====================HLSL SHADER BEGIN====================");
+    println!("{}", store_source.get_module().generate_hlsl_source());
+    println!("=====================HLSL SHADER END=====================");
 
     let results = function
         .call_all(&memory_system, &queue, &mut stores, vec![1000.01f64])
@@ -94,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap()
         .await
         .unwrap()
-        .expect_all("could not call all hello functions");
+        .expect_all("could not call all functions");
 
     for result in results {
         println!("result: {}", result);
