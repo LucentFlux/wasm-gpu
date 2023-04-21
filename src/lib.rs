@@ -57,6 +57,35 @@ pub const IO_ARGUMENT_ALIGNMENT_WORDS: u32 = 1;
 // Alignment between sets of WASM value arguments fro each invocation when doing I/O in 4-byte words
 pub const IO_INVOCATION_ALIGNMENT_WORDS: u32 = 1;
 
+const TARGET_ENV: spirv_tools::TargetEnv = spirv_tools::TargetEnv::Vulkan_1_0;
+const LANG_VERSION: (u8, u8) = (1, 0);
+const HLSL_OUT_OPTIONS: naga::back::hlsl::Options = naga::back::hlsl::Options {
+    shader_model: naga::back::hlsl::ShaderModel::V6_0,
+    binding_map: naga::back::hlsl::BindingMap::new(),
+    fake_missing_bindings: true,
+    special_constants_binding: None,
+    push_constants_target: None,
+    zero_initialize_workgroup_memory: false,
+};
+const SPV_OUT_OPTIONS: naga::back::spv::Options = naga::back::spv::Options {
+    lang_version: LANG_VERSION,
+    flags: naga::back::spv::WriterFlags::empty(),
+    binding_map: std::collections::BTreeMap::new(),
+    capabilities: None, // Some(capabilities),
+    bounds_check_policies: naga::proc::BoundsCheckPolicies {
+        index: naga::proc::index::BoundsCheckPolicy::Unchecked,
+        buffer: naga::proc::index::BoundsCheckPolicy::Unchecked,
+        image: naga::proc::index::BoundsCheckPolicy::Unchecked,
+        binding_array: naga::proc::index::BoundsCheckPolicy::Unchecked,
+    },
+    zero_initialize_workgroup_memory: naga::back::spv::ZeroInitializeWorkgroupMemoryMode::None,
+};
+const SPV_IN_OPTIONS: naga::front::spv::Options = naga::front::spv::Options {
+    adjust_coordinate_space: false,
+    strict_capabilities: false,
+    block_ctx_dump_prefix: None,
+};
+
 mod active_function;
 mod active_module;
 mod assembled_module;
@@ -121,7 +150,7 @@ pub enum BuildError {
     UnsupportedTypeError { wasm_type: wasmparser::ValType },
     #[error("wasm had {0:?} that consisted of more than 4 billion elements, and so was not addressable on the GPU's 32-bit architecture")]
     BoundsExceeded(ExceededComponent),
-    #[error("one of our validation checks didn't hold. This is a bug in the wasm-gpu-funcgen crate, unless you have modified and fed back your own naga source, in which case your modifications may have been invalid: {0:?}")]
+    #[error("one of our validation checks didn't hold. This is a bug in the wasm-gpu-funcgen crate: {0:?}")]
     ValidationError(ValidationError),
 }
 
@@ -138,6 +167,18 @@ pub enum ValidationError {
         observed_buffer_type: naga::Type,
         required_buffer_type: naga::Type,
     },
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum OptimiseError {
+    #[error("naga failed to emit spir-v {0:?}")]
+    NagaSpvBackError(naga::back::spv::Error),
+    #[error("spirv-tools failed to optimise spir-v {0:?}")]
+    SpvOptimiserError(spirv_tools::Error),
+    #[error("naga failed to receive spir-v {0:?}")]
+    NagaSpvFrontError(naga::front::spv::Error),
+    #[error("one of our validation checks didn't hold. This is a bug in the wasm-gpu-funcgen crate: {0:?}")]
+    ValidationError(ValidationError),
 }
 
 #[derive(Clone)]

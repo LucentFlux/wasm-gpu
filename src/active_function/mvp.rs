@@ -116,12 +116,7 @@ pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
         MVPOperator::I32Clz => unimplemented!(),
         MVPOperator::I32Ctz => unimplemented!(),
         MVPOperator::I32Popcnt => unimplemented!(),
-        MVPOperator::I32Add => {
-            let rhs = state.pop();
-            let lhs = state.pop();
-            let func = state.std_objects().i32.add;
-            state.call(func, vec![lhs, rhs])
-        }
+        MVPOperator::I32Add => state.call_bi(state.std_objects().i32.add),
         MVPOperator::I32Sub => unimplemented!(),
         MVPOperator::I32Mul => unimplemented!(),
         MVPOperator::I32DivS => unimplemented!(),
@@ -139,7 +134,7 @@ pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
         MVPOperator::I64Clz => unimplemented!(),
         MVPOperator::I64Ctz => unimplemented!(),
         MVPOperator::I64Popcnt => unimplemented!(),
-        MVPOperator::I64Add => unimplemented!(),
+        MVPOperator::I64Add => state.call_bi(state.std_objects().i64.add),
         MVPOperator::I64Sub => unimplemented!(),
         MVPOperator::I64Mul => unimplemented!(),
         MVPOperator::I64DivS => unimplemented!(),
@@ -161,7 +156,7 @@ pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
         MVPOperator::F32Trunc => unimplemented!(),
         MVPOperator::F32Nearest => unimplemented!(),
         MVPOperator::F32Sqrt => unimplemented!(),
-        MVPOperator::F32Add => unimplemented!(),
+        MVPOperator::F32Add => state.call_bi(state.std_objects().f32.add),
         MVPOperator::F32Sub => unimplemented!(),
         MVPOperator::F32Mul => unimplemented!(),
         MVPOperator::F32Div => unimplemented!(),
@@ -175,7 +170,7 @@ pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
         MVPOperator::F64Trunc => unimplemented!(),
         MVPOperator::F64Nearest => unimplemented!(),
         MVPOperator::F64Sqrt => unimplemented!(),
-        MVPOperator::F64Add => unimplemented!(),
+        MVPOperator::F64Add => state.call_bi(state.std_objects().f64.add),
         MVPOperator::F64Sub => unimplemented!(),
         MVPOperator::F64Mul => unimplemented!(),
         MVPOperator::F64Div => unimplemented!(),

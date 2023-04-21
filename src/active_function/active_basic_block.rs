@@ -179,4 +179,14 @@ impl<'b, 'f: 'b, 'm: 'f> ActiveBasicBlock<'b, 'f, 'm> {
 
         Ok(())
     }
+
+    /// Pops two arguments, then calls a function and pushes the result
+    pub(crate) fn call_bi(
+        &mut self,
+        function: naga::Handle<naga::Function>,
+    ) -> Result<(), BuildError> {
+        let rhs = self.pop();
+        let lhs = self.pop();
+        self.call(function, vec![lhs, rhs])
+    }
 }

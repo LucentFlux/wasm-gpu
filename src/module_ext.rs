@@ -404,6 +404,15 @@ macro_rules! naga_expr {
         naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
     }};
 
+    // Inline if
+    (@inner $constants:expr, $expressions:expr, $block:expr => if ( $($condition:tt)* ) { $($lhs:tt)* } else { $($rhs:tt)* } ) => {{
+        let condition = naga_expr!(@inner $constants, $expressions, $block => $($condition)* );
+        let accept = naga_expr!(@inner $constants, $expressions, $block => $($lhs)*);
+        let reject = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
+        let handle = $expressions.append(naga::Expression::Select { condition, accept, reject }, naga::Span::UNDEFINED);
+        $crate::naga_expr!(@emit $block => handle)
+    }};
+
     // Constructors
     (@innerconstructor $constants:expr, $expressions:expr, $block:expr, $components:expr => $e1:tt $(, $($others:tt)*)?) => {{
         $components.push(naga_expr!(@inner $constants, $expressions, $block => $e1));

@@ -123,8 +123,7 @@ impl I64Gen for PolyfillI64 {
         let lhs_low = naga_expr!(module, function_handle => lhs[const 1]);
         let rhs_high = naga_expr!(module, function_handle => rhs[const 0]);
         let rhs_low = naga_expr!(module, function_handle => rhs[const 1]);
-        let carry_bit =
-            naga_expr!(module, function_handle => (lhs_low > (word_max - rhs_low)) as Uint);
+        let carry_bit = naga_expr!(module, function_handle => if (lhs_low > (word_max - rhs_low)) {U32(1)} else {U32(0)});
         let res_low = naga_expr!(module, function_handle => lhs_low + rhs_low);
         let res_high = naga_expr!(module, function_handle => lhs_high + rhs_high + carry_bit);
         let res = naga_expr!(module, function_handle => i64_ty(res_high, res_low));
@@ -150,7 +149,7 @@ fn gen_read(
     let input_ref = module.fn_mut(function_handle).append_global(buffer);
 
     let read_word1 = naga_expr!(module, function_handle => input_ref[word_address]);
-    let read_word2 = naga_expr!(module, function_handle => input_ref[word_address + (U32(1))]);
+    let read_word2 = naga_expr!(module, function_handle => input_ref[word_address + U32(1)]);
     let read_value =
         naga_expr!(module, function_handle => i64_ty((Load(read_word1)), (Load(read_word2))));
     module.fn_mut(function_handle).body.push_return(read_value);
@@ -174,9 +173,9 @@ fn gen_write(
     let output_ref = module.fn_mut(handle).append_global(buffer);
 
     let write_word_loc1 = naga_expr!(module, handle => output_ref[word_address]);
-    let word1 = naga_expr!(module, handle => (value[const 0]) as Uint);
+    let word1 = naga_expr!(module, handle => value[const 0] as Uint);
     let write_word_loc2 = naga_expr!(module, handle => output_ref[word_address + (U32(1))]);
-    let word2 = naga_expr!(module, handle => (value[const 1]) as Uint);
+    let word2 = naga_expr!(module, handle => value[const 1] as Uint);
 
     module
         .fn_mut(handle)

@@ -1,20 +1,17 @@
 mod call_graph;
 
 use self::call_graph::CallGraph;
-use crate::function_lookup::FunctionLookup;
-use std::error::Error;
-
-use naga::valid::ValidationError;
-use naga::WithSpan;
-
 use crate::active_module::ActiveModule;
+use crate::function_lookup::FunctionLookup;
 use crate::wasm_front::FuncsInstance;
-use crate::{build, BuildError, Tuneables};
+use crate::{build, BuildError, NagaValidationError, OptimiseError, Tuneables, ValidationError};
 
 /// All of the functions and trampolines for a module, in wgpu objects ready to be called.
 pub struct AssembledModule {
     pub module: naga::Module,
     pub module_info: naga::valid::ModuleInfo,
+    pub functions: FuncsInstance,
+    pub tuneables: Tuneables,
 }
 impl AssembledModule {
     /// Some drivers don't like some edge cases. To avoid driver crashes or panics, several modifications
@@ -37,17 +34,15 @@ impl AssembledModule {
         module: &naga::Module,
         tuneables: &Tuneables,
         functions: &FuncsInstance,
-        // True on debug, or if the module comes from outside this crate
-        validate_all: bool,
-    ) -> build::Result<naga::valid::ModuleInfo> {
+    ) -> Result<naga::valid::ModuleInfo, ValidationError> {
+        const VALIDATE_ALL: bool = cfg!(debug_assert);
+
         // Our own sanity checks
         if module.entry_points.is_empty() {
-            return Err(BuildError::ValidationError(
-                crate::ValidationError::NoEntryPoints,
-            ));
+            return Err(ValidationError::NoEntryPoints);
         }
 
-        let flags = if validate_all {
+        let flags = if VALIDATE_ALL {
             naga::valid::ValidationFlags::all()
         } else {
             naga::valid::ValidationFlags::empty()
@@ -61,19 +56,17 @@ impl AssembledModule {
         let info = naga::valid::Validator::new(flags, capabilities)
             .validate(&module)
             .map_err(|source| {
-                BuildError::ValidationError(crate::ValidationError::NagaValidationError(
-                    crate::NagaValidationError {
-                        source: source.into_inner(),
-                        #[cfg(debug_assertions)]
-                        module: module.clone(),
-                        #[cfg(debug_assertions)]
-                        tuneables: tuneables.clone(),
-                        #[cfg(debug_assertions)]
-                        functions: functions.clone(),
-                        #[cfg(debug_assertions)]
-                        capabilities,
-                    },
-                ))
+                ValidationError::NagaValidationError(NagaValidationError {
+                    source: source.into_inner(),
+                    #[cfg(debug_assertions)]
+                    module: module.clone(),
+                    #[cfg(debug_assertions)]
+                    tuneables: tuneables.clone(),
+                    #[cfg(debug_assertions)]
+                    functions: functions.clone(),
+                    #[cfg(debug_assertions)]
+                    capabilities,
+                })
             })?;
 
         return Ok(info);
@@ -142,21 +135,76 @@ impl AssembledModule {
         Self::appease_drivers(&mut module);
 
         Ok(Self {
-            module_info: Self::validate(&module, tuneables, functions, cfg!(debug_assert))?,
+            module_info: Self::validate(&module, tuneables, functions)
+                .map_err(BuildError::ValidationError)?,
             module,
+            tuneables: tuneables.clone(),
+            functions: functions.clone(),
         })
     }
 
-    /// Takes an arbitrary naga module and validates that it can be fed into the wasm-gpu engine, i.e. that
-    /// all of the correct bindings exist and that the module is a correctly typed module.
-    pub fn from_module(
-        module: naga::Module,
-        functions: &FuncsInstance,
-        tuneables: &Tuneables,
-    ) -> build::Result<Self> {
+    /// Uses `spirv-tools` to optimise the shader code for this module, producing an equivalent but optimised
+    /// version of this module
+    pub fn optimise(&self) -> Result<Self, OptimiseError> {
+        use spirv_tools::opt::Optimizer;
+
+        // First convert to spir-v
+        let words = self
+            .generate_spv_source()
+            .map_err(OptimiseError::NagaSpvBackError)?;
+
+        // Then optimise the spir-v
+        let mut opt = spirv_tools::opt::create(Some(crate::TARGET_ENV));
+        opt.register_performance_passes();
+        let optimised = opt
+            .optimize(
+                words,
+                &mut |message| println!("spirv-opt message: {:?}", message),
+                None,
+            )
+            .map_err(OptimiseError::SpvOptimiserError)?;
+
+        // Then re-parse
+        let module = naga::front::spv::parse_u8_slice(optimised.as_bytes(), &crate::SPV_IN_OPTIONS)
+            .map_err(OptimiseError::NagaSpvFrontError)?;
+
+        // And re-validate
+        let tuneables = self.tuneables.clone();
+        let functions = self.functions.clone();
         Ok(Self {
-            module_info: Self::validate(&module, tuneables, functions, true)?,
+            module_info: Self::validate(&module, &tuneables, &functions)
+                .map_err(OptimiseError::ValidationError)?,
             module,
+            tuneables,
+            functions,
         })
+    }
+
+    /// Converts our internal representation to HLSL and passes it back as a string of source code.
+    ///
+    /// This method is intended for debugging; the outputted source is intended to be as close as possible
+    /// to the shader module that will be run, but no guarantee is made that compiling this souce will give
+    /// the same shader module as will be executed.
+    pub fn generate_hlsl_source(&self) -> String {
+        let mut output_shader = String::new();
+
+        let hlsl_options = &crate::HLSL_OUT_OPTIONS;
+        let mut writer = naga::back::hlsl::Writer::new(&mut output_shader, hlsl_options);
+        writer.write(&self.module, &self.module_info).unwrap();
+
+        return output_shader;
+    }
+
+    /// Converts our internal representation to SPIR-V and passes it back as an array of bytes.
+    ///
+    /// This method is used when then generating optimised modules, and so the module produced by this method
+    /// comes with guarantees of parity that `generate_hlsl_source` does not.
+    pub fn generate_spv_source(&self) -> Result<Vec<u32>, naga::back::spv::Error> {
+        let mut writer = naga::back::spv::Writer::new(&crate::SPV_OUT_OPTIONS)?;
+
+        let mut words = Vec::new();
+        writer.write(&self.module, &self.module_info, None, &mut words)?;
+
+        Ok(words)
     }
 }

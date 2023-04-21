@@ -7,18 +7,19 @@ use crate::module_ext::{BlockExt, FunctionExt, ModuleExt};
 use crate::traps::ALL_TRAPS;
 use crate::{declare_function, naga_expr, trap_to_u32, TRAP_FLAG_INDEX};
 
-// fn<buffer>(value: u32) -> !
+// fn<buffer>(invocation_id: u32, value: u32) -> !
 pub(super) fn gen_trap_function<Ps: crate::std_objects::GenerationParameters>(
     module: &mut naga::Module,
-    trap_ty: std_objects_gen::Word,
+    word_ty: std_objects_gen::Word,
     flags_buffer: naga::Handle<naga::GlobalVariable>,
 ) -> crate::build::Result<naga::Handle<naga::Function>> {
-    let (function_handle, trap_value) = declare_function! {
-        module => fn trap(trap_id: trap_ty)
+    let (function_handle, invocation_id, trap_value) = declare_function! {
+        module => fn trap(invocation_id: word_ty, trap_id: word_ty)
     };
 
     let output_ref = module.fn_mut(function_handle).append_global(flags_buffer);
-    let write_word_loc = naga_expr!(module, function_handle => output_ref[const TRAP_FLAG_INDEX]);
+    let write_word_loc =
+        naga_expr!(module, function_handle => (output_ref[invocation_id])[const TRAP_FLAG_INDEX]);
     module
         .fn_mut(function_handle)
         .body
