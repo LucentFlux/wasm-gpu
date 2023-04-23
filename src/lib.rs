@@ -196,17 +196,22 @@ pub struct NagaValidationError {
     pub capabilities: naga::valid::Capabilities,
 }
 
+pub fn display_error_recursively(error: &impl Error) -> String {
+    let mut error_fmt = format! {"{}", error};
+    let mut src_err: &dyn Error = error;
+    while let Some(next_err) = src_err.source() {
+        error_fmt = format! {"{}: {}", error_fmt, next_err};
+        src_err = next_err;
+    }
+
+    return error_fmt;
+}
+
 impl Debug for NagaValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Output naga error
-        let mut naga_error = format! {"{}", self.source};
-        let mut src_err: &dyn Error = &self.source;
-        while let Some(next_err) = src_err.source() {
-            naga_error = format! {"{}: {}", naga_error, next_err};
-            src_err = next_err;
-        }
         let mut output_struct = f.debug_struct("failed to validate naga module");
-        let output = output_struct.field("naga_error", &naga_error);
+        let output = output_struct.field("naga_error", &display_error_recursively(&self.source));
 
         #[cfg(not(debug_assertions))]
         return output.finish_non_exhaustive();

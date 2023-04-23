@@ -297,6 +297,14 @@ macro_rules! naga_expr {
         $handle
     }};
 
+    // Resizing
+    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt as $kind:tt ($bitcount:expr) $($others:tt)*) => {{
+        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
+        let handle = $expressions.append(naga::Expression::As { expr: left, kind: naga::ScalarKind::$kind, convert: Some($bitcount) }, naga::Span::UNDEFINED);
+        $crate::naga_expr!(@emit $block => handle);
+        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    }};
+
     // Casting
     (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt as $kind:tt $($others:tt)*) => {{
         let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
@@ -328,6 +336,24 @@ macro_rules! naga_expr {
         let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
         let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
         let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Divide, left, right }, naga::Span::UNDEFINED);
+        $crate::naga_expr!(@emit $block => handle)
+    }};
+    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt >> $($rhs:tt)*) => {{
+        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
+        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
+        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::ShiftRight, left, right }, naga::Span::UNDEFINED);
+        $crate::naga_expr!(@emit $block => handle)
+    }};
+    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt << $($rhs:tt)*) => {{
+        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
+        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
+        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::ShiftLeft, left, right }, naga::Span::UNDEFINED);
+        $crate::naga_expr!(@emit $block => handle)
+    }};
+    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt | $($rhs:tt)*) => {{
+        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
+        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
+        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::InclusiveOr, left, right }, naga::Span::UNDEFINED);
         $crate::naga_expr!(@emit $block => handle)
     }};
     (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt > $($rhs:tt)*) => {{
