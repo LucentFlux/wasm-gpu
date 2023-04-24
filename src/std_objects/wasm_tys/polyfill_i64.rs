@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     build, declare_function,
-    module_ext::{BlockExt, FunctionExt, ModuleExt},
+    module_ext::{BlockExt, ModuleExt},
     naga_expr,
     std_objects::std_objects_gen,
 };
@@ -32,7 +32,11 @@ impl I64Gen for PolyfillI64 {
         module: &mut naga::Module,
         others: super::i64_instance_gen::DefaultRequirements,
     ) -> build::Result<super::i64_instance_gen::Default> {
-        Ok(super::make_64_bit_const_from_2vec32(others.ty, module, 0))
+        Ok(super::make_64_bit_const_from_2vec32(
+            others.ty,
+            &mut module.constants,
+            0,
+        ))
     }
 
     fn gen_size_bytes(
@@ -116,14 +120,11 @@ impl I64Gen for PolyfillI64 {
             module => fn i64_add(lhs: i64_ty, rhs: i64_ty) -> i64_ty
         };
 
-        let word_max = module
-            .fn_mut(function_handle)
-            .append_constant(others.word_max);
         let lhs_high = naga_expr!(module, function_handle => lhs[const 0]);
         let lhs_low = naga_expr!(module, function_handle => lhs[const 1]);
         let rhs_high = naga_expr!(module, function_handle => rhs[const 0]);
         let rhs_low = naga_expr!(module, function_handle => rhs[const 1]);
-        let carry_bit = naga_expr!(module, function_handle => if (lhs_low > (word_max - rhs_low)) {U32(1)} else {U32(0)});
+        let carry_bit = naga_expr!(module, function_handle => if (lhs_low > (Constant(others.word_max) - rhs_low)) {U32(1)} else {U32(0)});
         let res_low = naga_expr!(module, function_handle => lhs_low + rhs_low);
         let res_high = naga_expr!(module, function_handle => lhs_high + rhs_high + carry_bit);
         let res = naga_expr!(module, function_handle => i64_ty(res_high, res_low));
@@ -146,7 +147,7 @@ fn gen_read(
         module => fn {fn_name}(word_address: address_ty) -> i64_ty
     };
 
-    let input_ref = module.fn_mut(function_handle).append_global(buffer);
+    let input_ref = naga_expr!(module, function_handle => Global(buffer));
 
     let read_word1 = naga_expr!(module, function_handle => input_ref[word_address]);
     let read_word2 = naga_expr!(module, function_handle => input_ref[word_address + U32(1)]);
@@ -170,7 +171,7 @@ fn gen_write(
         module => fn {fn_name}(word_address: address_ty, value: i64_ty)
     };
 
-    let output_ref = module.fn_mut(handle).append_global(buffer);
+    let output_ref = naga_expr!(module, handle => Global(buffer));
 
     let write_word_loc1 = naga_expr!(module, handle => output_ref[word_address]);
     let word1 = naga_expr!(module, handle => value[const 0] as Uint);

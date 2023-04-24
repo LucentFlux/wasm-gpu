@@ -15,7 +15,7 @@ use wasm_types::FuncRef;
 /// kind of things we're doing.
 pub(crate) struct ActiveModule<'a> {
     pub module: &'a mut naga::Module,
-    pub std_objs: StdObjects,
+    pub std_objects: StdObjects,
     pub workgroup_size: u32,
 }
 
@@ -23,11 +23,11 @@ impl<'a> ActiveModule<'a> {
     /// Collate all of the data required to build a module.
     pub(crate) fn new(module: &'a mut naga::Module, tuneables: &Tuneables) -> build::Result<Self> {
         // Generate bindings used for all standard wasm things like types and globals
-        let std_objs = StdObjects::from_tuneables(module, tuneables)?;
+        let std_objects = StdObjects::from_tuneables(module, tuneables)?;
 
         Ok(Self {
             module,
-            std_objs,
+            std_objects,
             workgroup_size: tuneables.workgroup_size,
         })
     }
@@ -40,7 +40,7 @@ impl<'a> ActiveModule<'a> {
     ) -> build::Result<InternalFunction> {
         InternalFunction::append_declaration_to(
             &mut self.module,
-            &self.std_objs,
+            &self.std_objects,
             "_base_impl",
             ptr,
             function_data,
@@ -51,7 +51,7 @@ impl<'a> ActiveModule<'a> {
     pub(crate) fn declare_entry_function(&mut self, ptr: FuncRef) -> EntryFunction {
         EntryFunction::append_declaration_to(
             &mut self.module,
-            &self.std_objs,
+            &self.std_objects,
             ptr,
             self.workgroup_size,
         )
@@ -65,7 +65,7 @@ impl<'a> ActiveModule<'a> {
     ) -> build::Result<InternalFunction> {
         InternalFunction::append_declaration_to(
             &mut self.module,
-            &self.std_objs,
+            &self.std_objects,
             "_stack_impl",
             ptr,
             function_data,
@@ -75,13 +75,6 @@ impl<'a> ActiveModule<'a> {
     /// Forward declare a brain function
     pub(crate) fn declare_brain_function(&mut self) -> BrainFunction {
         BrainFunction::append_declaration_to(&mut self.module)
-    }
-
-    pub(crate) fn make_wasm_constant(
-        &mut self,
-        value: wasm_types::Val,
-    ) -> build::Result<naga::Handle<naga::Constant>> {
-        self.std_objs.make_wasm_constant(&mut self.module, value)
     }
 }
 

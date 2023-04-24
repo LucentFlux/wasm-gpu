@@ -145,6 +145,7 @@ impl AssembledModule {
 
     /// Uses `spirv-tools` to optimise the shader code for this module, producing an equivalent but optimised
     /// version of this module
+    #[cfg(feature = "opt")]
     pub fn optimise(&self) -> Result<Self, OptimiseError> {
         use spirv_tools::opt::Optimizer;
 
@@ -199,6 +200,7 @@ impl AssembledModule {
     ///
     /// This method is used when then generating optimised modules, and so the module produced by this method
     /// comes with guarantees of parity that `generate_hlsl_source` does not.
+    #[cfg(feature = "opt")]
     pub fn generate_spv_source(&self) -> Result<Vec<u32>, naga::back::spv::Error> {
         let mut writer = naga::back::spv::Writer::new(&crate::SPV_OUT_OPTIONS)?;
 

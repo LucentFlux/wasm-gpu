@@ -2,7 +2,7 @@ use wasm_types::ValTypeByteCount;
 use wasmparser::ValType;
 
 use crate::{
-    module_ext::FunctionExt, naga_expr, std_objects::StdObjects, IO_ARGUMENT_ALIGNMENT_WORDS,
+    module_ext::ExpressionsExt, naga_expr, std_objects::StdObjects, IO_ARGUMENT_ALIGNMENT_WORDS,
     IO_INVOCATION_ALIGNMENT_WORDS,
 };
 
@@ -29,7 +29,7 @@ impl FnArg {
             binding: None,
         });
 
-        let expression_handle = function.append_fn_argument(i_param as u32);
+        let expression_handle = function.expressions.append_fn_argument(i_param as u32);
 
         Self {
             type_handle,
@@ -44,12 +44,12 @@ impl FnArg {
     ) -> Self {
         let i_param = function.arguments.len();
         function.arguments.push(naga::FunctionArgument {
-            name: Some(format!("arg_{}", i_param)),
+            name: Some(format!("bound_arg_{}", i_param)),
             ty: type_handle,
             binding: Some(binding),
         });
 
-        let expression_handle = function.append_fn_argument(i_param as u32);
+        let expression_handle = function.expressions.append_fn_argument(i_param as u32);
 
         Self {
             type_handle,
@@ -77,7 +77,7 @@ impl WasmFnArg {
     ) -> naga::Handle<naga::Expression> {
         let load_fn = function
             .get_module_mut()
-            .std_objs
+            .std_objects
             .get_read_input_fn(self.ty);
 
         let entry_fn = function.get_mut();

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use wasm_types::{ExternRef, FuncRef, WasmTyVal, V128};
+use wasm_types::{ExternRef, FuncRef, V128};
 
 use crate::build;
 
@@ -14,8 +14,14 @@ pub(crate) mod polyfill_f64;
 pub(crate) mod polyfill_i64;
 pub(crate) mod polyfill_v128;
 
-type MakeConstFn<Ty: WasmTyVal> = Arc<
-    Box<dyn Fn(&mut naga::Module, &StdObjects, Ty) -> build::Result<naga::Handle<naga::Constant>>>,
+type MakeConstFn<Ty> = Arc<
+    Box<
+        dyn Fn(
+            &mut naga::Arena<naga::Constant>,
+            &StdObjects,
+            Ty,
+        ) -> build::Result<naga::Handle<naga::Constant>>,
+    >,
 >;
 
 macro_rules! wasm_ty_generator {
@@ -63,7 +69,7 @@ wasm_ty_generator!(struct ExternRefInstance; trait ExternRefGen; ExternRef; []);
 
 fn make_64_bit_const_from_2vec32(
     ty: naga::Handle<naga::Type>,
-    module: &mut naga::Module,
+    constants: &mut naga::Arena<naga::Constant>,
     value: i64,
 ) -> naga::Handle<naga::Constant> {
     let inner = naga::ConstantInner::Composite {
@@ -73,7 +79,7 @@ fn make_64_bit_const_from_2vec32(
                 let word = value >> (32 * i_word);
                 let word =
                     u32::try_from(word & 0xFFFFFFFF).expect("truncated word always fits in u32");
-                module.constants.append(
+                constants.append(
                     naga::Constant {
                         name: None,
                         specialization: None,
@@ -87,7 +93,7 @@ fn make_64_bit_const_from_2vec32(
             })
             .collect(),
     };
-    module.constants.append(
+    constants.append(
         naga::Constant {
             name: None,
             specialization: None,

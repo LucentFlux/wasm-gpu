@@ -1,13 +1,10 @@
-use crate::module_ext::BlockExt;
+use crate::module_ext::{BlockExt, ExpressionsExt};
 use crate::{active_function::ActiveFunction, build};
 use crate::{naga_expr, BuildError, ExceededComponent};
 use wasm_types::ValTypeByteCount;
 use wasmparser::ValType;
 
-use crate::{
-    module_ext::FunctionExt, std_objects::StdObjects, IO_ARGUMENT_ALIGNMENT_WORDS,
-    IO_INVOCATION_ALIGNMENT_WORDS,
-};
+use crate::{std_objects::StdObjects, IO_ARGUMENT_ALIGNMENT_WORDS, IO_INVOCATION_ALIGNMENT_WORDS};
 
 use super::ActiveEntryFunction;
 
@@ -82,12 +79,13 @@ impl WasmFnResTy {
     /// statements.
     pub(crate) fn push_return(
         &self,
-        func: &mut naga::Function,
+        expressions: &mut naga::Arena<naga::Expression>,
+        block: &mut naga::Block,
         components: Vec<naga::Handle<naga::Expression>>,
     ) {
-        let struct_build = func.append_compose(self.handle, components);
-        func.body.push_emit(struct_build);
-        func.body.push_return(struct_build);
+        let struct_build = expressions.append_compose(self.handle, components);
+        block.push_emit(struct_build);
+        block.push_return(struct_build);
     }
 
     pub(crate) fn append_store_at<'f, 'm: 'f>(
@@ -121,5 +119,10 @@ impl WasmFnResTy {
         }
 
         Ok(())
+    }
+
+    /// Gives the base wasm types that make up this compound type
+    pub(crate) fn components(&self) -> &Vec<ValType> {
+        &self.wasm_ty
     }
 }

@@ -1,17 +1,11 @@
-use super::{active_basic_block::ActiveBasicBlock, ActiveFunction};
+use super::ActiveBlock;
 use crate::build;
 use wasm_opcodes::MVPOperator;
 use wasm_types::Val;
 use wasmtime_environ::Trap;
 
-fn const_val<'f, 'm: 'f>(state: &mut ActiveBasicBlock<'_, 'f, 'm>, val: Val) -> build::Result<()> {
-    let val = state.make_wasm_constant(val)?;
-    state.push(naga::Expression::Constant(val));
-    Ok(())
-}
-
-pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
-    state: &mut ActiveBasicBlock<'_, 'f, 'm>,
+pub(super) fn eat_mvp_operator(
+    state: &mut ActiveBlock<'_>,
     operator: &MVPOperator,
 ) -> build::Result<()> {
     match operator {
@@ -19,10 +13,14 @@ pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
             /* Pass */
             Ok(())
         }
-        MVPOperator::I32Const { value } => const_val(state, Val::I32(*value)),
-        MVPOperator::I64Const { value } => const_val(state, Val::I64(*value)),
-        MVPOperator::F32Const { value } => const_val(state, Val::F32(f32::from_bits(value.bits()))),
-        MVPOperator::F64Const { value } => const_val(state, Val::F64(f64::from_bits(value.bits()))),
+        MVPOperator::I32Const { value } => state.push_const_val(Val::I32(*value)),
+        MVPOperator::I64Const { value } => state.push_const_val(Val::I64(*value)),
+        MVPOperator::F32Const { value } => {
+            state.push_const_val(Val::F32(f32::from_bits(value.bits())))
+        }
+        MVPOperator::F64Const { value } => {
+            state.push_const_val(Val::F64(f64::from_bits(value.bits())))
+        }
         MVPOperator::Unreachable => state.append_trap(Trap::UnreachableCodeReached),
         MVPOperator::Drop => {
             /* Pass for now */
@@ -116,7 +114,7 @@ pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
         MVPOperator::I32Clz => unimplemented!(),
         MVPOperator::I32Ctz => unimplemented!(),
         MVPOperator::I32Popcnt => unimplemented!(),
-        MVPOperator::I32Add => state.call_bi(state.std_objects().i32.add),
+        MVPOperator::I32Add => state.pop_two_push_call_bi(state.std_objects().i32.add),
         MVPOperator::I32Sub => unimplemented!(),
         MVPOperator::I32Mul => unimplemented!(),
         MVPOperator::I32DivS => unimplemented!(),
@@ -134,7 +132,7 @@ pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
         MVPOperator::I64Clz => unimplemented!(),
         MVPOperator::I64Ctz => unimplemented!(),
         MVPOperator::I64Popcnt => unimplemented!(),
-        MVPOperator::I64Add => state.call_bi(state.std_objects().i64.add),
+        MVPOperator::I64Add => state.pop_two_push_call_bi(state.std_objects().i64.add),
         MVPOperator::I64Sub => unimplemented!(),
         MVPOperator::I64Mul => unimplemented!(),
         MVPOperator::I64DivS => unimplemented!(),
@@ -156,7 +154,7 @@ pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
         MVPOperator::F32Trunc => unimplemented!(),
         MVPOperator::F32Nearest => unimplemented!(),
         MVPOperator::F32Sqrt => unimplemented!(),
-        MVPOperator::F32Add => state.call_bi(state.std_objects().f32.add),
+        MVPOperator::F32Add => state.pop_two_push_call_bi(state.std_objects().f32.add),
         MVPOperator::F32Sub => unimplemented!(),
         MVPOperator::F32Mul => unimplemented!(),
         MVPOperator::F32Div => unimplemented!(),
@@ -170,7 +168,7 @@ pub(super) fn eat_mvp_operator<'f, 'm: 'f>(
         MVPOperator::F64Trunc => unimplemented!(),
         MVPOperator::F64Nearest => unimplemented!(),
         MVPOperator::F64Sqrt => unimplemented!(),
-        MVPOperator::F64Add => state.call_bi(state.std_objects().f64.add),
+        MVPOperator::F64Add => state.pop_two_push_call_bi(state.std_objects().f64.add),
         MVPOperator::F64Sub => unimplemented!(),
         MVPOperator::F64Mul => unimplemented!(),
         MVPOperator::F64Div => unimplemented!(),

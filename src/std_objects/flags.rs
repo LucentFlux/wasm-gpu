@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use wasmtime_environ::Trap;
 
 use super::std_objects_gen;
-use crate::module_ext::{BlockExt, FunctionExt, ModuleExt};
+use crate::module_ext::{BlockExt, ExpressionsExt, ModuleExt};
 use crate::traps::ALL_TRAPS;
 use crate::{declare_function, naga_expr, trap_to_u32, TRAP_FLAG_INDEX};
 
@@ -17,7 +17,10 @@ pub(super) fn gen_trap_function<Ps: crate::std_objects::GenerationParameters>(
         module => fn trap(invocation_id: word_ty, trap_id: word_ty)
     };
 
-    let output_ref = module.fn_mut(function_handle).append_global(flags_buffer);
+    let output_ref = module
+        .fn_mut(function_handle)
+        .expressions
+        .append_global(flags_buffer);
     let write_word_loc =
         naga_expr!(module, function_handle => (output_ref[invocation_id])[const TRAP_FLAG_INDEX]);
     module
@@ -37,9 +40,14 @@ fn make_trap_constant(
 ) -> naga::Handle<naga::Constant> {
     let trap_id = trap_to_u32(trap);
 
+    let name = match trap {
+        Some(trap) => format!("{:?}", trap).to_uppercase(),
+        None => "UNSET".to_owned(),
+    };
+
     module.constants.append(
         naga::Constant {
-            name: Some(format!("TRAP_ID_{}", trap_id)),
+            name: Some(format!("TRAP_{:?}", name)),
             specialization: None,
             inner: naga::ConstantInner::Scalar {
                 width: 4,

@@ -1,26 +1,23 @@
-mod active_basic_block;
+mod active_block;
 mod arguments;
-mod block_gen;
-mod body_gen;
 mod locals;
-mod mvp;
 mod results;
 
 use naga::Handle;
 use wasm_opcodes::OperatorByProposal;
 use wasm_types::FuncRef;
 
-use crate::module_ext::{BlockExt, FunctionExt};
-use crate::{
-    build, get_entry_name, module_ext::ModuleExt, naga_expr, std_objects::StdObjects, FuncUnit,
-};
-
+use self::active_block::{ActiveBlock, BlockType, BodyData};
 use self::results::WasmFnResTy;
 use self::{
     arguments::{EntryArguments, WasmFnArgs},
     locals::FnLocals,
 };
-use self::{block_gen::populate_block, body_gen::FunctionBodyInformation};
+
+use crate::module_ext::{BlockExt, ExpressionsExt};
+use crate::{
+    build, get_entry_name, module_ext::ModuleExt, naga_expr, std_objects::StdObjects, FuncUnit,
+};
 
 use crate::active_module::ActiveModule;
 
@@ -55,13 +52,7 @@ pub(crate) trait ActiveFunction<'f, 'm: 'f> {
     where
         'f: 'b,
     {
-        &self.get_module().std_objs
-    }
-    fn make_wasm_constant(
-        &mut self,
-        value: wasm_types::Val,
-    ) -> build::Result<naga::Handle<naga::Constant>> {
-        self.get_module_mut().make_wasm_constant(value)
+        &self.get_module().std_objects
     }
 }
 
@@ -104,8 +95,7 @@ impl InternalFunction {
         }
 
         let locals = FnLocals::append_to(
-            module,
-            handle,
+            function,
             std_objects,
             &function_definition.data.locals,
             &wasm_arguments,
@@ -145,26 +135,55 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
     }
 
     /// Populates the body of a base function that doesn't use the stack.
-    pub(crate) fn populate_base_function(&mut self, function: &FuncUnit) -> build::Result<()> {
-        // Parse instructions
-        let accessible = &function.accessible;
-        let module_data = function.data.module_data.as_ref();
-        let mut instructions = function
+    pub(crate) fn populate_base_function(&mut self, func_data: &FuncUnit) -> build::Result<()> {
+        let Self {
+            working_module,
+            data,
+        } = self;
+
+        // Decompose this into the parts needed for the blocks
+        let accessible = &func_data.accessible;
+        let module_data = func_data.data.module_data.as_ref();
+        let return_type = &data.wasm_results;
+        let block_type =
+            BlockType::from_return_type(return_type.as_ref().map(|ty| ty.components().clone()));
+        let ActiveModule {
+            module,
+            std_objects,
+            ..
+        } = working_module;
+        let constants = &mut module.constants;
+        let function = module.functions.get_mut(data.handle);
+        let body_data = BodyData::new(
+            accessible,
+            module_data,
+            return_type,
+            &data.locals,
+            constants,
+            &mut function.expressions,
+            &mut function.local_variables,
+            &std_objects,
+        );
+
+        // Define base block
+        let base_block = ActiveBlock::new(block_type, body_data, vec![]);
+
+        // Parse instructions and populate recusively
+        let mut instructions = func_data
             .data
             .operators
             .iter()
             .map(OperatorByProposal::clone);
-        let body_info = FunctionBodyInformation {
-            accessible,
-            module_data,
-        };
-        let entry_stack = vec![];
-        let exit_stack = populate_block(self, &mut instructions, entry_stack, body_info)?;
+        let (mut block, results, mut body_data) =
+            base_block.populate_straight(&mut instructions)?.finish();
 
         // Return results
-        if let Some(result_type) = &self.data.wasm_results {
-            result_type.push_return(self.get_mut(), exit_stack);
-        }
+        body_data.push_final_return(&mut block, results);
+
+        // Push generated block to function
+        function
+            .body
+            .push(naga::Statement::Block(block), naga::Span::UNDEFINED);
 
         return Ok(());
     }
@@ -305,8 +324,8 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
         let instance_index = self.get_workgroup_index();
 
         // Write entry globals
-        let invocation_id = self.std_objects().instance_id;
-        let invocation_id_ptr = self.get_mut().append_global(invocation_id);
+        let instance_id = self.std_objects().instance_id;
+        let invocation_id_ptr = naga_expr!(self => Global(instance_id));
         self.get_mut()
             .body
             .push_store(invocation_id_ptr, instance_index);

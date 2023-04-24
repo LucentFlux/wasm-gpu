@@ -5,8 +5,14 @@ mod sealed {
     impl ModuleSealed for naga::Module {}
     pub trait FunctionsSealed {}
     impl FunctionsSealed for naga::Arena<naga::Function> {}
+    pub trait ConstantsSealed {}
+    impl ConstantsSealed for naga::Arena<naga::Constant> {}
     pub trait TypesSealed {}
     impl TypesSealed for naga::UniqueArena<naga::Type> {}
+    pub trait LocalsSealed {}
+    impl LocalsSealed for naga::Arena<naga::LocalVariable> {}
+    pub trait ExpressionsSealed {}
+    impl ExpressionsSealed for naga::Arena<naga::Expression> {}
     pub trait FunctionSealed {}
     impl FunctionSealed for naga::Function {}
     pub trait BlockSealed {}
@@ -68,11 +74,81 @@ impl FunctionsExt for naga::Arena<naga::Function> {
     }
 }
 
+pub(crate) trait ConstantsExt: self::sealed::ConstantsSealed {
+    fn append_anonymous(&mut self, v: naga::ConstantInner) -> naga::Handle<naga::Constant>;
+
+    fn append_i32(&mut self, v: i32) -> naga::Handle<naga::Constant>;
+    fn append_i64(&mut self, v: i64) -> naga::Handle<naga::Constant>;
+    fn append_u32(&mut self, v: u32) -> naga::Handle<naga::Constant>;
+    fn append_u64(&mut self, v: u64) -> naga::Handle<naga::Constant>;
+    fn append_f32(&mut self, v: f32) -> naga::Handle<naga::Constant>;
+    fn append_f64(&mut self, v: f64) -> naga::Handle<naga::Constant>;
+}
+
+impl ConstantsExt for naga::Arena<naga::Constant> {
+    fn append_anonymous(&mut self, inner: naga::ConstantInner) -> naga::Handle<naga::Constant> {
+        self.append(
+            naga::Constant {
+                name: None,
+                specialization: None,
+                inner,
+            },
+            naga::Span::UNDEFINED,
+        )
+    }
+
+    fn append_u32(&mut self, v: u32) -> naga::Handle<naga::Constant> {
+        self.append_anonymous(naga::ConstantInner::Scalar {
+            width: 4,
+            value: naga::ScalarValue::Uint(v as u64),
+        })
+    }
+
+    fn append_u64(&mut self, v: u64) -> naga::Handle<naga::Constant> {
+        self.append_anonymous(naga::ConstantInner::Scalar {
+            width: 8,
+            value: naga::ScalarValue::Uint(v),
+        })
+    }
+
+    fn append_f32(&mut self, v: f32) -> naga::Handle<naga::Constant> {
+        self.append_anonymous(naga::ConstantInner::Scalar {
+            width: 4,
+            value: naga::ScalarValue::Float(v as f64),
+        })
+    }
+
+    fn append_f64(&mut self, v: f64) -> naga::Handle<naga::Constant> {
+        self.append_anonymous(naga::ConstantInner::Scalar {
+            width: 8,
+            value: naga::ScalarValue::Float(v),
+        })
+    }
+
+    fn append_i32(&mut self, v: i32) -> naga::Handle<naga::Constant> {
+        self.append_anonymous(naga::ConstantInner::Scalar {
+            width: 4,
+            value: naga::ScalarValue::Sint(v as i64),
+        })
+    }
+
+    fn append_i64(&mut self, v: i64) -> naga::Handle<naga::Constant> {
+        self.append_anonymous(naga::ConstantInner::Scalar {
+            width: 8,
+            value: naga::ScalarValue::Sint(v),
+        })
+    }
+}
+
 pub(crate) trait TypesExt: self::sealed::TypesSealed {}
 
 impl TypesExt for naga::UniqueArena<naga::Type> {}
 
-pub(crate) trait FunctionExt: self::sealed::FunctionSealed {
+pub(crate) trait FunctionExt: self::sealed::FunctionSealed {}
+
+impl FunctionExt for naga::Function {}
+
+pub(crate) trait LocalsExt: self::sealed::LocalsSealed {
     // Shorthand handle generation
     fn new_local(
         &mut self,
@@ -80,7 +156,26 @@ pub(crate) trait FunctionExt: self::sealed::FunctionSealed {
         ty: naga::Handle<naga::Type>,
         init: Option<naga::Handle<naga::Constant>>,
     ) -> naga::Handle<naga::LocalVariable>;
+}
+impl LocalsExt for naga::Arena<naga::LocalVariable> {
+    fn new_local(
+        &mut self,
+        name: String,
+        ty: naga::Handle<naga::Type>,
+        init: Option<naga::Handle<naga::Constant>>,
+    ) -> naga::Handle<naga::LocalVariable> {
+        self.append(
+            naga::LocalVariable {
+                name: Some(name),
+                ty,
+                init,
+            },
+            naga::Span::UNDEFINED,
+        )
+    }
+}
 
+pub(crate) trait ExpressionsExt: self::sealed::ExpressionsSealed {
     // Shorthand expression generation
     fn append_global(
         &mut self,
@@ -100,29 +195,17 @@ pub(crate) trait FunctionExt: self::sealed::FunctionSealed {
         ty: naga::Handle<naga::Type>,
         components: Vec<naga::Handle<naga::Expression>>,
     ) -> naga::Handle<naga::Expression>;
-}
-impl FunctionExt for naga::Function {
-    fn new_local(
+    fn append_load(
         &mut self,
-        name: String,
-        ty: naga::Handle<naga::Type>,
-        init: Option<naga::Handle<naga::Constant>>,
-    ) -> naga::Handle<naga::LocalVariable> {
-        self.local_variables.append(
-            naga::LocalVariable {
-                name: Some(name),
-                ty,
-                init,
-            },
-            naga::Span::UNDEFINED,
-        )
-    }
-
+        pointer: naga::Handle<naga::Expression>,
+    ) -> naga::Handle<naga::Expression>;
+}
+impl ExpressionsExt for naga::Arena<naga::Expression> {
     fn append_global(
         &mut self,
         global: naga::Handle<naga::GlobalVariable>,
     ) -> naga::Handle<naga::Expression> {
-        self.expressions.append(
+        self.append(
             naga::Expression::GlobalVariable(global),
             naga::Span::UNDEFINED,
         )
@@ -131,11 +214,10 @@ impl FunctionExt for naga::Function {
         &mut self,
         constant: naga::Handle<naga::Constant>,
     ) -> naga::Handle<naga::Expression> {
-        self.expressions
-            .append(naga::Expression::Constant(constant), naga::Span::UNDEFINED)
+        self.append(naga::Expression::Constant(constant), naga::Span::UNDEFINED)
     }
     fn append_fn_argument(&mut self, argument_index: u32) -> naga::Handle<naga::Expression> {
-        self.expressions.append(
+        self.append(
             naga::Expression::FunctionArgument(argument_index),
             naga::Span::UNDEFINED,
         )
@@ -144,7 +226,7 @@ impl FunctionExt for naga::Function {
         &mut self,
         local: naga::Handle<naga::LocalVariable>,
     ) -> naga::Handle<naga::Expression> {
-        self.expressions.append(
+        self.append(
             naga::Expression::LocalVariable(local),
             naga::Span::UNDEFINED,
         )
@@ -154,11 +236,16 @@ impl FunctionExt for naga::Function {
         ty: naga::Handle<naga::Type>,
         components: Vec<naga::Handle<naga::Expression>>,
     ) -> naga::Handle<naga::Expression> {
-        let expression = self.expressions.append(
+        self.append(
             naga::Expression::Compose { ty, components },
             naga::Span::UNDEFINED,
-        );
-        return expression;
+        )
+    }
+    fn append_load(
+        &mut self,
+        pointer: naga::Handle<naga::Expression>,
+    ) -> naga::Handle<naga::Expression> {
+        self.append(naga::Expression::Load { pointer }, naga::Span::UNDEFINED)
     }
 }
 
@@ -166,6 +253,7 @@ pub(crate) trait BlockExt: self::sealed::BlockSealed {
     // Shorthand statement addition
     fn push_emit(&mut self, expression: naga::Handle<naga::Expression>);
     fn push_return(&mut self, expression: naga::Handle<naga::Expression>);
+    fn push_empty_return(&mut self);
     fn push_store(
         &mut self,
         pointer: naga::Handle<naga::Expression>,
@@ -186,6 +274,12 @@ impl BlockExt for naga::Block {
             naga::Statement::Return {
                 value: Some(expression),
             },
+            naga::Span::UNDEFINED,
+        );
+    }
+    fn push_empty_return(&mut self) {
+        self.push(
+            naga::Statement::Return { value: None },
             naga::Span::UNDEFINED,
         );
     }
@@ -263,10 +357,12 @@ macro_rules! declare_function {
 #[macro_export]
 macro_rules! naga_expr {
     ($active_function:expr => $($expression:tt)*) => {{
+        #[allow(unused_mut)]
         let (mut module, function) = $active_function.get_active();
         #[allow(unused)]
-        let constants = &mut module.constants;
+        let constants = module.constants;
         let expressions = &mut function.expressions;
+        #[allow(unused)]
         let block = &mut function.body;
         $crate::naga_expr!(@inner constants, expressions, block => $($expression)*)
     }};
@@ -408,43 +504,41 @@ macro_rules! naga_expr {
 
     // Constants
     (@inner $constants:expr, $expressions:expr, $block:expr => I32($term:expr) $($others:tt)*) => {{
-        let const_handle = $constants.append(naga::Constant {
-            name: None,
-            specialization: None,
-            inner: naga::ConstantInner::Scalar { width: 4, value: naga::ScalarValue::Sint($term as i64) },
-        }, naga::Span::UNDEFINED);
-        let handle = $expressions.append(naga::Expression::Constant(const_handle), naga::Span::UNDEFINED);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+        let const_handle = crate::module_ext::ConstantsExt::append_i32($constants, $term);
+        naga_expr!(@inner $constants, $expressions, $block => Constant(const_handle) $($others)*)
     }};
     (@inner $constants:expr, $expressions:expr, $block:expr => U32($term:expr) $($others:tt)*) => {{
-        let const_handle = $constants.append(naga::Constant {
-            name: None,
-            specialization: None,
-            inner: naga::ConstantInner::Scalar { width: 4, value: naga::ScalarValue::Uint($term as u64) },
-        }, naga::Span::UNDEFINED);
-        let handle = $expressions.append(naga::Expression::Constant(const_handle), naga::Span::UNDEFINED);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+        let const_handle = crate::module_ext::ConstantsExt::append_u32($constants, $term);
+        naga_expr!(@inner $constants, $expressions, $block => Constant(const_handle) $($others)*)
     }};
     (@inner $constants:expr, $expressions:expr, $block:expr => F32($term:expr) $($others:tt)*) => {{
-        let const_handle = $constants.append(naga::Constant {
-            name: None,
-            specialization: None,
-            inner: naga::ConstantInner::Scalar { width: 4, value: naga::ScalarValue::Float($term as f64) },
-        }, naga::Span::UNDEFINED);
-        let handle = $expressions.append(naga::Expression::Constant(const_handle), naga::Span::UNDEFINED);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+        let const_handle = crate::module_ext::ConstantsExt::append_f32($constants, $term);
+        naga_expr!(@inner $constants, $expressions, $block => Constant(const_handle) $($others)*)
+    }};
+    (@inner $constants:expr, $expressions:expr, $block:expr => I64($term:expr) $($others:tt)*) => {{
+        let const_handle = crate::module_ext::ConstantsExt::append_i64($constants, $term);
+        naga_expr!(@inner $constants, $expressions, $block => Constant(const_handle) $($others)*)
+    }};
+    (@inner $constants:expr, $expressions:expr, $block:expr => U64($term:expr) $($others:tt)*) => {{
+        let const_handle = crate::module_ext::ConstantsExt::append_u64($constants, $term);
+        naga_expr!(@inner $constants, $expressions, $block => Constant(const_handle) $($others)*)
     }};
     (@inner $constants:expr, $expressions:expr, $block:expr => F64($term:expr) $($others:tt)*) => {{
-        let const_handle = $constants.append(naga::Constant {
-            name: None,
-            specialization: None,
-            inner: naga::ConstantInner::Scalar { width: 8, value: naga::ScalarValue::Float($term as f64) },
-        }, naga::Span::UNDEFINED);
-        let handle = $expressions.append(naga::Expression::Constant(const_handle), naga::Span::UNDEFINED);
+        let const_handle = crate::module_ext::ConstantsExt::append_f64($constants, $term);
+        naga_expr!(@inner $constants, $expressions, $block => Constant(const_handle) $($others)*)
+    }};
+
+    // Getting references to things
+    (@inner $constants:expr, $expressions:expr, $block:expr => Local($term:expr) $($others:tt)*) => {{
+        let handle = crate::module_ext::ExpressionsExt::append_local($expressions, $term);
+        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    }};
+    (@inner $constants:expr, $expressions:expr, $block:expr => Constant($term:expr) $($others:tt)*) => {{
+        let handle = crate::module_ext::ExpressionsExt::append_constant($expressions, $term);
         naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
     }};
     (@inner $constants:expr, $expressions:expr, $block:expr => Global($term:expr) $($others:tt)*) => {{
-        let handle = expressions.append(naga::Expression::GlobalVariable($term), naga::Span::UNDEFINED);
+        let handle = crate::module_ext::ExpressionsExt::append_global($expressions, $term);
         naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
     }};
 

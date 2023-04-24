@@ -4,7 +4,7 @@ use wasm_types::V128;
 
 use crate::{
     build, declare_function,
-    module_ext::{BlockExt, FunctionExt, ModuleExt},
+    module_ext::{BlockExt, ModuleExt},
     naga_expr,
     std_objects::std_objects_gen,
 };
@@ -12,7 +12,7 @@ use crate::{
 use super::{v128_instance_gen, V128Gen};
 
 fn make_const_impl(
-    module: &mut naga::Module,
+    constants: &mut naga::Arena<naga::Constant>,
     ty: naga::Handle<naga::Type>,
     value: V128,
 ) -> naga::Handle<naga::Constant> {
@@ -27,7 +27,7 @@ fn make_const_impl(
                 let word = u32::from_le_bytes(*bytes);
                 let word =
                     u32::try_from(word & 0xFFFFFFFF).expect("truncated word always fits in u32");
-                module.constants.append(
+                constants.append(
                     naga::Constant {
                         name: None,
                         specialization: None,
@@ -41,7 +41,7 @@ fn make_const_impl(
             })
             .collect(),
     };
-    module.constants.append(
+    constants.append(
         naga::Constant {
             name: None,
             specialization: None,
@@ -75,7 +75,11 @@ impl V128Gen for PolyfillV128 {
         module: &mut naga::Module,
         others: super::v128_instance_gen::DefaultRequirements,
     ) -> build::Result<super::v128_instance_gen::Default> {
-        Ok(make_const_impl(module, others.ty, V128::from_bits(0)))
+        Ok(make_const_impl(
+            &mut module.constants,
+            others.ty,
+            V128::from_bits(0),
+        ))
     }
 
     fn gen_size_bytes(
@@ -160,7 +164,7 @@ fn gen_read(
         module => fn {fn_name}(word_address: address_ty) -> v128_ty
     };
 
-    let input_ref = module.fn_mut(function_handle).append_global(buffer);
+    let input_ref = naga_expr!(module, function_handle => Global(buffer));
 
     let read_word1 = naga_expr!(module, function_handle => input_ref[word_address]);
     let read_word2 = naga_expr!(module, function_handle => input_ref[word_address + (U32(1))]);
@@ -190,7 +194,7 @@ fn gen_write(
         module => fn {fn_name}(word_address: address_ty, value: v128_ty)
     };
 
-    let output_ref = module.fn_mut(handle).append_global(buffer);
+    let output_ref = naga_expr!(module, handle => Global(buffer));
 
     let write_word_loc1 = naga_expr!(module, handle => output_ref[word_address]);
     let word1 = naga_expr!(module, handle => value[const 0]);

@@ -8,7 +8,7 @@ use wasm_types::Val;
 use wasmparser::ValType;
 use wasmtime_environ::Trap;
 
-use crate::{build, Tuneables, FLAGS_LEN_BYTES, TRAP_FLAG_INDEX};
+use crate::{build, module_ext::ConstantsExt, Tuneables, FLAGS_LEN_BYTES, TRAP_FLAG_INDEX};
 
 use self::{
     bindings::StdBindings,
@@ -35,6 +35,7 @@ macro_rules! generator_struct {
     ) => {
         paste::paste!{
             mod [< $generated_name:snake _gen >] {
+                #[allow(unused_imports)]
                 use super::*;
 
                 $($(
@@ -111,6 +112,38 @@ macro_rules! generator_struct {
 use generator_struct;
 
 generator_struct! {
+    pub(crate) struct BoolInstance (word: naga::Handle<naga::Type>)
+    {
+        ty: |word| naga::Handle<naga::Type>,
+        const_false: naga::Handle<naga::Constant>,
+        const_true: naga::Handle<naga::Constant>,
+    } with trait GenBool;
+}
+
+impl GenBool for BoolInstance {
+    fn gen_ty(
+        module: &mut naga::Module,
+        others: bool_instance_gen::TyRequirements,
+    ) -> build::Result<bool_instance_gen::Ty> {
+        Ok(others.word)
+    }
+
+    fn gen_const_false(
+        module: &mut naga::Module,
+        others: bool_instance_gen::ConstFalseRequirements,
+    ) -> build::Result<bool_instance_gen::ConstFalse> {
+        Ok(module.constants.append_u32(0))
+    }
+
+    fn gen_const_true(
+        module: &mut naga::Module,
+        others: bool_instance_gen::ConstTrueRequirements,
+    ) -> build::Result<bool_instance_gen::ConstTrue> {
+        Ok(module.constants.append_u32(1))
+    }
+}
+
+generator_struct! {
     pub(crate) struct StdObjects
     {
         word: naga::Handle<naga::Type>,
@@ -134,6 +167,8 @@ generator_struct! {
         v128: |word, bindings, word_max| wasm_tys::V128Instance,
         func_ref: |word, bindings, word_max| wasm_tys::FuncRefInstance,
         extern_ref: |word, bindings, word_max| wasm_tys::ExternRefInstance,
+
+        bool: |word| BoolInstance,
 
         instance_id: |word| naga::Handle<naga::GlobalVariable>,
     } with trait GenStdObjects;
@@ -391,6 +426,13 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
             naga::Span::UNDEFINED,
         ))
     }
+
+    fn gen_bool(
+        module: &mut naga::Module,
+        others: std_objects_gen::BoolRequirements,
+    ) -> build::Result<std_objects_gen::Bool> {
+        BoolInstance::gen_from::<BoolInstance>(module, others.word)
+    }
 }
 
 macro_rules! extract_type_field {
@@ -433,17 +475,17 @@ impl StdObjects {
     /// Makes a new constant from the value
     pub(crate) fn make_wasm_constant(
         &self,
-        module: &mut naga::Module,
+        constants: &mut naga::Arena<naga::Constant>,
         value: Val,
     ) -> build::Result<naga::Handle<naga::Constant>> {
         match value {
-            Val::I32(value) => (self.i32.make_const)(module, self, value),
-            Val::I64(value) => (self.i64.make_const)(module, self, value),
-            Val::F32(value) => (self.f32.make_const)(module, self, value),
-            Val::F64(value) => (self.f64.make_const)(module, self, value),
-            Val::V128(value) => (self.v128.make_const)(module, self, value),
-            Val::FuncRef(value) => (self.func_ref.make_const)(module, self, value),
-            Val::ExternRef(value) => (self.extern_ref.make_const)(module, self, value),
+            Val::I32(value) => (self.i32.make_const)(constants, self, value),
+            Val::I64(value) => (self.i64.make_const)(constants, self, value),
+            Val::F32(value) => (self.f32.make_const)(constants, self, value),
+            Val::F64(value) => (self.f64.make_const)(constants, self, value),
+            Val::V128(value) => (self.v128.make_const)(constants, self, value),
+            Val::FuncRef(value) => (self.func_ref.make_const)(constants, self, value),
+            Val::ExternRef(value) => (self.extern_ref.make_const)(constants, self, value),
         }
     }
 

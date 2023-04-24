@@ -4,15 +4,18 @@ use wasm_types::FuncRef;
 
 use crate::{
     build, declare_function,
-    module_ext::{BlockExt, FunctionExt, ModuleExt},
+    module_ext::{BlockExt, ModuleExt},
     naga_expr,
     std_objects::std_objects_gen,
 };
 
 use super::{func_ref_instance_gen, FuncRefGen};
 
-fn make_const_impl(module: &mut naga::Module, value: FuncRef) -> naga::Handle<naga::Constant> {
-    module.constants.append(
+fn make_const_impl(
+    constants: &mut naga::Arena<naga::Constant>,
+    value: FuncRef,
+) -> naga::Handle<naga::Constant> {
+    constants.append(
         naga::Constant {
             name: None,
             specialization: None,
@@ -47,7 +50,7 @@ impl FuncRefGen for PolyfillFuncRef {
         module: &mut naga::Module,
         _others: super::func_ref_instance_gen::DefaultRequirements,
     ) -> build::Result<super::func_ref_instance_gen::Default> {
-        Ok(make_const_impl(module, FuncRef::none()))
+        Ok(make_const_impl(&mut module.constants, FuncRef::none()))
     }
 
     fn gen_size_bytes(
@@ -132,9 +135,7 @@ fn gen_read(
         module => fn {fn_name}(word_address: address_ty) -> func_ref_ty
     };
 
-    let input_ref = module.fn_mut(function_handle).append_global(buffer);
-
-    let read_value = naga_expr!(module, function_handle => Load(input_ref[word_address]));
+    let read_value = naga_expr!(module, function_handle => Load(Global(buffer)[word_address]));
     module.fn_mut(function_handle).body.push_return(read_value);
 
     Ok(function_handle)
@@ -153,8 +154,7 @@ fn gen_write(
         module => fn {fn_name}(word_address: address_ty, value: func_ref_ty)
     };
 
-    let output_ref = module.fn_mut(function_handle).append_global(buffer);
-    let write_word_loc = naga_expr!(module, function_handle => output_ref[word_address]);
+    let write_word_loc = naga_expr!(module, function_handle => Global(buffer)[word_address]);
     let word = naga_expr!(module, function_handle => value as Uint);
     module
         .fn_mut(function_handle)

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     build, declare_function,
-    module_ext::{BlockExt, FunctionExt, ModuleExt},
+    module_ext::{BlockExt, ModuleExt},
     naga_expr,
     std_objects::std_objects_gen,
 };
@@ -10,12 +10,12 @@ use crate::{
 use super::{f64_instance_gen, F64Gen};
 
 fn make_const_impl(
-    module: &mut naga::Module,
+    constants: &mut naga::Arena<naga::Constant>,
     ty: naga::Handle<naga::Type>,
     value: f64,
 ) -> build::Result<naga::Handle<naga::Constant>> {
     let value = i64::from_le_bytes(value.to_le_bytes());
-    return Ok(super::make_64_bit_const_from_2vec32(ty, module, value));
+    return Ok(super::make_64_bit_const_from_2vec32(ty, constants, value));
 }
 
 #[derive(Clone, Copy)]
@@ -85,7 +85,7 @@ impl FrexpParts {
             naga_expr!(module, function_handle => f64_ty(self.upper_magnitude) * high_coeff);
         let low_val =
             naga_expr!(module, function_handle => f64_ty(self.lower_magnitude) * low_coeff);
-        naga_expr!(module, function_handle => (high_val + low_val) * if ({self.sign} > U32(0)) {F64(-1)} else {F64(1)})
+        naga_expr!(module, function_handle => (high_val + low_val) * if ({self.sign} > U32(0)) {F64(-1.0)} else {F64(1.0)})
     }
 
     /// Combines all of the component expressions back into the underlying representation
@@ -124,7 +124,7 @@ impl F64Gen for PolyfillF64 {
         module: &mut naga::Module,
         others: super::f64_instance_gen::DefaultRequirements,
     ) -> build::Result<super::f64_instance_gen::Default> {
-        make_const_impl(module, others.ty, 0.0)
+        make_const_impl(&mut module.constants, others.ty, 0.0)
     }
 
     fn gen_size_bytes(
@@ -229,7 +229,7 @@ fn gen_read(
         module => fn {fn_name}(word_address: address_ty) -> f64_ty
     };
 
-    let input_ref = module.fn_mut(function_handle).append_global(buffer);
+    let input_ref = naga_expr!(module, function_handle => Global(buffer));
 
     let read_word1 = naga_expr!(module, function_handle => input_ref[word_address]);
     let read_word2 = naga_expr!(module, function_handle => input_ref[word_address + U32(1)]);
@@ -253,7 +253,7 @@ fn gen_write(
         module => fn {fn_name}(word_address: address_ty, value: f64_ty)
     };
 
-    let output_ref = module.fn_mut(handle).append_global(buffer);
+    let output_ref = naga_expr!(module, handle => Global(buffer));
 
     let write_word_loc1 = naga_expr!(module, handle => output_ref[word_address]);
     let word1 = naga_expr!(module, handle => value[const 0]);

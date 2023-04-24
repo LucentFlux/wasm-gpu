@@ -2,15 +2,18 @@ use std::sync::Arc;
 
 use crate::{
     build, declare_function,
-    module_ext::{BlockExt, FunctionExt, ModuleExt},
+    module_ext::{BlockExt, ModuleExt},
     naga_expr,
     std_objects::std_objects_gen,
 };
 
 use super::{f32_instance_gen, F32Gen};
 
-fn make_const_impl(module: &mut naga::Module, value: f32) -> naga::Handle<naga::Constant> {
-    module.constants.append(
+fn make_const_impl(
+    constants: &mut naga::Arena<naga::Constant>,
+    value: f32,
+) -> naga::Handle<naga::Constant> {
+    constants.append(
         naga::Constant {
             name: None,
             specialization: None,
@@ -45,7 +48,7 @@ impl F32Gen for NativeF32 {
         module: &mut naga::Module,
         _others: super::f32_instance_gen::DefaultRequirements,
     ) -> build::Result<super::f32_instance_gen::Default> {
-        Ok(make_const_impl(module, 0.0))
+        Ok(make_const_impl(&mut module.constants, 0.0))
     }
 
     fn gen_size_bytes(
@@ -145,9 +148,7 @@ fn gen_read(
         module => fn {fn_name}(word_address: address_ty) -> f32_ty
     };
 
-    let input_ref = module.fn_mut(function_handle).append_global(buffer);
-
-    let read_word = naga_expr!(module, function_handle => input_ref[word_address]);
+    let read_word = naga_expr!(module, function_handle => Global(buffer)[word_address]);
     let read_value = naga_expr!(module, function_handle => Load(read_word) as Float);
     module.fn_mut(function_handle).body.push_return(read_value);
 
@@ -167,8 +168,7 @@ fn gen_write(
         module => fn {fn_name}(word_address: address_ty, value: f32_ty)
     };
 
-    let output_ref = module.fn_mut(function_handle).append_global(buffer);
-    let write_word_loc = naga_expr!(module, function_handle => output_ref[word_address]);
+    let write_word_loc = naga_expr!(module, function_handle => Global(buffer)[word_address]);
     let word = naga_expr!(module, function_handle => value as Uint);
     module
         .fn_mut(function_handle)
