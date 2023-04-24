@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("could not instantiate all modules");
 
-    let function = instances.get_func("pass_f64").unwrap();
+    let function = instances.get_func("pass_through_local_f64").unwrap();
     let function = function.try_typed::<f64, f64>().unwrap();
 
     let store_source = store_builder

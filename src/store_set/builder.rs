@@ -21,7 +21,7 @@ use crate::store_set::UnmappedStoreSetData;
 use crate::{DeviceStoreSet, Module, Tuneables};
 use perfect_derive::perfect_derive;
 use std::sync::Arc;
-use wasm_gpu_funcgen::{AssembledModule, BuildError};
+use wasm_gpu_funcgen::{AssembledModule, BuildError, OptimiseError};
 use wasm_types::{ExternRef, FuncRef, Val, V128};
 use wasmparser::{Operator, ValType};
 use wgpu::BufferAsyncError;
@@ -99,6 +99,9 @@ pub enum BuilderCompleteError {
     OoM(DelayedOutOfMemoryError<MappedStoreSetBuilder>),
     #[error("could not build SPIR-V module")]
     BuildError(BuildError),
+    #[cfg(feature = "opt")]
+    #[error("could not optimise SPIR-V module")]
+    OptimiseError(OptimiseError),
 }
 
 /// Acts like a traditional OOP factory where we initialise modules into this before
@@ -284,22 +287,12 @@ impl MappedStoreSetBuilder {
             .map_err(BuilderCompleteError::BuildError)?;
 
         // Try to optimise
-        #[allow(unused_mut)]
-        let mut module = &assembled_module;
         #[cfg(feature = "opt")]
-        let optimised_module = assembled_module.optimise();
-        #[cfg(feature = "opt")]
-        match &optimised_module {
-            Ok(optimised_module) => module = optimised_module,
-            // Fall back to naga, or panic on debug
-            Err(e) => {
-                if cfg!(debug_asserts) {
-                    panic!("failed to create optimised spir-v: {:?}", e);
-                }
-            }
-        }
+        let assembled_module = assembled_module
+            .optimise()
+            .map_err(BuilderCompleteError::OptimiseError)?;
 
-        let shader_module = WasmShaderModule::make(queue.device(), module);
+        let shader_module = WasmShaderModule::make(queue.device(), &assembled_module);
 
         Ok(CompletedBuilder {
             label,
