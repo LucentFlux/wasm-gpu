@@ -275,6 +275,7 @@ macro_rules! naga_expr {
         let function = $module.functions.get_mut($function_handle.clone());
         #[allow(unused)]
         let constants = &mut $module.constants;
+        #[allow(unused)]
         let expressions = &mut function.expressions;
         #[allow(unused)]
         let block = &mut function.body;
@@ -285,6 +286,7 @@ macro_rules! naga_expr {
         let function = $module.functions.get_mut($function_handle.clone());
         #[allow(unused)]
         let constants = &mut $module.constants;
+        #[allow(unused)]
         let expressions = &mut function.expressions;
         $crate::naga_expr!(@inner constants, expressions, $block => $($expression)*)
     }};
@@ -356,6 +358,12 @@ macro_rules! naga_expr {
         let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::InclusiveOr, left, right }, naga::Span::UNDEFINED);
         $crate::naga_expr!(@emit $block => handle)
     }};
+    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt & $($rhs:tt)*) => {{
+        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
+        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
+        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::And, left, right }, naga::Span::UNDEFINED);
+        $crate::naga_expr!(@emit $block => handle)
+    }};
     (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt > $($rhs:tt)*) => {{
         let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
         let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
@@ -417,6 +425,24 @@ macro_rules! naga_expr {
         let handle = $expressions.append(naga::Expression::Constant(const_handle), naga::Span::UNDEFINED);
         naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
     }};
+    (@inner $constants:expr, $expressions:expr, $block:expr => F32($term:expr) $($others:tt)*) => {{
+        let const_handle = $constants.append(naga::Constant {
+            name: None,
+            specialization: None,
+            inner: naga::ConstantInner::Scalar { width: 4, value: naga::ScalarValue::Float($term as f64) },
+        }, naga::Span::UNDEFINED);
+        let handle = $expressions.append(naga::Expression::Constant(const_handle), naga::Span::UNDEFINED);
+        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    }};
+    (@inner $constants:expr, $expressions:expr, $block:expr => F64($term:expr) $($others:tt)*) => {{
+        let const_handle = $constants.append(naga::Constant {
+            name: None,
+            specialization: None,
+            inner: naga::ConstantInner::Scalar { width: 8, value: naga::ScalarValue::Float($term as f64) },
+        }, naga::Span::UNDEFINED);
+        let handle = $expressions.append(naga::Expression::Constant(const_handle), naga::Span::UNDEFINED);
+        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    }};
     (@inner $constants:expr, $expressions:expr, $block:expr => Global($term:expr) $($others:tt)*) => {{
         let handle = expressions.append(naga::Expression::GlobalVariable($term), naga::Span::UNDEFINED);
         naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
@@ -426,6 +452,14 @@ macro_rules! naga_expr {
     (@inner $constants:expr, $expressions:expr, $block:expr => Load($($pointer:tt)*) $($others:tt)*) => {{
         let pointer = naga_expr!(@inner $constants, $expressions, $block => $($pointer)*);
         let handle = $expressions.append(naga::Expression::Load { pointer }, naga::Span::UNDEFINED);
+        $crate::naga_expr!(@emit $block => handle);
+        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    }};
+
+    // Maths
+    (@inner $constants:expr, $expressions:expr, $block:expr => exp2($($arg:tt)*) $($others:tt)*) => {{
+        let arg = naga_expr!(@inner $constants, $expressions, $block => $($arg)*);
+        let handle = $expressions.append(naga::Expression::Math { fun: naga::MathFunction::Exp2, arg, arg1: None, arg2: None, arg3: None }, naga::Span::UNDEFINED);
         $crate::naga_expr!(@emit $block => handle);
         naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
     }};
@@ -478,5 +512,6 @@ macro_rules! naga_expr {
     }};
 
     // Arbitrary embeddings
+    (@inner $constants:expr, $expressions:expr, $block:expr => {$term:expr}) => { $term };
     (@inner $constants:expr, $expressions:expr, $block:expr => $term:expr) => { $term };
 }
