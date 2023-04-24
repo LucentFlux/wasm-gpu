@@ -159,19 +159,6 @@ impl WasmFnArgs {
     }
 }
 
-/// The things that every wasm function has passed in
-pub(crate) struct UniversalArguments {
-    invocation_id: FnArg,
-}
-
-impl UniversalArguments {
-    pub(crate) fn append_to(function: &mut naga::Function, std_objects: &StdObjects) -> Self {
-        let invocation_id = FnArg::append_to(function, std_objects.word);
-
-        Self { invocation_id }
-    }
-}
-
 /// The things that every entry function has passed in
 pub(crate) struct EntryArguments {
     pub(crate) global_id: FnArg,

@@ -134,6 +134,8 @@ generator_struct! {
         v128: |word, bindings, word_max| wasm_tys::V128Instance,
         func_ref: |word, bindings, word_max| wasm_tys::FuncRefInstance,
         extern_ref: |word, bindings, word_max| wasm_tys::ExternRefInstance,
+
+        instance_id: |word| naga::Handle<naga::GlobalVariable>,
     } with trait GenStdObjects;
 }
 
@@ -157,7 +159,7 @@ struct StdObjectsGenerator<Ps: GenerationParameters>(PhantomData<Ps>);
 impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
     fn gen_word(
         module: &mut naga::Module,
-        others: std_objects_gen::WordRequirements,
+        _others: std_objects_gen::WordRequirements,
     ) -> build::Result<std_objects_gen::Word> {
         let naga_ty = naga::Type {
             name: None,
@@ -172,7 +174,7 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
 
     fn gen_uvec3(
         module: &mut naga::Module,
-        others: std_objects_gen::Uvec3Requirements,
+        _others: std_objects_gen::Uvec3Requirements,
     ) -> build::Result<std_objects_gen::Uvec3> {
         let naga_ty = naga::Type {
             name: None,
@@ -369,6 +371,22 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
                     width: 4,
                     value: naga::ScalarValue::Uint(u32::MAX as u64),
                 },
+            },
+            naga::Span::UNDEFINED,
+        ))
+    }
+
+    fn gen_instance_id(
+        module: &mut naga::Module,
+        others: std_objects_gen::InstanceIdRequirements,
+    ) -> build::Result<std_objects_gen::InstanceId> {
+        Ok(module.global_variables.append(
+            naga::GlobalVariable {
+                name: Some("invocation_id".to_owned()),
+                space: naga::AddressSpace::Private,
+                binding: None,
+                ty: others.word,
+                init: None,
             },
             naga::Span::UNDEFINED,
         ))

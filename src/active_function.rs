@@ -6,20 +6,18 @@ mod locals;
 mod mvp;
 mod results;
 
-use std::collections::HashMap;
-
 use naga::Handle;
 use wasm_opcodes::OperatorByProposal;
 use wasm_types::FuncRef;
 
+use crate::module_ext::{BlockExt, FunctionExt};
 use crate::{
-    build, get_entry_name, module_ext::ModuleExt, naga_expr, std_objects::StdObjects, BuildError,
-    ExceededComponent, FuncUnit,
+    build, get_entry_name, module_ext::ModuleExt, naga_expr, std_objects::StdObjects, FuncUnit,
 };
 
 use self::results::WasmFnResTy;
 use self::{
-    arguments::{EntryArguments, UniversalArguments, WasmFnArgs},
+    arguments::{EntryArguments, WasmFnArgs},
     locals::FnLocals,
 };
 use self::{block_gen::populate_block, body_gen::FunctionBodyInformation};
@@ -78,7 +76,6 @@ pub(crate) struct MutModuleWithoutFunctions<'a> {
 
 pub(crate) struct InternalFunction {
     handle: Handle<naga::Function>,
-    universal_arguments: UniversalArguments,
     wasm_arguments: WasmFnArgs,
     wasm_results: Option<WasmFnResTy>,
     locals: FnLocals,
@@ -100,7 +97,6 @@ impl InternalFunction {
         let handle = module.new_empty_function(name);
         let function = module.fn_mut(handle);
 
-        let universal_arguments = UniversalArguments::append_to(function, std_objects);
         let wasm_arguments =
             WasmFnArgs::append_to(function, std_objects, function_definition.data.ty.params());
         if let Some(wasm_results) = &wasm_results {
@@ -117,7 +113,6 @@ impl InternalFunction {
 
         Ok(Self {
             handle,
-            universal_arguments,
             wasm_arguments,
             wasm_results,
             locals,
@@ -309,24 +304,29 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
     ) -> build::Result<()> {
         let instance_index = self.get_workgroup_index();
 
-        let mut arg_handles = vec![instance_index];
-        let mut read_args = self.read_entry_inputs(arguments, instance_index);
-        arg_handles.append(&mut read_args);
+        // Write entry globals
+        let invocation_id = self.std_objects().instance_id;
+        let invocation_id_ptr = self.get_mut().append_global(invocation_id);
+        self.get_mut()
+            .body
+            .push_store(invocation_id_ptr, instance_index);
 
         // Call fn
-        let results = results_ty.as_ref().map(|results_ty| {
-            (
-                results_ty,
-                self.get_mut().expressions.append(
-                    naga::Expression::CallResult(base_function),
-                    naga::Span::UNDEFINED,
-                ),
-            )
-        });
+        let arguments = self.read_entry_inputs(arguments, instance_index);
+        let results: Option<(&WasmFnResTy, Handle<naga::Expression>)> =
+            results_ty.as_ref().map(|results_ty| {
+                (
+                    results_ty,
+                    self.get_mut().expressions.append(
+                        naga::Expression::CallResult(base_function),
+                        naga::Span::UNDEFINED,
+                    ),
+                )
+            });
         self.get_mut().body.push(
             naga::Statement::Call {
                 function: base_function,
-                arguments: arg_handles,
+                arguments,
                 result: results.map(|v| v.1),
             },
             naga::Span::UNDEFINED,
