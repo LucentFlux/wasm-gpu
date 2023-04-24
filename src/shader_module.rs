@@ -2,7 +2,9 @@ use std::borrow::Cow;
 
 use elsa::FrozenMap;
 use itertools::Itertools;
-use wasm_gpu_funcgen::{get_entry_name, AssembledModule, BINDING_TUPLES};
+use wasm_gpu_funcgen::{
+    display_error_recursively, get_entry_name, AssembledModule, BINDING_TUPLES,
+};
 use wasm_types::FuncRef;
 use wgpu::{BindGroupLayoutDescriptor, ShaderModule};
 use wgpu_async::{AsyncQueue, WgpuFuture};
@@ -22,10 +24,30 @@ impl WasmShaderModule {
         assembled: &AssembledModule,
     ) -> wgpu::ShaderModule {
         let AssembledModule { module, .. } = assembled;
-        device.create_shader_module(wgpu::ShaderModuleDescriptor {
+
+        #[cfg(debug_assertions)]
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+
+        let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Naga(Cow::Owned(module.clone())),
-        })
+        });
+
+        // Clearly this might be slow in debug, but we assume there will be no issues in realease so drop the performance hit
+        #[cfg(debug_assertions)]
+        if let Some(error) = pollster::block_on(device.pop_error_scope()) {
+            panic!(
+                "failed to make shader module due to naga validation error. \
+                Note that the module has been validated independently of the device, \
+                so this is an error caused when the valid shader was instantiated on the specific GPU. \
+                This indicates that the cause of the error is a mismatch in configuration between the device used and the shader generated, \
+                for example by enabling features (e.g. 64 bit floats) within shader generation but not for the device used: {}\nmodule: {:#?}",
+                display_error_recursively(&error),
+                module
+            )
+        }
+
+        return shader_module;
     }
 
     pub(crate) fn make(device: &wgpu::Device, assembled: &AssembledModule) -> Self {

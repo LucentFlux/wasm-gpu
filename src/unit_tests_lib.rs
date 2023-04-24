@@ -29,8 +29,8 @@ pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
         .request_device(
             &wgpu::DeviceDescriptor {
                 label: None,
-                features: wgpu::Features::empty(),
-                limits: crate::downlevel_wasm_defaults(),
+                features: adapter.features(),
+                limits: adapter.limits(),
             },
             None,
         )

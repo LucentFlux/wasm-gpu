@@ -284,8 +284,11 @@ impl MappedStoreSetBuilder {
             .map_err(BuilderCompleteError::BuildError)?;
 
         // Try to optimise
+        #[allow(unused_mut)]
         let mut module = &assembled_module;
+        #[cfg(feature = "opt")]
         let optimised_module = assembled_module.optimise();
+        #[cfg(feature = "opt")]
         match &optimised_module {
             Ok(optimised_module) => module = optimised_module,
             // Fall back to naga, or panic on debug
@@ -419,7 +422,10 @@ mod tests {
             .await
             .expect("could not instantiate all modules");
 
-        let set = stores_builder.complete(&queue).await.unwrap();
+        let set = match stores_builder.complete(&queue).await {
+            Ok(set) => set,
+            Err(e) => panic!("{:#?}", e),
+        };
 
         let buffers = Arc::try_unwrap(set.datas)
             .map_err(|_| {
