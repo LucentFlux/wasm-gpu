@@ -45,14 +45,14 @@ async fn main() -> anyhow::Result<()> {
     // wasm setup
     let wat = r#"
         (module
-            (func $f (param f64) (result f64) (local $l f64)
-                (f64.const 12.0)
-                (return)
+            (func $f (param i32) (result f32)
+                (f32.const 12.0)
                 (local.get 0)
-                (local.set $l)
-                (local.get $l)
+                (br_if 0)
+                (f32.const 5.0)
+                (f32.add)
             )
-            (export "pass_through_local_f64" (func $f))
+            (export "foi" (func $f))
         )
         "#;
     let module = wasm_gpu::Module::new(
@@ -69,8 +69,8 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("could not instantiate all modules");
 
-    let function = instances.get_func("pass_through_local_f64").unwrap();
-    let function = function.try_typed::<f64, f64>().unwrap();
+    let function = instances.get_func("foi").unwrap();
+    let function = function.try_typed::<i32, f32>().unwrap();
 
     let store_source = store_builder
         .complete(&queue)
@@ -87,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
     println!("=====================HLSL SHADER END=====================");
 
     let results = function
-        .call_all(&memory_system, &queue, &mut stores, vec![1000.01f64])
+        .call_all(&memory_system, &queue, &mut stores, vec![1])
         .await
         .unwrap()
         .await

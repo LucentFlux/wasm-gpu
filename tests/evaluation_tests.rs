@@ -327,3 +327,80 @@ fn early_return() {
         1.00031001f32,
     )
 }
+
+#[test]
+fn bare_break() {
+    test_parity::<(), f32>(
+        r#"
+        (module
+            (func $f (result f32)
+                (f32.const 12.01)
+                (br 0)
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        (),
+    )
+}
+
+#[test]
+fn br_if_untaken() {
+    test_parity::<i32, f32>(
+        r#"
+        (module
+            (func $f (param i32) (result f32)
+                (f32.const 12.0)
+                (local.get 0)
+                (br_if 0)
+                (f32.const 5.0)
+                (f32.add)
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        0,
+    )
+}
+
+#[test]
+fn br_if_taken_1() {
+    test_parity::<i32, f32>(
+        r#"
+        (module
+            (func $f (param i32) (result f32)
+                (f32.const 12.0)
+                (local.get 0)
+                (br_if 0)
+                (f32.const 5.0)
+                (f32.add)
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        1,
+    )
+}
+
+#[test]
+fn br_if_taken_2() {
+    test_parity::<i32, f32>(
+        r#"
+        (module
+            (func $f (param i32) (result f32)
+                (f32.const 12.0)
+                (local.get 0)
+                (br_if 0)
+                (f32.const 5.0)
+                (f32.add)
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        2,
+    )
+}
