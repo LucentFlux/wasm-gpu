@@ -3,7 +3,9 @@ mod arguments;
 mod locals;
 mod results;
 
+use itertools::Itertools;
 use naga::Handle;
+use naga_ext::{naga_expr, BlockExt, ModuleExt, ShaderPart};
 use wasm_opcodes::OperatorByProposal;
 use wasm_types::FuncRef;
 
@@ -14,10 +16,7 @@ use self::{
     locals::FnLocals,
 };
 
-use crate::module_ext::{BlockExt, ExpressionsExt};
-use crate::{
-    build, get_entry_name, module_ext::ModuleExt, naga_expr, std_objects::StdObjects, FuncUnit,
-};
+use crate::{build, get_entry_name, std_objects::StdObjects, FuncUnit};
 
 use crate::active_module::ActiveModule;
 
@@ -31,38 +30,13 @@ pub(crate) trait InactiveFunction {
 }
 
 /// Any function, entry or not, that can be modified.
-pub(crate) trait ActiveFunction<'f, 'm: 'f> {
-    fn get_active<'b>(&'b mut self) -> (MutModuleWithoutFunctions<'b>, &'b mut naga::Function)
+pub(crate) trait ActiveFunction<'f, 'm: 'f>: ShaderPart {
+    fn fn_mut<'b>(&'b mut self) -> &'b mut naga::Function
     where
         'f: 'b;
-    fn get_module_mut<'b>(&'b mut self) -> &'b mut ActiveModule<'m>
-    where
-        'f: 'b;
-    fn get_module<'b>(&'b self) -> &'b ActiveModule<'m>
-    where
-        'f: 'b;
-
-    fn get_mut<'b>(&'b mut self) -> &'b mut naga::Function
-    where
-        'f: 'b,
-    {
-        self.get_active().1
-    }
     fn std_objects<'b>(&'b self) -> &'b StdObjects
     where
-        'f: 'b,
-    {
-        &self.get_module().std_objects
-    }
-}
-
-/// While working on a function we may wish to modify the module the function is in.
-/// This contains references to everything *other* than the functions in a module, to
-/// allow mutable references to both to coexist.
-pub(crate) struct MutModuleWithoutFunctions<'a> {
-    pub(crate) types: &'a mut naga::UniqueArena<naga::Type>,
-    pub(crate) constants: &'a mut naga::Arena<naga::Constant>,
-    pub(crate) global_variables: &'a mut naga::Arena<naga::GlobalVariable>,
+        'f: 'b;
 }
 
 pub(crate) struct InternalFunction {
@@ -166,16 +140,25 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
         );
 
         // Define base block
-        let base_block = ActiveBlock::new(block_type, body_data, vec![]);
+        let mut block = naga::Block::default();
+        let base_block = ActiveBlock::new(&mut block, block_type, body_data, vec![]);
 
-        // Parse instructions and populate recusively
+        // Parse instructions
         let mut instructions = func_data
             .data
             .operators
             .iter()
             .map(OperatorByProposal::clone);
-        let (mut block, results, mut body_data) =
+
+        // Populate recursively
+        let (results, mut body_data, remaining_parents) =
             base_block.populate_straight(&mut instructions)?.finish();
+
+        debug_assert!(instructions.next().is_none(), "validation ensures that all instructions are within the body and that blocks are balanced");
+        debug_assert!(
+            remaining_parents.is_empty(),
+            "blocks should be balanced and push and pop their own block labels"
+        );
 
         // Return results
         body_data.push_final_return(&mut block, results);
@@ -197,34 +180,35 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
     }
 }
 
+impl<'f, 'm: 'f> ShaderPart for ActiveInternalFunction<'f, 'm> {
+    fn parts(
+        &mut self,
+    ) -> (
+        &mut naga::Arena<naga::Constant>,
+        &mut naga::Arena<naga::Expression>,
+        &mut naga::Block,
+    ) {
+        let ActiveModule { module, .. } = self.working_module;
+        let func = module.functions.get_mut(self.data.handle);
+        (&mut module.constants, &mut func.expressions, &mut func.body)
+    }
+}
+
 impl<'f, 'm: 'f> ActiveFunction<'f, 'm> for ActiveInternalFunction<'f, 'm> {
-    fn get_active<'b>(&'b mut self) -> (MutModuleWithoutFunctions<'b>, &'b mut naga::Function)
-    where
-        'f: 'b,
-    {
-        let module = &mut self.working_module.module;
-        (
-            MutModuleWithoutFunctions {
-                types: &mut module.types,
-                constants: &mut module.constants,
-                global_variables: &mut module.global_variables,
-            },
-            module.functions.get_mut(self.data.handle),
-        )
-    }
-
-    fn get_module<'b>(&'b self) -> &'b ActiveModule<'m>
+    fn fn_mut<'b>(&'b mut self) -> &'b mut naga::Function
     where
         'f: 'b,
     {
         self.working_module
+            .module
+            .functions
+            .get_mut(self.data.handle)
     }
-
-    fn get_module_mut<'b>(&'b mut self) -> &'b mut ActiveModule<'m>
+    fn std_objects<'b>(&'b self) -> &'b StdObjects
     where
         'f: 'b,
     {
-        self.working_module
+        &self.working_module.std_objects
     }
 }
 
@@ -326,7 +310,7 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
         // Write entry globals
         let instance_id = self.std_objects().instance_id;
         let invocation_id_ptr = naga_expr!(self => Global(instance_id));
-        self.get_mut()
+        self.fn_mut()
             .body
             .push_store(invocation_id_ptr, instance_index);
 
@@ -336,13 +320,13 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
             results_ty.as_ref().map(|results_ty| {
                 (
                     results_ty,
-                    self.get_mut().expressions.append(
+                    self.fn_mut().expressions.append(
                         naga::Expression::CallResult(base_function),
                         naga::Span::UNDEFINED,
                     ),
                 )
             });
-        self.get_mut().body.push(
+        self.fn_mut().body.push(
             naga::Statement::Call {
                 function: base_function,
                 arguments,
@@ -360,37 +344,45 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
     }
 }
 
+impl<'f, 'm: 'f> ShaderPart for ActiveEntryFunction<'f, 'm> {
+    fn parts<'b>(
+        &mut self,
+    ) -> (
+        &mut naga::Arena<naga::Constant>,
+        &mut naga::Arena<naga::Expression>,
+        &mut naga::Block,
+    ) {
+        let func = &mut self
+            .working_module
+            .module
+            .entry_points
+            .get_mut(self.data.index)
+            .expect("entry points cannot be removed")
+            .function;
+        (
+            &mut self.working_module.module.constants,
+            &mut func.expressions,
+            &mut func.body,
+        )
+    }
+}
+
 impl<'f, 'm: 'f> ActiveFunction<'f, 'm> for ActiveEntryFunction<'f, 'm> {
-    fn get_active<'b>(&'b mut self) -> (MutModuleWithoutFunctions<'b>, &'b mut naga::Function)
+    fn fn_mut<'b>(&'b mut self) -> &'b mut naga::Function
     where
         'f: 'b,
     {
         let module = &mut self.working_module.module;
-        (
-            MutModuleWithoutFunctions {
-                types: &mut module.types,
-                constants: &mut module.constants,
-                global_variables: &mut module.global_variables,
-            },
-            &mut module
-                .entry_points
-                .get_mut(self.data.index)
-                .expect("entry points are add only")
-                .function,
-        )
+        &mut module
+            .entry_points
+            .get_mut(self.data.index)
+            .expect("entry points are add only")
+            .function
     }
-
-    fn get_module<'b>(&'b self) -> &'b ActiveModule<'m>
+    fn std_objects<'b>(&'b self) -> &'b StdObjects
     where
         'f: 'b,
     {
-        self.working_module
-    }
-
-    fn get_module_mut<'b>(&'b mut self) -> &'b mut ActiveModule<'m>
-    where
-        'f: 'b,
-    {
-        self.working_module
+        &self.working_module.std_objects
     }
 }

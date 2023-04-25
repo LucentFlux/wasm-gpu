@@ -5,10 +5,11 @@ edition = "2021"
 
 
 [dependencies]
+naga-ext = { path = "../naga-ext" }
 wasm-opcodes = { path = "../wasm-opcodes" }
 wasm-types = { path = "../wasm-types" }
 
-naga = { version = "0.11", features = ["validate", "hlsl-out"] }
+naga = { version = "0.11", features = ["validate", "hlsl-out", "spv-in", "spv-out"] }
 itertools = "0.10"
 wasmparser = "0.93"
 petgraph = "0.6"
@@ -22,8 +23,8 @@ perfect-derive = "0.1"
 ouroboros = "0.15"
 spirv-tools = { version = "0.9", features = [
     "use-compiled-tools",
-], optional = true }
+] }
 
 [features]
 #default = ["opt"]
-opt = ["dep:spirv-tools", "naga/spv-in", "naga/spv-out"]
+opt = []

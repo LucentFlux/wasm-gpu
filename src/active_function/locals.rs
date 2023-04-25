@@ -1,13 +1,8 @@
 use std::collections::HashMap;
 
+use crate::{build, std_objects::StdObjects, BuildError, ExceededComponent};
+use naga_ext::{BlockExt, ExpressionsExt, LocalsExt};
 use wasmparser::ValType;
-
-use crate::{
-    build,
-    module_ext::{BlockExt, ExpressionsExt, LocalsExt},
-    std_objects::StdObjects,
-    BuildError, ExceededComponent,
-};
 
 use super::arguments::WasmFnArgs;
 

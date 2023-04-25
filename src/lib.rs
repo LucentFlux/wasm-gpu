@@ -57,9 +57,7 @@ pub const IO_ARGUMENT_ALIGNMENT_WORDS: u32 = 1;
 // Alignment between sets of WASM value arguments fro each invocation when doing I/O in 4-byte words
 pub const IO_INVOCATION_ALIGNMENT_WORDS: u32 = 1;
 
-#[cfg(feature = "opt")]
 const TARGET_ENV: spirv_tools::TargetEnv = spirv_tools::TargetEnv::Vulkan_1_0;
-#[cfg(feature = "opt")]
 const LANG_VERSION: (u8, u8) = (1, 0);
 const HLSL_OUT_OPTIONS: naga::back::hlsl::Options = naga::back::hlsl::Options {
     shader_model: naga::back::hlsl::ShaderModel::V6_0,
@@ -69,7 +67,6 @@ const HLSL_OUT_OPTIONS: naga::back::hlsl::Options = naga::back::hlsl::Options {
     push_constants_target: None,
     zero_initialize_workgroup_memory: false,
 };
-#[cfg(feature = "opt")]
 const SPV_OUT_OPTIONS: naga::back::spv::Options = naga::back::spv::Options {
     lang_version: LANG_VERSION,
     flags: naga::back::spv::WriterFlags::empty(),
@@ -83,7 +80,6 @@ const SPV_OUT_OPTIONS: naga::back::spv::Options = naga::back::spv::Options {
     },
     zero_initialize_workgroup_memory: naga::back::spv::ZeroInitializeWorkgroupMemoryMode::None,
 };
-#[cfg(feature = "opt")]
 const SPV_IN_OPTIONS: naga::front::spv::Options = naga::front::spv::Options {
     adjust_coordinate_space: false,
     strict_capabilities: false,
@@ -95,7 +91,6 @@ mod active_module;
 mod assembled_module;
 mod brain_function;
 mod function_lookup;
-mod module_ext;
 mod std_objects;
 mod traps;
 mod wasm_front;
@@ -144,7 +139,7 @@ pub fn get_entry_name(funcref: wasm_types::FuncRef) -> String {
     )
 }
 
-#[derive(thiserror::Error, Debug, Clone)]
+#[derive(thiserror::Error, Debug)]
 pub enum BuildError {
     #[error("wasm contained an unsupported instruction {instruction_opcode:?}")]
     UnsupportedInstructionError {
@@ -158,10 +153,12 @@ pub enum BuildError {
     ValidationError(ValidationError),
 }
 
-#[derive(thiserror::Error, Debug, Clone)]
+#[derive(thiserror::Error, Debug)]
 pub enum ValidationError {
     #[error("naga validation failed {0:?}")]
     NagaValidationError(NagaValidationError),
+    #[error("spirv-tools validation failed {0:?}")]
+    SpvToolsValidationError(spirv_tools::Error),
     #[error("the module contained no shader entry points")]
     NoEntryPoints,
     #[error("the module's binding at index {binding_index:?} for the {buffer_label:?} buffer was incompatible: got type {observed_buffer_type:?} but required type {required_buffer_type:?}")]
@@ -177,10 +174,6 @@ pub enum ValidationError {
 pub enum OptimiseError {
     #[error("naga failed to emit spir-v {0:?}")]
     NagaSpvBackError(naga::back::spv::Error),
-    #[cfg(feature = "opt")]
-    #[error("spirv-tools failed to optimise spir-v {0:?}")]
-    SpvOptimiserError(spirv_tools::Error),
-    #[cfg(feature = "opt")]
     #[error("naga failed to receive spir-v {0:?}")]
     NagaSpvFrontError(naga::front::spv::Error),
     #[error("one of our validation checks didn't hold. This is a bug in the wasm-gpu-funcgen crate: {0:?}")]

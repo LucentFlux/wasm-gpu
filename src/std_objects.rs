@@ -4,11 +4,12 @@ mod wasm_tys;
 
 use std::{collections::HashMap, marker::PhantomData};
 
+use naga_ext::ConstantsExt;
 use wasm_types::Val;
 use wasmparser::ValType;
 use wasmtime_environ::Trap;
 
-use crate::{build, module_ext::ConstantsExt, Tuneables, FLAGS_LEN_BYTES, TRAP_FLAG_INDEX};
+use crate::{build, Tuneables, FLAGS_LEN_BYTES, TRAP_FLAG_INDEX};
 
 use self::{
     bindings::StdBindings,

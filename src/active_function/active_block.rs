@@ -1,16 +1,12 @@
 use std::{collections::HashMap, sync::atomic::AtomicUsize};
 
 use itertools::Itertools;
+use naga_ext::{naga_expr, BlockExt, ExpressionsExt, ShaderPart};
 use wasm_opcodes::{ControlFlowOperator, OperatorByProposal};
 use wasmparser::ValType;
 use wasmtime_environ::Trap;
 
-use crate::{
-    build,
-    module_ext::{BlockExt, ExpressionsExt},
-    std_objects::StdObjects,
-    BuildError, FuncAccessible, FunctionModuleData,
-};
+use crate::{build, std_objects::StdObjects, BuildError, FuncAccessible, FunctionModuleData};
 
 use super::{
     locals::{FnLocal, FnLocals},
@@ -138,11 +134,18 @@ impl<'a> BodyData<'a> {
     }
 
     /// Return results from the current stack, or just returns if the function has no such return values.
-    fn push_return(&mut self, block: &mut naga::Block, stack: Vec<naga::Handle<naga::Expression>>) {
+    fn push_return(
+        &mut self,
+        block: &mut naga::Block,
+        stack: &mut Vec<naga::Handle<naga::Expression>>,
+    ) {
         if let Some(return_type) = &self.return_type {
             let required_values = return_type.components().len();
-            assert!(stack.len() >= required_values);
-            let results = stack[stack.len() - required_values..].to_vec();
+            let mut results = Vec::new();
+            for _ in 0..required_values {
+                results.push(stack.pop().expect("validation ensures that enough values were on the stack when return is invoked"))
+            }
+            results.reverse();
             return_type.push_return(self.expressions, block, results);
         } else {
             block.push_empty_return()
@@ -160,18 +163,17 @@ impl<'a> BodyData<'a> {
             block.push_emit(expression);
             result_expressions.push(expression)
         }
-        self.push_return(block, result_expressions);
+        self.push_return(block, &mut result_expressions);
     }
 }
 
 /// When we're building the body of a function, we don't actually need to know what the function is.
 /// We can simply build the block objects, and keep a mutable reference to the expressions within the
 /// function, and go from there.
-pub(crate) struct ActiveBlock<'a> {
-    body_data: BodyData<'a>,
+pub(crate) struct ActiveBlock<'b, 'd> {
+    body_data: BodyData<'d>,
 
     parents: Vec<BlockLabel>,
-    own_label: BlockLabel,
 
     /// Blocks take arguments off of the stack and push back results, like inline functions. To manage these
     /// values in a control-flow independent way (e.g. for looping or branching blocks) we take the parameters
@@ -179,16 +181,19 @@ pub(crate) struct ActiveBlock<'a> {
     arguments: Vec<FnLocal>,
     results: Vec<FnLocal>,
 
-    block: naga::Block,
+    /// The block we are populating into. We don't take ownership because we swap this out sometimes, e.g. when
+    /// branching in a basic block we begin populating the 'else' block instead
+    block: &'b mut naga::Block,
 
     stack: Vec<naga::Handle<naga::Expression>>,
 }
 
-impl<'a> ActiveBlock<'a> {
+impl<'b, 'd> ActiveBlock<'b, 'd> {
     pub(super) fn new(
+        block: &'b mut naga::Block,
         block_type: BlockType,
-        mut body_data: BodyData<'a>,
-        parents: Vec<BlockLabel>,
+        mut body_data: BodyData<'d>,
+        mut parents: Vec<BlockLabel>,
     ) -> Self {
         let block_id = body_data
             .block_count
@@ -209,6 +214,7 @@ impl<'a> ActiveBlock<'a> {
             block_type.results,
         );
 
+        // Set up block-level data
         let own_label = body_data.unused_labels.pop().unwrap_or_else(|| {
             BlockLabel::new(
                 block_id,
@@ -218,7 +224,6 @@ impl<'a> ActiveBlock<'a> {
             )
         });
 
-        let mut block = naga::Block::new();
         // Clear is_branching flag
         block.push_store(
             own_label.is_branching.expression,
@@ -226,6 +231,8 @@ impl<'a> ActiveBlock<'a> {
                 .expressions
                 .append_constant(body_data.std_objects.bool.const_false),
         );
+
+        parents.push(own_label);
 
         // First thing we do is load arguments into stack
         let mut stack = Vec::new();
@@ -238,7 +245,6 @@ impl<'a> ActiveBlock<'a> {
         Self {
             body_data,
             parents,
-            own_label,
             arguments,
             results,
             block,
@@ -256,50 +262,144 @@ impl<'a> ActiveBlock<'a> {
         }
     }
 
+    /// Webassembly allows breaks/returns/jumps mid-block, while naga doesn't. This is a sink method used
+    /// after an unconditional branch when we need to discard everything left in a function. It eats up to,
+    /// but not including, the next *balanced* end instruction
+    fn eat_to_end(instructions: &mut impl Iterator<Item = OperatorByProposal>) {
+        let mut depth = 0;
+        while let Some(instruction) = instructions.next() {
+            match instruction {
+                OperatorByProposal::ControlFlow(cfo) => match cfo {
+                    ControlFlowOperator::End => {
+                        if depth == 0 {
+                            return;
+                        }
+                        depth -= 1
+                    }
+                    ControlFlowOperator::Block { .. }
+                    | ControlFlowOperator::If { .. }
+                    | ControlFlowOperator::Loop { .. } => depth += 1,
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    }
+
     /// Populates a non-looping (straight) block, and hands back the resulting block, as well as
     /// the resulting stack from this block in the form of local variables that can be read
     pub(crate) fn populate_straight(
         mut self,
         instructions: &mut impl Iterator<Item = OperatorByProposal>,
     ) -> build::Result<Self> {
+        let true_expression = self
+            .body_data
+            .expressions
+            .append_constant(self.body_data.std_objects.bool.const_true);
+        let false_expression = self
+            .body_data
+            .expressions
+            .append_constant(self.body_data.std_objects.bool.const_false);
+
         loop {
             let operation = self.read_basic_block(instructions)?;
-            match operation {
+            let should_test_break = match operation {
                 ControlFlowOperator::End => break,
-                ControlFlowOperator::Block { blockty } => todo!(),
-                ControlFlowOperator::Loop { blockty } => todo!(),
-                ControlFlowOperator::If { blockty } => todo!(),
-                ControlFlowOperator::Else => todo!(),
-                ControlFlowOperator::Br { relative_depth } => todo!(),
-                ControlFlowOperator::BrIf { relative_depth } => todo!(),
+                ControlFlowOperator::Br { relative_depth } => {
+                    for i in 0..=relative_depth {
+                        let i = usize::try_from(i)
+                            .expect("branching depth must fit within CPU word size");
+                        let i = self.parents.len() - i - 1;
+                        let parent = self
+                            .parents
+                            .get(i)
+                            .expect("validation must ensure that branch does not escape parents");
+
+                        self.block
+                            .push_store(parent.is_branching.expression, true_expression);
+                    }
+                    true
+                }
+                ControlFlowOperator::Block { blockty } => unimplemented!(),
+                ControlFlowOperator::Loop { blockty } => unimplemented!(),
+                ControlFlowOperator::If { blockty } => unimplemented!(),
+                ControlFlowOperator::BrIf { relative_depth } => unimplemented!(),
                 ControlFlowOperator::BrTable {
                     targets,
                     default_target,
-                } => todo!(),
-                ControlFlowOperator::Return => todo!(),
-                ControlFlowOperator::Call { function_index } => todo!(),
+                } => unimplemented!(),
+                ControlFlowOperator::Return => {
+                    self.body_data.push_return(&mut self.block, &mut self.stack);
+                    Self::eat_to_end(instructions);
+                    break;
+                }
+                ControlFlowOperator::Call { function_index } => unimplemented!(),
                 ControlFlowOperator::CallIndirect {
                     type_index,
                     table_index,
                     table_byte,
-                } => todo!(),
+                } => unimplemented!(),
+                ControlFlowOperator::Else => {
+                    unreachable!("validation ensures that else follows if")
+                }
+            };
+
+            if should_test_break {
+                let break_expr = self
+                    .parents
+                    .last()
+                    .expect("every block pushes its own label")
+                    .is_branching
+                    .expression;
+                let condition = naga_expr!(&mut self => break_expr > U32(0));
+
+                let mut accept = naga::Block::default();
+                accept.push_store(break_expr, false_expression);
+
+                self.block.push(
+                    naga::Statement::If {
+                        condition,
+                        accept,
+                        reject: naga::Block::default(),
+                    },
+                    naga::Span::UNDEFINED,
+                );
+                // Then get the reject block back
+                self.block = match self.block.last_mut().expect("just pushed something") {
+                    naga::Statement::If { reject, .. } => reject,
+                    _ => unreachable!(
+                        "just pushed an if statement, so last item must be an if statement"
+                    ),
+                }
             }
         }
 
         Ok(self)
     }
 
-    pub(crate) fn finish(mut self) -> (naga::Block, Vec<FnLocal>, BodyData<'a>) {
+    pub(crate) fn finish(mut self) -> (Vec<FnLocal>, BodyData<'d>, Vec<BlockLabel>) {
         // Write back stack
-        for (value, local) in self.stack.into_iter().zip_eq(&self.results) {
+        for (value, local) in self.stack.into_iter().zip(&self.results) {
             self.block.push_store(local.expression, value);
         }
 
         // Put label back
-        self.body_data.unused_labels.push(self.own_label);
+        let own_label = self
+            .parents
+            .pop()
+            .expect("every block pushes then pops its own label");
+        self.body_data.unused_labels.push(own_label);
 
         // Deconstruct
-        return (self.block, self.results, self.body_data);
+        let Self {
+            body_data,
+            parents,
+            results,
+            block: _,
+            arguments: _,
+            stack: _,
+        } = self;
+        return (results, body_data, parents);
     }
 
     /// Fills instructions until some control flow instruction
@@ -341,7 +441,7 @@ impl<'a> ActiveBlock<'a> {
 }
 
 // Methods used by instruction implementations to modify a working block
-impl<'a> ActiveBlock<'a> {
+impl<'b, 'd> ActiveBlock<'b, 'd> {
     /// Pushes an expression on to the current stack
     fn push(&mut self, value: naga::Expression) -> naga::Handle<naga::Expression> {
         let needs_emitting = match &value {
@@ -455,5 +555,21 @@ impl<'a> ActiveBlock<'a> {
         let rhs = self.pop();
         let lhs = self.pop();
         self.push_call(function, vec![lhs, rhs])
+    }
+}
+
+impl<'b, 'd> ShaderPart for ActiveBlock<'b, 'd> {
+    fn parts(
+        &mut self,
+    ) -> (
+        &mut naga::Arena<naga::Constant>,
+        &mut naga::Arena<naga::Expression>,
+        &mut naga::Block,
+    ) {
+        (
+            self.body_data.constants,
+            self.body_data.expressions,
+            self.block,
+        )
     }
 }

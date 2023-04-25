@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use wasmtime_environ::Trap;
 
 use super::std_objects_gen;
-use crate::module_ext::{BlockExt, ExpressionsExt, ModuleExt};
 use crate::traps::ALL_TRAPS;
-use crate::{declare_function, naga_expr, trap_to_u32, TRAP_FLAG_INDEX};
+use crate::{trap_to_u32, TRAP_FLAG_INDEX};
+use naga_ext::{declare_function, naga_expr, BlockExt, ExpressionsExt, ModuleExt};
 
 // fn<buffer>(invocation_id: u32, value: u32) -> !
 pub(super) fn gen_trap_function<Ps: crate::std_objects::GenerationParameters>(

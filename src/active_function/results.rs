@@ -1,6 +1,6 @@
-use crate::module_ext::{BlockExt, ExpressionsExt};
 use crate::{active_function::ActiveFunction, build};
-use crate::{naga_expr, BuildError, ExceededComponent};
+use crate::{BuildError, ExceededComponent};
+use naga_ext::{naga_expr, BlockExt, ExpressionsExt};
 use wasm_types::ValTypeByteCount;
 use wasmparser::ValType;
 
@@ -104,7 +104,7 @@ impl WasmFnResTy {
 
             let store_fn = function.std_objects().get_write_output_fn(*val_ty);
 
-            function.get_mut().body.push(
+            function.fn_mut().body.push(
                 naga::Statement::Call {
                     function: store_fn,
                     arguments: vec![location, result],

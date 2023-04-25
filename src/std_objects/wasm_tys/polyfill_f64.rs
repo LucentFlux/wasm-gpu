@@ -1,13 +1,8 @@
 use std::sync::Arc;
 
-use crate::{
-    build, declare_function,
-    module_ext::{BlockExt, ModuleExt},
-    naga_expr,
-    std_objects::std_objects_gen,
-};
-
 use super::{f64_instance_gen, F64Gen};
+use crate::{build, std_objects::std_objects_gen};
+use naga_ext::{declare_function, naga_expr, BlockExt, ModuleExt};
 
 fn make_const_impl(
     constants: &mut naga::Arena<naga::Constant>,

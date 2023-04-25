@@ -134,19 +134,21 @@ impl AssembledModule {
 
         Self::appease_drivers(&mut module);
 
-        Ok(Self {
+        let assembled = Self {
             module_info: Self::validate(&module, tuneables, functions)
                 .map_err(BuildError::ValidationError)?,
             module,
             tuneables: tuneables.clone(),
             functions: functions.clone(),
-        })
+        };
+
+        let assembled = assembled.perform_passes(true, cfg!(feature = "opt"))
+            .expect("optimisation should not fail for internally generated shaders. This is a bug in wasm-gpu-funcgen");
+
+        Ok(assembled)
     }
 
-    /// Uses `spirv-tools` to optimise the shader code for this module, producing an equivalent but optimised
-    /// version of this module
-    #[cfg(feature = "opt")]
-    pub fn optimise(&self) -> Result<Self, OptimiseError> {
+    fn perform_passes(&self, legalization: bool, performance: bool) -> Result<Self, OptimiseError> {
         use spirv_tools::opt::Optimizer;
 
         // First convert to spir-v
@@ -156,14 +158,27 @@ impl AssembledModule {
 
         // Then optimise the spir-v
         let mut opt = spirv_tools::opt::create(Some(crate::TARGET_ENV));
-        opt.register_performance_passes();
+        if legalization {
+            opt.register_hlsl_legalization_passes();
+        }
+        if performance {
+            opt.register_performance_passes();
+        }
         let optimised = opt
             .optimize(
                 words,
                 &mut |message| println!("spirv-opt message: {:?}", message),
-                None,
+                Some(spirv_tools::opt::Options {
+                    validator_options: Some(spirv_tools::val::ValidatorOptions {
+                        before_legalization: legalization,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
             )
-            .map_err(OptimiseError::SpvOptimiserError)?;
+            .map_err(|e| {
+                OptimiseError::ValidationError(ValidationError::SpvToolsValidationError(e))
+            })?;
 
         // Then re-parse
         let module = naga::front::spv::parse_u8_slice(optimised.as_bytes(), &crate::SPV_IN_OPTIONS)
@@ -198,9 +213,8 @@ impl AssembledModule {
 
     /// Converts our internal representation to SPIR-V and passes it back as an array of bytes.
     ///
-    /// This method is used when then generating optimised modules, and so the module produced by this method
+    /// This method is used when then generating modules, and so the module produced by this method
     /// comes with guarantees of parity that `generate_hlsl_source` does not.
-    #[cfg(feature = "opt")]
     pub fn generate_spv_source(&self) -> Result<Vec<u32>, naga::back::spv::Error> {
         let mut writer = naga::back::spv::Writer::new(&crate::SPV_OUT_OPTIONS)?;
 

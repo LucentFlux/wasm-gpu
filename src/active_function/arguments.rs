@@ -1,10 +1,8 @@
+use naga_ext::{naga_expr, ExpressionsExt};
 use wasm_types::ValTypeByteCount;
 use wasmparser::ValType;
 
-use crate::{
-    module_ext::ExpressionsExt, naga_expr, std_objects::StdObjects, IO_ARGUMENT_ALIGNMENT_WORDS,
-    IO_INVOCATION_ALIGNMENT_WORDS,
-};
+use crate::{std_objects::StdObjects, IO_ARGUMENT_ALIGNMENT_WORDS, IO_INVOCATION_ALIGNMENT_WORDS};
 
 use super::ActiveFunction;
 
@@ -75,12 +73,9 @@ impl WasmFnArg {
         function: &mut impl ActiveFunction<'f, 'm>,
         location: naga::Handle<naga::Expression>,
     ) -> naga::Handle<naga::Expression> {
-        let load_fn = function
-            .get_module_mut()
-            .std_objects
-            .get_read_input_fn(self.ty);
+        let load_fn = function.std_objects().get_read_input_fn(self.ty);
 
-        let entry_fn = function.get_mut();
+        let entry_fn = function.fn_mut();
 
         let arg_result = entry_fn
             .expressions

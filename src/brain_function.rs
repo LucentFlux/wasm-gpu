@@ -1,8 +1,6 @@
-use crate::{
-    active_function::InternalFunction,
-    function_lookup::FunctionLookup,
-    module_ext::{FunctionSignature, ModuleExt},
-};
+use crate::{active_function::InternalFunction, function_lookup::FunctionLookup};
+
+use naga_ext::{FunctionSignature, ModuleExt};
 
 use crate::active_module::ActiveModule;
 

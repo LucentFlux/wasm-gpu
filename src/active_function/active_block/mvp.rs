@@ -5,7 +5,7 @@ use wasm_types::Val;
 use wasmtime_environ::Trap;
 
 pub(super) fn eat_mvp_operator(
-    state: &mut ActiveBlock<'_>,
+    state: &mut ActiveBlock<'_, '_>,
     operator: &MVPOperator,
 ) -> build::Result<()> {
     match operator {
