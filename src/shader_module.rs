@@ -36,14 +36,16 @@ impl WasmShaderModule {
         // Clearly this might be slow in debug, but we assume there will be no issues in realease so drop the performance hit
         #[cfg(debug_assertions)]
         if let Some(error) = pollster::block_on(device.pop_error_scope()) {
+            #[cfg(feature = "big_errors")]
+            eprintln!("module: {:#?}", module);
             panic!(
                 "failed to make shader module due to naga validation error. \
                 Note that the module has been validated independently of the device, \
                 so this is an error caused when the valid shader was instantiated on the specific GPU. \
-                This indicates that the cause of the error is a mismatch in configuration between the device used and the shader generated, \
-                for example by enabling features (e.g. 64 bit floats) within shader generation but not for the device used: {}\nmodule: {:#?}",
+                This indicates that either the driver is more strict than our validation (indicating a bug in wasm-gpu), or that the cause \
+                of the error is a mismatch in configuration between the device used and the shader generated, \
+                for example by enabling features (e.g. 64 bit floats) within shader generation but not for the device used: {}",
                 display_error_recursively(&error),
-                module
             )
         }
 

@@ -291,3 +291,39 @@ fn add_5_f64() {
         1.000001000001f64,
     )
 }*/
+
+#[test]
+fn excess_return() {
+    test_parity::<f32, f32>(
+        r#"
+        (module
+            (func $f (param f32) (result f32)
+                (local.get 0)
+                (return)
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        1.00021001f32,
+    )
+}
+
+#[test]
+fn early_return() {
+    test_parity::<f32, f32>(
+        r#"
+        (module
+            (func $f (param f32) (result f32)
+                (f32.const 12.01)
+                (return)
+                (local.get 0)
+                (return)
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        1.00031001f32,
+    )
+}

@@ -46,6 +46,8 @@ async fn main() -> anyhow::Result<()> {
     let wat = r#"
         (module
             (func $f (param f64) (result f64) (local $l f64)
+                (f64.const 12.0)
+                (return)
                 (local.get 0)
                 (local.set $l)
                 (local.get $l)

@@ -99,9 +99,6 @@ pub enum BuilderCompleteError {
     OoM(DelayedOutOfMemoryError<MappedStoreSetBuilder>),
     #[error("could not build SPIR-V module")]
     BuildError(BuildError),
-    #[cfg(feature = "opt")]
-    #[error("could not optimise SPIR-V module")]
-    OptimiseError(OptimiseError),
 }
 
 /// Acts like a traditional OOP factory where we initialise modules into this before
@@ -285,12 +282,6 @@ impl MappedStoreSetBuilder {
         let assembleable_functions = functions.assembleable();
         let assembled_module = AssembledModule::assemble(&assembleable_functions, &tuneables)
             .map_err(BuilderCompleteError::BuildError)?;
-
-        // Try to optimise
-        #[cfg(feature = "opt")]
-        let assembled_module = assembled_module
-            .optimise()
-            .map_err(BuilderCompleteError::OptimiseError)?;
 
         let shader_module = WasmShaderModule::make(queue.device(), &assembled_module);
 
