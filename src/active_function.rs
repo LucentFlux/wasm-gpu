@@ -140,8 +140,7 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
         );
 
         // Define base block
-        let mut block = naga::Block::default();
-        let base_block = ActiveBlock::new(&mut block, block_type, body_data, vec![]);
+        let base_block = ActiveBlock::new(&mut function.body, block_type, body_data, vec![]);
 
         // Parse instructions
         let mut instructions = func_data
@@ -161,12 +160,7 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
         );
 
         // Return results
-        body_data.push_final_return(&mut block, results);
-
-        // Push generated block to function
-        function
-            .body
-            .push(naga::Statement::Block(block), naga::Span::UNDEFINED);
+        body_data.push_final_return(&mut function.body, results);
 
         return Ok(());
     }

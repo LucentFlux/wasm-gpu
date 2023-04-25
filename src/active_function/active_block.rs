@@ -101,6 +101,12 @@ pub(crate) struct BodyData<'a> {
     local_variables: &'a mut naga::Arena<naga::LocalVariable>,
     std_objects: &'a StdObjects,
 
+    // Standard things we use
+    /// A handle to an expression holding a true value
+    true_expression: naga::Handle<naga::Expression>,
+    /// A handle to an expression holding a false value
+    false_expression: naga::Handle<naga::Expression>,
+
     /// To allow reuse of labels across blocks, we first pop from this, then create if that gave None
     unused_labels: Vec<BlockLabel>,
 
@@ -119,6 +125,9 @@ impl<'a> BodyData<'a> {
         local_variables: &'a mut naga::Arena<naga::LocalVariable>,
         std_objects: &'a StdObjects,
     ) -> Self {
+        let true_expression = expressions.append_constant(std_objects.bool.const_true);
+        let false_expression = expressions.append_constant(std_objects.bool.const_false);
+
         Self {
             accessible,
             module_data,
@@ -128,12 +137,15 @@ impl<'a> BodyData<'a> {
             expressions,
             local_variables,
             std_objects,
+            true_expression,
+            false_expression,
             unused_labels: vec![],
             block_count: AtomicUsize::new(0),
         }
     }
 
     /// Return results from the current stack, or just returns if the function has no such return values.
+    /// Returns the values that were popped from the stack to form the return expression
     fn push_return(
         &mut self,
         block: &mut naga::Block,
@@ -286,44 +298,80 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         }
     }
 
+    /// Peeks the top n items and stores them in the n return variables
+    fn push_store_stack_in_results(&mut self) {
+        for (value, local) in self.stack.iter().rev().zip(self.results.iter().rev()) {
+            self.block.push_store(local.expression, *value);
+        }
+    }
+
+    /// Stores true in the variables giving whether the top n parents should break
+    fn push_store_break_top_n_parents(
+        block: &mut naga::Block,
+        parents: &Vec<BlockLabel>,
+        true_expression: naga::Handle<naga::Expression>,
+        relative_depth: u32,
+    ) {
+        for i in 0..=relative_depth {
+            let i = usize::try_from(i).expect("branching depth must fit within CPU word size");
+            let i = parents.len() - i - 1;
+            let parent = parents
+                .get(i)
+                .expect("validation must ensure that branch does not escape parents");
+
+            let is_branching = parent.is_branching.expression;
+            block.push_store(is_branching, true_expression);
+        }
+    }
+
     /// Populates a non-looping (straight) block, and hands back the resulting block, as well as
     /// the resulting stack from this block in the form of local variables that can be read
     pub(crate) fn populate_straight(
         mut self,
         instructions: &mut impl Iterator<Item = OperatorByProposal>,
     ) -> build::Result<Self> {
-        let true_expression = self
-            .body_data
-            .expressions
-            .append_constant(self.body_data.std_objects.bool.const_true);
-        let false_expression = self
-            .body_data
-            .expressions
-            .append_constant(self.body_data.std_objects.bool.const_false);
+        let true_expression = self.body_data.true_expression;
+        let false_expression = self.body_data.false_expression;
 
         loop {
             let operation = self.read_basic_block(instructions)?;
             let should_test_break = match operation {
                 ControlFlowOperator::End => break,
                 ControlFlowOperator::Br { relative_depth } => {
-                    for i in 0..=relative_depth {
-                        let i = usize::try_from(i)
-                            .expect("branching depth must fit within CPU word size");
-                        let i = self.parents.len() - i - 1;
-                        let parent = self
-                            .parents
-                            .get(i)
-                            .expect("validation must ensure that branch does not escape parents");
+                    Self::push_store_break_top_n_parents(
+                        &mut self.block,
+                        &self.parents,
+                        true_expression,
+                        relative_depth,
+                    );
+                    true
+                }
+                ControlFlowOperator::BrIf { relative_depth } => {
+                    let mut accept = naga::Block::default();
+                    Self::push_store_break_top_n_parents(
+                        &mut accept,
+                        &self.parents,
+                        true_expression,
+                        relative_depth,
+                    );
 
-                        self.block
-                            .push_store(parent.is_branching.expression, true_expression);
-                    }
+                    // Build condition
+                    let value = self.pop();
+                    let condition = naga_expr!(&mut self => value > {false_expression});
+
+                    self.block.push(
+                        naga::Statement::If {
+                            condition,
+                            accept,
+                            reject: naga::Block::default(),
+                        },
+                        naga::Span::UNDEFINED,
+                    );
                     true
                 }
                 ControlFlowOperator::Block { blockty } => unimplemented!(),
                 ControlFlowOperator::Loop { blockty } => unimplemented!(),
                 ControlFlowOperator::If { blockty } => unimplemented!(),
-                ControlFlowOperator::BrIf { relative_depth } => unimplemented!(),
                 ControlFlowOperator::BrTable {
                     targets,
                     default_target,
@@ -351,10 +399,14 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                     .expect("every block pushes its own label")
                     .is_branching
                     .expression;
-                let condition = naga_expr!(&mut self => break_expr > U32(0));
+                let condition = naga_expr!(&mut self => Load(break_expr) > {false_expression});
 
+                // Decide what to do if we are breaking
                 let mut accept = naga::Block::default();
+                // Reset our break expression
                 accept.push_store(break_expr, false_expression);
+                // Write current stack to variables
+                self.push_store_stack_in_results();
 
                 self.block.push(
                     naga::Statement::If {
@@ -364,7 +416,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                     },
                     naga::Span::UNDEFINED,
                 );
-                // Then get the reject block back
+                // Then get the reject block back to continue populating
                 self.block = match self.block.last_mut().expect("just pushed something") {
                     naga::Statement::If { reject, .. } => reject,
                     _ => unreachable!(
@@ -379,9 +431,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
 
     pub(crate) fn finish(mut self) -> (Vec<FnLocal>, BodyData<'d>, Vec<BlockLabel>) {
         // Write back stack
-        for (value, local) in self.stack.into_iter().zip(&self.results) {
-            self.block.push_store(local.expression, value);
-        }
+        self.push_store_stack_in_results();
 
         // Put label back
         let own_label = self
