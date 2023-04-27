@@ -425,3 +425,44 @@ do_test!(nested_blocks_br_if(0));
 do_test!(nested_blocks_br_if(1));
 do_test!(nested_blocks_br_if(2));
 do_test!(nested_blocks_br_if(3));
+
+fn nested_if(input: i32) {
+    test_parity::<i32, f32>(
+        r#"
+        (module
+            (func $f (param i32) (result f32)
+                ;; x == 0
+                local.get 0
+                i32.eqz
+                (if (result f32)
+                    (then
+                        f32.const 12.0
+                    ) 
+                    (else
+                        local.get 0
+                        i32.const 1
+                        i32.eq
+                        ;; x == 1
+                        (if (result f32)
+                            (then
+                                f32.const 12.5
+                            )
+                            (else
+                                f32.const 13.01
+                            )
+                        )
+                    )
+                )
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        input,
+    )
+}
+
+do_test!(nested_if(0));
+do_test!(nested_if(1));
+do_test!(nested_if(2));
+do_test!(nested_if(3));

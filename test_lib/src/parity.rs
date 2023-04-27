@@ -1,13 +1,14 @@
 //! A collection of hand-written programs and tests that they evaluate to the expected result.
 //! Uses Wasmtime as a reference implementation
 
+use std::fmt::Debug;
 use wasmtime::Trap;
 use wgpu_async::wrap_to_async;
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
 pub trait ParityType {
-    type WasmTimeTy: wasmtime::WasmResults + Clone + PartialEq;
-    type GpuTy: wasm_types::WasmTyVec + Clone;
+    type WasmTimeTy: wasmtime::WasmResults + Clone + PartialEq + Debug;
+    type GpuTy: wasm_types::WasmTyVec + Clone + Debug;
 
     fn from_gpu(val: Self::GpuTy) -> Self::WasmTimeTy;
     fn are_equal(a: Result<Self::WasmTimeTy, Trap>, b: Result<Self::GpuTy, Trap>) -> bool {
@@ -164,7 +165,12 @@ pub fn test_parity<Input: ParityType, Output: ParityType>(
         for got_result in got_results {
             let got_result = got_result.map_err(|trap_code| wasmtime::Trap::from(trap_code));
 
-            assert!(Output::are_equal(truth_result.clone(), got_result));
+            assert!(
+                Output::are_equal(truth_result.clone(), got_result.clone()),
+                "expected {:?} but got {:?}",
+                truth_result.clone(),
+                got_result
+            );
         }
 
         // Check their memories are the same

@@ -45,35 +45,12 @@ async fn main() -> anyhow::Result<()> {
     // wasm setup
     let wat = r#"
         (module
-            (func $f (param i32) (result i32)
-                (local i32)
-                (block
-                    (block
-                        (block
-                            ;; x == 0
-                            local.get 0
-                            i32.eqz
-                            br_if 0
-
-                            ;; x == 1
-                            local.get 0
-                            i32.const 1
-                            i32.eq
-                            br_if 1
-
-                            ;; else
-                            i32.const 7
-                            local.set 1
-                            br 2
-                        )
-                        i32.const 42
-                        local.set 1
-                        br 1
-                    )
-                    i32.const 99
-                    local.set 1
-                )
-                local.get 1
+            (func $f (param i32) (result f32)
+                (f32.const 12.0)
+                (local.get 0)
+                (br_if 0)
+                (f32.const 5.0)
+                (f32.add)
             )
             (export "foi" (func $f))
         )
@@ -93,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
         .expect("could not instantiate all modules");
 
     let function = instances.get_func("foi").unwrap();
-    let function = function.try_typed::<i32, i32>().unwrap();
+    let function = function.try_typed::<i32, f32>().unwrap();
 
     let store_source = match store_builder.complete(&queue).await {
         Ok(v) => v,
