@@ -38,6 +38,7 @@ impl AssembledModule {
         tuneables: &Tuneables,
         functions: &FuncsInstance,
         capabilities: naga::valid::Capabilities,
+        skip_validation: bool,
     ) -> Result<naga::valid::ModuleInfo, ValidationError> {
         // Our own sanity checks
         if module.entry_points.is_empty() {
@@ -45,7 +46,7 @@ impl AssembledModule {
         }
 
         // spirv-tools validates for us anyway, so this just helps us get better debug info
-        let flags = if cfg!(debug_assertions) {
+        let flags = if !skip_validation && cfg!(debug_assertions) {
             naga::valid::ValidationFlags::all()
         } else {
             naga::valid::ValidationFlags::empty()
@@ -135,7 +136,7 @@ impl AssembledModule {
         };
 
         let assembled = Self {
-            module_info: Self::validate(&module, tuneables, functions, capabilities)
+            module_info: Self::validate(&module, tuneables, functions, capabilities, true)
                 .map_err(BuildError::ValidationError)?,
             module,
             tuneables: tuneables.clone(),
@@ -143,24 +144,22 @@ impl AssembledModule {
             capabilities,
         };
 
-        let assembled = assembled.perform_passes(true, true, cfg!(feature = "opt"))?;
+        let assembled =
+            assembled.perform_spirv_tools_opt_passes(true, true, cfg!(feature = "opt"))?;
 
-        /*
-        // Spam the optimiser a few more times for shits and giggles
         let assembled = if cfg!(feature = "opt") {
-            let assembled = assembled.perform_passes(false, false, true)?;
-            let assembled = assembled.perform_passes(false, false, true)?;
-            let assembled = assembled.perform_passes(false, false, true)?;
             assembled
+                .perform_our_opt_passes()?
+                .perform_spirv_tools_opt_passes(false, false, true)?
         } else {
             assembled
-        };*/
+        };
 
         Ok(assembled)
     }
 
-    fn perform_passes(
-        &self,
+    fn perform_spirv_tools_opt_passes(
+        self,
         legalization: bool,
         size: bool,
         performance: bool,
@@ -215,12 +214,37 @@ impl AssembledModule {
         let tuneables = self.tuneables.clone();
         let functions = self.functions.clone();
         Ok(Self {
-            module_info: Self::validate(&module, &tuneables, &functions, self.capabilities)
+            module_info: Self::validate(&module, &tuneables, &functions, self.capabilities, false)
                 .map_err(BuildError::ValidationError)?,
             capabilities: self.capabilities,
             module,
             tuneables,
             functions,
+        })
+    }
+
+    /// The spirv-tools library isn't built for generated spirv, it's built for hand-coded shaders. This means
+    /// that it fails to optimise some of the wierder things that we do. To get over this, we implement some of our
+    /// own optimisations
+    fn perform_our_opt_passes(self) -> build::Result<Self> {
+        let Self {
+            module,
+            module_info: _, // Throw away old derived info
+            functions,
+            tuneables,
+            capabilities,
+        } = self;
+
+        // Reduce expressions like `expr ? val : false`, `expr ? false : val`, `expr ? val : true` or `expr ? true : val`
+        // TODO
+
+        Ok(Self {
+            module_info: Self::validate(&module, &tuneables, &functions, capabilities, false)
+                .map_err(BuildError::ValidationError)?,
+            module,
+            functions,
+            tuneables,
+            capabilities,
         })
     }
 

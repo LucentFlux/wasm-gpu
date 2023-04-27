@@ -333,16 +333,20 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         }
     }
 
-    /// Populates a non-looping (straight) block, and hands back the resulting block, as well as
-    /// the resulting stack from this block in the form of local variables that can be read
-    pub(crate) fn populate_straight(
+    /// Populates a block using the callbacks provided
+    pub(crate) fn populate(
         mut self,
         instructions: &mut impl Iterator<Item = OperatorByProposal>,
+        on_branching: impl Fn(&mut ActiveBlock, &mut naga::Block),
+        on_not_branching: impl Fn(&mut ActiveBlock, &mut naga::Block),
+        on_parent_also_branching: impl Fn(&mut ActiveBlock, &mut naga::Block),
     ) -> build::Result<Self> {
         loop {
             let operation = self.read_basic_block(instructions)?;
             let should_test_break = match operation {
                 ControlFlowOperator::End => break,
+                // Just treat as the end of a block, since in if...else...end that's what it is
+                ControlFlowOperator::Else => break,
                 ControlFlowOperator::Br { relative_depth } => {
                     Self::push_store_break_top_n_parents(
                         &mut self.block,
@@ -415,7 +419,69 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
 
                     true
                 }
-                ControlFlowOperator::If { blockty } => unimplemented!(),
+                ControlFlowOperator::If { blockty } => {
+                    let value = self.pop();
+                    let wasm_false = self.body_data.wasm_false_expression;
+                    let condition = naga_expr!(&mut self => value != wasm_false);
+
+                    let block_type =
+                        BlockType::from_parsed(blockty, &self.body_data.module_data.types);
+
+                    // Get args
+                    let mut args = Vec::new();
+                    for _ in 0..block_type.arguments.len() {
+                        args.push(self.stack.pop().expect("validation ensures args exist"));
+                    }
+                    args.reverse();
+
+                    // Make new accept block, temporarily moving out of this
+                    let mut accept = naga::Block::default();
+                    let inner_active_accept_block = ActiveBlock::new(
+                        &mut accept,
+                        block_type.clone(),
+                        self.body_data,
+                        self.parents,
+                    );
+
+                    // Write args
+                    inner_active_accept_block.assign_arguments(&mut self.block, args.clone());
+                    let (results, body_data, parents) = inner_active_accept_block
+                        .populate_straight(instructions)?
+                        .finish();
+
+                    // Make new reject block, temporarily moving out of this
+                    let mut reject = naga::Block::default();
+                    let mut inner_active_reject_block =
+                        ActiveBlock::new(&mut reject, block_type, body_data, parents);
+
+                    // Write args
+                    inner_active_reject_block.assign_arguments(&mut self.block, args);
+                    // Overwrite results to unify if statement results
+                    inner_active_reject_block.results = results;
+                    let (results, body_data, parents) = inner_active_reject_block
+                        .populate_straight(instructions)?
+                        .finish();
+
+                    self.body_data = body_data;
+                    self.parents = parents;
+
+                    self.block.push(
+                        naga::Statement::If {
+                            condition,
+                            accept,
+                            reject,
+                        },
+                        naga::Span::UNDEFINED,
+                    );
+
+                    // Extract unified results
+                    for result in results {
+                        let expr = naga_expr!(&mut self => Load(result.expression));
+                        self.stack.push(expr);
+                    }
+
+                    true
+                }
                 ControlFlowOperator::Loop { blockty } => unimplemented!(),
                 ControlFlowOperator::Return => {
                     self.body_data.push_return(&mut self.block, &mut self.stack);
@@ -432,9 +498,6 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                     table_index,
                     table_byte,
                 } => unimplemented!(),
-                ControlFlowOperator::Else => {
-                    unreachable!("validation ensures that else follows if")
-                }
             };
 
             if should_test_break {
@@ -446,21 +509,44 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                     .expression;
                 let condition = naga_expr!(&mut self => Load(break_expr));
 
-                // Decide what to do if we are breaking
+                // Decide what to do if we are branching
                 let mut accept = naga::Block::default();
                 // Reset our break expression
                 accept.push_store(break_expr, self.body_data.naga_false_expression);
-                // Write current stack to variables
-                self.push_store_stack_in_results();
+
+                // Decide what to do if the parent is also branching - useful for loops where we break rather than continue
+                if self.parents.len() > 1 {
+                    if let Some(parent_label) = self.parents.get(self.parents.len() - 2) {
+                        let parent_break_expr = parent_label.is_branching.expression;
+                        let parent_condition = naga_expr!(&mut self => Load(parent_break_expr));
+                        let mut parent_accept = naga::Block::default();
+                        on_parent_also_branching(&mut self, &mut parent_accept);
+                        self.block.push(
+                            naga::Statement::If {
+                                condition: parent_condition,
+                                accept: parent_accept,
+                                reject: naga::Block::default(),
+                            },
+                            naga::Span::UNDEFINED,
+                        );
+                    }
+                }
+
+                on_branching(&mut self, &mut accept);
+
+                // Decide what to do if we aren't branching
+                let mut reject = naga::Block::default();
+                on_not_branching(&mut self, &mut reject);
 
                 self.block.push(
                     naga::Statement::If {
                         condition,
                         accept,
-                        reject: naga::Block::default(),
+                        reject,
                     },
                     naga::Span::UNDEFINED,
                 );
+
                 // Then get the reject block back to continue populating
                 self.block = match self.block.last_mut().expect("just pushed something") {
                     naga::Statement::If { reject, .. } => reject,
@@ -472,6 +558,22 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         }
 
         Ok(self)
+    }
+
+    /// Populates a non-looping (straight) block
+    pub(crate) fn populate_straight(
+        self,
+        instructions: &mut impl Iterator<Item = OperatorByProposal>,
+    ) -> build::Result<Self> {
+        self.populate(
+            instructions,
+            |active, _| {
+                // Write current stack to variables
+                active.push_store_stack_in_results();
+            },
+            |_, _| {},
+            |_, _| {},
+        )
     }
 
     pub(crate) fn finish(mut self) -> (Vec<FnLocal>, BodyData<'d>, Vec<BlockLabel>) {

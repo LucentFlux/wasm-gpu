@@ -114,9 +114,9 @@ macro_rules! generator_struct {
 use generator_struct;
 
 generator_struct! {
-    pub(crate) struct WasmBoolInstance (word: naga::Handle<naga::Type>)
+    pub(crate) struct WasmBoolInstance
     {
-        ty: |word| naga::Handle<naga::Type>,
+        ty: naga::Handle<naga::Type>,
         const_false: naga::Handle<naga::Constant>,
         const_true: naga::Handle<naga::Constant>,
     } with trait GenWasmBool;
@@ -124,24 +124,32 @@ generator_struct! {
 
 impl GenWasmBool for WasmBoolInstance {
     fn gen_ty(
-        _module: &mut naga::Module,
-        others: wasm_bool_instance_gen::TyRequirements,
+        module: &mut naga::Module,
+        _others: wasm_bool_instance_gen::TyRequirements,
     ) -> build::Result<wasm_bool_instance_gen::Ty> {
-        Ok(others.word)
+        let naga_ty = naga::Type {
+            name: None,
+            inner: naga::TypeInner::Scalar {
+                kind: naga::ScalarKind::Sint,
+                width: 4,
+            },
+        };
+
+        Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
 
     fn gen_const_false(
         module: &mut naga::Module,
         _others: wasm_bool_instance_gen::ConstFalseRequirements,
     ) -> build::Result<wasm_bool_instance_gen::ConstFalse> {
-        Ok(module.constants.append_u32(0))
+        Ok(module.constants.append_i32(0))
     }
 
     fn gen_const_true(
         module: &mut naga::Module,
         _others: wasm_bool_instance_gen::ConstTrueRequirements,
     ) -> build::Result<wasm_bool_instance_gen::ConstTrue> {
-        Ok(module.constants.append_u32(1))
+        Ok(module.constants.append_i32(1))
     }
 }
 
@@ -204,7 +212,7 @@ generator_struct! {
         trap_fn: |word, bindings| naga::Handle<naga::Function>,
 
         naga_bool: NagaBoolInstance,
-        wasm_bool: |word| WasmBoolInstance,
+        wasm_bool: WasmBoolInstance,
 
         i32: |word, bindings, word_max, wasm_bool| wasm_tys::I32Instance,
         i64: |word, bindings, word_max, wasm_bool| wasm_tys::I64Instance,
@@ -418,7 +426,7 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
         module: &mut naga::Module,
         others: std_objects_gen::WasmBoolRequirements,
     ) -> build::Result<std_objects_gen::WasmBool> {
-        WasmBoolInstance::gen_from::<WasmBoolInstance>(module, others.word)
+        WasmBoolInstance::gen_from::<WasmBoolInstance>(module)
     }
 
     fn gen_naga_bool(
