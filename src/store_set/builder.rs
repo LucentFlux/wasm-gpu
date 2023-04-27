@@ -21,7 +21,7 @@ use crate::store_set::UnmappedStoreSetData;
 use crate::{DeviceStoreSet, Module, Tuneables};
 use perfect_derive::perfect_derive;
 use std::sync::Arc;
-use wasm_gpu_funcgen::{AssembledModule, BuildError, OptimiseError};
+use wasm_gpu_funcgen::{AssembledModule, BuildError};
 use wasm_types::{ExternRef, FuncRef, Val, V128};
 use wasmparser::{Operator, ValType};
 use wgpu::BufferAsyncError;

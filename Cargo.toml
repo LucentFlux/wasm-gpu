@@ -49,6 +49,6 @@ wasm-gpu-test-lib = { path = "test_lib" }
 rand = "0.8"
 
 [features]
-default = ["big_errors"] # , "opt"
-big_errors = []
+default = ["big_errors", "opt"] # , "opt"
+big_errors = ["wasm-gpu-funcgen/big_errors"]
 opt = ["wasm-gpu-funcgen/opt"]

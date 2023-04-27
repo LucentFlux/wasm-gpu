@@ -2,6 +2,17 @@
 //! Uses Wasmtime as a reference implementation
 use wasm_gpu_test_lib::test_parity;
 
+macro_rules! do_test {
+    ($test_name:ident( $($input:expr),* $(,)? )) => {
+        paste::paste! {
+            #[test]
+            fn [< $test_name $(_ $input)* >]() {
+                $test_name($($input),*)
+            }
+        }
+    };
+}
+
 #[test]
 fn bare_return_i32() {
     test_parity::<(), i32>(
@@ -345,8 +356,7 @@ fn bare_break() {
     )
 }
 
-#[test]
-fn br_if_untaken() {
+fn br_if_taken(input: i32) {
     test_parity::<i32, f32>(
         r#"
         (module
@@ -361,46 +371,57 @@ fn br_if_untaken() {
         )
         "#,
         "foi",
-        0,
+        input,
     )
 }
 
-#[test]
-fn br_if_taken_1() {
-    test_parity::<i32, f32>(
+do_test!(br_if_taken(0));
+do_test!(br_if_taken(1));
+do_test!(br_if_taken(2));
+
+fn nested_blocks_br_if(input: i32) {
+    test_parity::<i32, i32>(
         r#"
         (module
-            (func $f (param i32) (result f32)
-                (f32.const 12.0)
-                (local.get 0)
-                (br_if 0)
-                (f32.const 5.0)
-                (f32.add)
+            (func $f (param i32) (result i32)
+                (local i32)
+                (block
+                    (block
+                        (block
+                            ;; x == 0
+                            local.get 0
+                            i32.eqz
+                            br_if 0
+
+                            ;; x == 1
+                            local.get 0
+                            i32.const 1
+                            i32.eq
+                            br_if 1
+
+                            ;; else
+                            i32.const 7
+                            local.set 1
+                            br 2
+                        )
+                        i32.const 42
+                        local.set 1
+                        br 1
+                    )
+                    i32.const 99
+                    local.set 1
+                )
+                local.get 1
             )
             (export "foi" (func $f))
         )
         "#,
         "foi",
-        1,
+        input,
     )
 }
 
-#[test]
-fn br_if_taken_2() {
-    test_parity::<i32, f32>(
-        r#"
-        (module
-            (func $f (param i32) (result f32)
-                (f32.const 12.0)
-                (local.get 0)
-                (br_if 0)
-                (f32.const 5.0)
-                (f32.add)
-            )
-            (export "foi" (func $f))
-        )
-        "#,
-        "foi",
-        2,
-    )
-}
+do_test!(nested_blocks_br_if(0));
+do_test!(nested_blocks_br_if(1));
+do_test!(nested_blocks_br_if(2));
+do_test!(nested_blocks_br_if(3));

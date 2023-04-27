@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 use wasm_opcodes::OperatorByProposal;
 use wasmparser::{
-    BinaryReaderError, DataKind, ElementItem, ElementKind, Encoding, ExternalKind,
+    BinaryReaderError, DataKind, ElementItem, ElementKind, Encoding, ExternalKind, FuncType,
     FuncValidatorAllocations, GlobalType, MemoryType, NameSectionReader, Operator, Parser, Payload,
     TableType, Type, TypeRef, ValType, Validator,
 };
@@ -85,7 +85,7 @@ pub struct ParsedData<'data> {
 }
 
 pub struct ParsedModule<'data> {
-    pub types: Vec<Type>,
+    pub types: Vec<FuncType>,
     pub imports: Vec<(&'data str, &'data str, ImportTypeRef)>,
     pub tables: Vec<TableType>,
     pub memories: Vec<MemoryType>,
@@ -193,7 +193,8 @@ impl ModuleEnviron {
                 result.types.reserve(num);
 
                 for ty in types {
-                    result.types.push(ty?);
+                    let Type::Func(ty) = ty?;
+                    result.types.push(ty);
                 }
             }
 

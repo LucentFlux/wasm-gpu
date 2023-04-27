@@ -130,9 +130,7 @@ impl Module {
                         .types
                         .get((*f_id) as usize)
                         .expect("import function id was out of range");
-                    match ty {
-                        Type::Func(f1) => f2.ty().eq(f1),
-                    }
+                    f2.ty().eq(ty)
                 }
                 (ImportTypeRef::Table(t1), Extern::Table(t2)) => t2.is_type(t1),
                 (ImportTypeRef::Memory(m1), Extern::Memory(m2)) => m2.is_type(m1),
@@ -462,21 +460,19 @@ impl Module {
             .functions
             .iter()
             .map(|func| {
-                match sections
+                let ty = sections
                     .types
                     .get(
                         usize::try_from(func.type_id)
                             .expect("module cannot reside in memory unless #items <= |word|"),
                     )
                     .unwrap()
-                    .clone()
-                {
-                    Type::Func(ty) => FuncData {
-                        ty,
-                        locals: func.locals.clone(),
-                        operators: func.operators.clone(),
-                        module_data: Arc::clone(&module_data),
-                    },
+                    .clone();
+                FuncData {
+                    ty,
+                    locals: func.locals.clone(),
+                    operators: func.operators.clone(),
+                    module_data: Arc::clone(&module_data),
                 }
             })
             .map(|data| functions.register_definition(data))
@@ -496,11 +492,9 @@ impl Module {
             .iter()
             .filter_map(|(_, _, import_type)| match import_type {
                 ImportTypeRef::Func(f_ty_id) => Some(
-                    match &sections.types
+                    sections.types
                         [usize::try_from(*f_ty_id).expect("16 bit architectures are unsupported")]
-                    {
-                        Type::Func(f_ty) => f_ty.clone(),
-                    },
+                    .clone(),
                 ),
                 _ => None,
             })
@@ -509,11 +503,9 @@ impl Module {
             .functions
             .iter()
             .map(|func| {
-                match &sections.types
+                sections.types
                     [usize::try_from(func.type_id).expect("16 bit architectures are unsupported")]
-                {
-                    Type::Func(f_ty) => f_ty.clone(),
-                }
+                .clone()
             })
             .collect_vec();
 
