@@ -115,15 +115,21 @@ impl I32Gen for NativeI32 {
         )
     }
 
-    fn gen_add(
+    super::impl_native_ops! {i32_instance_gen, i32}
+
+    super::impl_integer_ops! {i32_instance_gen, i32}
+
+    fn gen_eqz(
         module: &mut naga::Module,
-        others: super::i32_instance_gen::AddRequirements,
-    ) -> build::Result<super::i32_instance_gen::Add> {
-        let (function_handle, lhs, rhs) = declare_function! {
-            module => fn i32_add(lhs: others.ty, rhs: others.ty) -> others.ty
+        others: i32_instance_gen::EqzRequirements,
+    ) -> build::Result<i32_instance_gen::Eqz> {
+        let (function_handle, value) = declare_function! {
+            module => fn i32_eqz(value: others.ty) -> others.bool.ty
         };
 
-        let res = naga_expr!(module, function_handle => lhs + rhs);
+        let t = naga_expr!(module, function_handle => Constant(others.bool.const_true));
+        let f = naga_expr!(module, function_handle => Constant(others.bool.const_false));
+        let res = naga_expr!(module, function_handle => if (value == I32(0)) {t} else {f});
         module.fn_mut(function_handle).body.push_return(res);
 
         Ok(function_handle)

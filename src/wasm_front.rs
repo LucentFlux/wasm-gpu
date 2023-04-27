@@ -59,7 +59,7 @@ pub enum GlobalIndex {
 /// Data from the parsed module shared by all functions, e.g. function types
 #[derive(Debug)]
 pub struct FunctionModuleData {
-    pub types: Vec<wasmparser::Type>,
+    pub types: Vec<wasmparser::FuncType>,
 }
 
 /// All data for each function in the module, without imports

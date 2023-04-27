@@ -196,7 +196,7 @@ impl F64Gen for PolyfillF64 {
     ) -> build::Result<super::f64_instance_gen::Add> {
         let f64_ty = others.ty;
         let (function_handle, lhs, rhs) = declare_function! {
-            module => fn i64_add(lhs: f64_ty, rhs: f64_ty) -> f64_ty
+            module => fn f64_add(lhs: f64_ty, rhs: f64_ty) -> f64_ty
         };
 
         let lhs_frexp = FrexpParts::from_uvec2(module, function_handle, lhs);
@@ -209,6 +209,8 @@ impl F64Gen for PolyfillF64 {
 
         Ok(function_handle)
     }
+
+    super::impl_bitwise_2vec32_numeric_ops! {f64_instance_gen, f64}
 }
 
 // fn<buffer>(word_address: u32) -> f64

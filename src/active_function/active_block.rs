@@ -24,7 +24,7 @@ pub(super) struct BlockType {
 impl BlockType {
     pub(super) fn from_parsed(
         parsed: wasmparser::BlockType,
-        func_types: HashMap<u32, wasmparser::FuncType>,
+        func_types: &Vec<wasmparser::FuncType>,
     ) -> Self {
         match parsed {
             wasmparser::BlockType::Empty => Self {
@@ -36,8 +36,9 @@ impl BlockType {
                 results: vec![t],
             },
             wasmparser::BlockType::FuncType(ft_id) => {
+                let ft_id = usize::try_from(ft_id).expect("types must be expressable in memory");
                 let ty = func_types
-                    .get(&ft_id)
+                    .get(ft_id)
                     .expect("block type referred to function type id that wasn't present in map");
                 Self {
                     arguments: Vec::from(ty.params()),
@@ -80,8 +81,8 @@ impl BlockLabel {
                 format!("branching_escape_flag_{}", block_id),
                 local_variables,
                 expressions,
-                std_objects.bool.ty,
-                Some(std_objects.bool.const_false),
+                std_objects.naga_bool.ty,
+                Some(std_objects.naga_bool.const_false),
             ),
         }
     }
@@ -103,9 +104,13 @@ pub(crate) struct BodyData<'a> {
 
     // Standard things we use
     /// A handle to an expression holding a true value
-    true_expression: naga::Handle<naga::Expression>,
+    wasm_true_expression: naga::Handle<naga::Expression>,
     /// A handle to an expression holding a false value
-    false_expression: naga::Handle<naga::Expression>,
+    wasm_false_expression: naga::Handle<naga::Expression>,
+    /// A handle to an expression holding a true value
+    naga_true_expression: naga::Handle<naga::Expression>,
+    /// A handle to an expression holding a false value
+    naga_false_expression: naga::Handle<naga::Expression>,
 
     /// To allow reuse of labels across blocks, we first pop from this, then create if that gave None
     unused_labels: Vec<BlockLabel>,
@@ -125,8 +130,10 @@ impl<'a> BodyData<'a> {
         local_variables: &'a mut naga::Arena<naga::LocalVariable>,
         std_objects: &'a StdObjects,
     ) -> Self {
-        let true_expression = expressions.append_constant(std_objects.bool.const_true);
-        let false_expression = expressions.append_constant(std_objects.bool.const_false);
+        let wasm_true_expression = expressions.append_constant(std_objects.wasm_bool.const_true);
+        let wasm_false_expression = expressions.append_constant(std_objects.wasm_bool.const_false);
+        let naga_true_expression = expressions.append_constant(std_objects.naga_bool.const_true);
+        let naga_false_expression = expressions.append_constant(std_objects.naga_bool.const_false);
 
         Self {
             accessible,
@@ -137,8 +144,10 @@ impl<'a> BodyData<'a> {
             expressions,
             local_variables,
             std_objects,
-            true_expression,
-            false_expression,
+            wasm_true_expression,
+            wasm_false_expression,
+            naga_true_expression,
+            naga_false_expression,
             unused_labels: vec![],
             block_count: AtomicUsize::new(0),
         }
@@ -241,7 +250,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
             own_label.is_branching.expression,
             body_data
                 .expressions
-                .append_constant(body_data.std_objects.bool.const_false),
+                .append_constant(body_data.std_objects.naga_bool.const_false),
         );
 
         parents.push(own_label);
@@ -330,9 +339,6 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         mut self,
         instructions: &mut impl Iterator<Item = OperatorByProposal>,
     ) -> build::Result<Self> {
-        let true_expression = self.body_data.true_expression;
-        let false_expression = self.body_data.false_expression;
-
         loop {
             let operation = self.read_basic_block(instructions)?;
             let should_test_break = match operation {
@@ -341,7 +347,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                     Self::push_store_break_top_n_parents(
                         &mut self.block,
                         &self.parents,
-                        true_expression,
+                        self.body_data.naga_true_expression,
                         relative_depth,
                     );
                     true
@@ -351,13 +357,14 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                     Self::push_store_break_top_n_parents(
                         &mut accept,
                         &self.parents,
-                        true_expression,
+                        self.body_data.naga_true_expression,
                         relative_depth,
                     );
 
                     // Build condition
                     let value = self.pop();
-                    let condition = naga_expr!(&mut self => value > {false_expression});
+                    let wasm_false = self.body_data.wasm_false_expression;
+                    let condition = naga_expr!(&mut self => value != wasm_false);
 
                     self.block.push(
                         naga::Statement::If {
@@ -369,18 +376,56 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                     );
                     true
                 }
-                ControlFlowOperator::Block { blockty } => unimplemented!(),
-                ControlFlowOperator::Loop { blockty } => unimplemented!(),
+                ControlFlowOperator::Block { blockty } => {
+                    let block_type =
+                        BlockType::from_parsed(blockty, &self.body_data.module_data.types);
+
+                    // Get args
+                    let mut args = Vec::new();
+                    for _ in 0..block_type.arguments.len() {
+                        args.push(self.stack.pop().expect("validation ensures args exist"));
+                    }
+                    args.reverse();
+
+                    // Make new block, temporarily moving out of this
+                    let mut inner_block = naga::Block::default();
+                    let inner_active_block = ActiveBlock::new(
+                        &mut inner_block,
+                        block_type,
+                        self.body_data,
+                        self.parents,
+                    );
+
+                    // Write args
+                    inner_active_block.assign_arguments(&mut self.block, args);
+
+                    let (results, body_data, parents) =
+                        inner_active_block.populate_straight(instructions)?.finish();
+                    self.body_data = body_data;
+                    self.parents = parents;
+
+                    self.block
+                        .push(naga::Statement::Block(inner_block), naga::Span::UNDEFINED);
+
+                    // Extract results
+                    for result in results {
+                        let expr = naga_expr!(&mut self => Load(result.expression));
+                        self.stack.push(expr);
+                    }
+
+                    true
+                }
                 ControlFlowOperator::If { blockty } => unimplemented!(),
-                ControlFlowOperator::BrTable {
-                    targets,
-                    default_target,
-                } => unimplemented!(),
+                ControlFlowOperator::Loop { blockty } => unimplemented!(),
                 ControlFlowOperator::Return => {
                     self.body_data.push_return(&mut self.block, &mut self.stack);
                     Self::eat_to_end(instructions);
                     break;
                 }
+                ControlFlowOperator::BrTable {
+                    targets,
+                    default_target,
+                } => unimplemented!(),
                 ControlFlowOperator::Call { function_index } => unimplemented!(),
                 ControlFlowOperator::CallIndirect {
                     type_index,
@@ -399,12 +444,12 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                     .expect("every block pushes its own label")
                     .is_branching
                     .expression;
-                let condition = naga_expr!(&mut self => Load(break_expr) > {false_expression});
+                let condition = naga_expr!(&mut self => Load(break_expr));
 
                 // Decide what to do if we are breaking
                 let mut accept = naga::Block::default();
                 // Reset our break expression
-                accept.push_store(break_expr, false_expression);
+                accept.push_store(break_expr, self.body_data.naga_false_expression);
                 // Write current stack to variables
                 self.push_store_stack_in_results();
 
@@ -595,6 +640,15 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         });
 
         Ok(())
+    }
+
+    /// Pops one argument, then calls a function and pushes the result
+    fn pop_one_push_call_mono(
+        &mut self,
+        function: naga::Handle<naga::Function>,
+    ) -> build::Result<()> {
+        let value = self.pop();
+        self.push_call(function, vec![value])
     }
 
     /// Pops two arguments, then calls a function and pushes the result

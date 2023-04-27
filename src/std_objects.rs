@@ -55,6 +55,7 @@ macro_rules! generator_struct {
 
                 // Bend hygine by using field names rather than variable identifiers - the hope is that
                 // the compiler removes all of the `unwrap`s involved in this method.
+                #[perfect_derive::perfect_derive(Clone)]
                 pub(super) struct [< Optional $generated_name >] $(<$($generated_generic: $generated_generic_ty),*>)* {
                     $(
                         pub(super) $field: Option<$generated>,
@@ -97,7 +98,7 @@ macro_rules! generator_struct {
 
                     $(
                         let params = [< $field:camel Requirements >] {
-                            $($($requirement: res.$requirement.unwrap(),)*)*
+                            $($($requirement: res.$requirement.as_ref().unwrap().clone(),)*)*
                         };
                         res.$field = Some(T::[< gen_$field >](module, params)?);
                     )*
@@ -113,34 +114,75 @@ macro_rules! generator_struct {
 use generator_struct;
 
 generator_struct! {
-    pub(crate) struct BoolInstance (word: naga::Handle<naga::Type>)
+    pub(crate) struct WasmBoolInstance (word: naga::Handle<naga::Type>)
     {
         ty: |word| naga::Handle<naga::Type>,
         const_false: naga::Handle<naga::Constant>,
         const_true: naga::Handle<naga::Constant>,
-    } with trait GenBool;
+    } with trait GenWasmBool;
 }
 
-impl GenBool for BoolInstance {
+impl GenWasmBool for WasmBoolInstance {
     fn gen_ty(
-        module: &mut naga::Module,
-        others: bool_instance_gen::TyRequirements,
-    ) -> build::Result<bool_instance_gen::Ty> {
+        _module: &mut naga::Module,
+        others: wasm_bool_instance_gen::TyRequirements,
+    ) -> build::Result<wasm_bool_instance_gen::Ty> {
         Ok(others.word)
     }
 
     fn gen_const_false(
         module: &mut naga::Module,
-        others: bool_instance_gen::ConstFalseRequirements,
-    ) -> build::Result<bool_instance_gen::ConstFalse> {
+        _others: wasm_bool_instance_gen::ConstFalseRequirements,
+    ) -> build::Result<wasm_bool_instance_gen::ConstFalse> {
         Ok(module.constants.append_u32(0))
     }
 
     fn gen_const_true(
         module: &mut naga::Module,
-        others: bool_instance_gen::ConstTrueRequirements,
-    ) -> build::Result<bool_instance_gen::ConstTrue> {
+        _others: wasm_bool_instance_gen::ConstTrueRequirements,
+    ) -> build::Result<wasm_bool_instance_gen::ConstTrue> {
         Ok(module.constants.append_u32(1))
+    }
+}
+
+generator_struct! {
+    pub(crate) struct NagaBoolInstance
+    {
+        ty: naga::Handle<naga::Type>,
+        const_false: naga::Handle<naga::Constant>,
+        const_true: naga::Handle<naga::Constant>,
+    } with trait GenNagaBool;
+}
+
+impl GenNagaBool for NagaBoolInstance {
+    fn gen_ty(
+        module: &mut naga::Module,
+        _others: naga_bool_instance_gen::TyRequirements,
+    ) -> build::Result<naga_bool_instance_gen::Ty> {
+        Ok(module.types.insert(
+            naga::Type {
+                name: None,
+                inner: naga::TypeInner::Scalar {
+                    kind: naga::ScalarKind::Bool,
+                    width: 1,
+                },
+            },
+            naga::Span::UNDEFINED,
+        ))
+    }
+
+    fn gen_const_false(
+        module: &mut naga::Module,
+        _others: naga_bool_instance_gen::ConstFalseRequirements,
+    ) -> build::Result<naga_bool_instance_gen::ConstFalse> {
+        Ok(module.constants.append_bool(false))
+    }
+
+    fn gen_const_true(
+        module: &mut naga::Module,
+        _others: naga_bool_instance_gen::ConstTrueRequirements,
+    ) -> build::Result<naga_bool_instance_gen::ConstTrue> {
+        Ok(module.constants.append_bool(true))
     }
 }
 
@@ -161,15 +203,16 @@ generator_struct! {
         trap_values: HashMap<Option<Trap>, naga::Handle<naga::Constant>>,
         trap_fn: |word, bindings| naga::Handle<naga::Function>,
 
-        i32: |word, bindings, word_max| wasm_tys::I32Instance,
-        i64: |word, bindings, word_max| wasm_tys::I64Instance,
-        f32: |word, bindings, word_max| wasm_tys::F32Instance,
-        f64: |word, bindings, word_max| wasm_tys::F64Instance,
-        v128: |word, bindings, word_max| wasm_tys::V128Instance,
-        func_ref: |word, bindings, word_max| wasm_tys::FuncRefInstance,
-        extern_ref: |word, bindings, word_max| wasm_tys::ExternRefInstance,
+        naga_bool: NagaBoolInstance,
+        wasm_bool: |word| WasmBoolInstance,
 
-        bool: |word| BoolInstance,
+        i32: |word, bindings, word_max, wasm_bool| wasm_tys::I32Instance,
+        i64: |word, bindings, word_max, wasm_bool| wasm_tys::I64Instance,
+        f32: |word, bindings, word_max, wasm_bool| wasm_tys::F32Instance,
+        f64: |word, bindings, word_max, wasm_bool| wasm_tys::F64Instance,
+        v128: |word, bindings, word_max, wasm_bool| wasm_tys::V128Instance,
+        func_ref: |word, bindings, word_max, wasm_bool| wasm_tys::FuncRefInstance,
+        extern_ref: |word, bindings, word_max, wasm_bool| wasm_tys::ExternRefInstance,
 
         instance_id: |word| naga::Handle<naga::GlobalVariable>,
     } with trait GenStdObjects;
@@ -189,6 +232,25 @@ pub(crate) trait GenerationParameters {
     type V128: wasm_tys::V128Gen;
     type FuncRef: wasm_tys::FuncRefGen;
     type ExternRef: wasm_tys::ExternRefGen;
+}
+
+macro_rules! impl_gen_wasm {
+    ($ty:ident) => {
+        paste::paste! {
+            fn [< gen_ $ty >](
+                module: &mut naga::Module,
+                others: std_objects_gen::[< $ty:camel Requirements >],
+            ) -> build::Result<std_objects_gen::[< $ty:camel >]> {
+                std_objects_gen::[< $ty:camel >]::gen_from::<Ps::[< $ty:camel >]>(
+                    module,
+                    others.word,
+                    others.bindings,
+                    others.word_max,
+                    others.wasm_bool,
+                )
+            }
+        }
+    };
 }
 
 struct StdObjectsGenerator<Ps: GenerationParameters>(PhantomData<Ps>);
@@ -311,89 +373,13 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
         flags::gen_trap_function::<Ps>(module, others.word, others.bindings.flags)
     }
 
-    fn gen_i32(
-        module: &mut naga::Module,
-        others: std_objects_gen::I32Requirements,
-    ) -> build::Result<std_objects_gen::I32> {
-        std_objects_gen::I32::gen_from::<Ps::I32>(
-            module,
-            others.word,
-            others.bindings,
-            others.word_max,
-        )
-    }
-
-    fn gen_i64(
-        module: &mut naga::Module,
-        others: std_objects_gen::I64Requirements,
-    ) -> build::Result<std_objects_gen::I64> {
-        std_objects_gen::I64::gen_from::<Ps::I64>(
-            module,
-            others.word,
-            others.bindings,
-            others.word_max,
-        )
-    }
-
-    fn gen_f32(
-        module: &mut naga::Module,
-        others: std_objects_gen::F32Requirements,
-    ) -> build::Result<std_objects_gen::F32> {
-        std_objects_gen::F32::gen_from::<Ps::F32>(
-            module,
-            others.word,
-            others.bindings,
-            others.word_max,
-        )
-    }
-
-    fn gen_f64(
-        module: &mut naga::Module,
-        others: std_objects_gen::F64Requirements,
-    ) -> build::Result<std_objects_gen::F64> {
-        std_objects_gen::F64::gen_from::<Ps::F64>(
-            module,
-            others.word,
-            others.bindings,
-            others.word_max,
-        )
-    }
-
-    fn gen_v128(
-        module: &mut naga::Module,
-        others: std_objects_gen::V128Requirements,
-    ) -> build::Result<std_objects_gen::V128> {
-        std_objects_gen::V128::gen_from::<Ps::V128>(
-            module,
-            others.word,
-            others.bindings,
-            others.word_max,
-        )
-    }
-
-    fn gen_func_ref(
-        module: &mut naga::Module,
-        others: std_objects_gen::FuncRefRequirements,
-    ) -> build::Result<std_objects_gen::FuncRef> {
-        std_objects_gen::FuncRef::gen_from::<Ps::FuncRef>(
-            module,
-            others.word,
-            others.bindings,
-            others.word_max,
-        )
-    }
-
-    fn gen_extern_ref(
-        module: &mut naga::Module,
-        others: std_objects_gen::ExternRefRequirements,
-    ) -> build::Result<std_objects_gen::ExternRef> {
-        std_objects_gen::ExternRef::gen_from::<Ps::ExternRef>(
-            module,
-            others.word,
-            others.bindings,
-            others.word_max,
-        )
-    }
+    impl_gen_wasm! {i32}
+    impl_gen_wasm! {i64}
+    impl_gen_wasm! {f32}
+    impl_gen_wasm! {f64}
+    impl_gen_wasm! {v128}
+    impl_gen_wasm! {func_ref}
+    impl_gen_wasm! {extern_ref}
 
     fn gen_word_max(
         module: &mut naga::Module,
@@ -428,11 +414,18 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
         ))
     }
 
-    fn gen_bool(
+    fn gen_wasm_bool(
         module: &mut naga::Module,
-        others: std_objects_gen::BoolRequirements,
-    ) -> build::Result<std_objects_gen::Bool> {
-        BoolInstance::gen_from::<BoolInstance>(module, others.word)
+        others: std_objects_gen::WasmBoolRequirements,
+    ) -> build::Result<std_objects_gen::WasmBool> {
+        WasmBoolInstance::gen_from::<WasmBoolInstance>(module, others.word)
+    }
+
+    fn gen_naga_bool(
+        module: &mut naga::Module,
+        _others: std_objects_gen::NagaBoolRequirements,
+    ) -> build::Result<std_objects_gen::NagaBool> {
+        NagaBoolInstance::gen_from::<NagaBoolInstance>(module)
     }
 }
 

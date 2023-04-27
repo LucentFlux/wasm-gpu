@@ -149,6 +149,10 @@ pub enum BuildError {
     UnsupportedTypeError { wasm_type: wasmparser::ValType },
     #[error("wasm had {0:?} that consisted of more than 4 billion elements, and so was not addressable on the GPU's 32-bit architecture")]
     BoundsExceeded(ExceededComponent),
+    #[error("naga failed to emit spir-v {0:?}")]
+    NagaSpvBackError(naga::back::spv::Error),
+    #[error("naga failed to receive spir-v {0:?}")]
+    NagaSpvFrontError(naga::front::spv::Error),
     #[error("one of our validation checks didn't hold. This is a bug in the wasm-gpu-funcgen crate: {0:?}")]
     ValidationError(ValidationError),
 }
@@ -156,9 +160,9 @@ pub enum BuildError {
 #[derive(thiserror::Error, Debug)]
 pub enum ValidationError {
     #[error("naga validation failed {0:?}")]
-    NagaValidationError(NagaValidationError),
+    NagaValidationError(ExternalValidationError<naga::valid::ValidationError>),
     #[error("spirv-tools validation failed {0:?}")]
-    SpvToolsValidationError(spirv_tools::Error),
+    SpvToolsValidationError(ExternalValidationError<spirv_tools::Error>),
     #[error("the module contained no shader entry points")]
     NoEntryPoints,
     #[error("the module's binding at index {binding_index:?} for the {buffer_label:?} buffer was incompatible: got type {observed_buffer_type:?} but required type {required_buffer_type:?}")]
@@ -170,19 +174,9 @@ pub enum ValidationError {
     },
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum OptimiseError {
-    #[error("naga failed to emit spir-v {0:?}")]
-    NagaSpvBackError(naga::back::spv::Error),
-    #[error("naga failed to receive spir-v {0:?}")]
-    NagaSpvFrontError(naga::front::spv::Error),
-    #[error("one of our validation checks didn't hold. This is a bug in the wasm-gpu-funcgen crate: {0:?}")]
-    ValidationError(ValidationError),
-}
-
 #[derive(Clone)]
-pub struct NagaValidationError {
-    pub source: naga::valid::ValidationError,
+pub struct ExternalValidationError<E> {
+    pub source: E,
 
     // To help with debugging this crate, we collect loads more debug info on debug builds.
     #[cfg(debug_assertions)]
@@ -193,6 +187,28 @@ pub struct NagaValidationError {
     pub functions: FuncsInstance,
     #[cfg(debug_assertions)]
     pub capabilities: naga::valid::Capabilities,
+}
+
+impl<E> ExternalValidationError<E> {
+    fn new(
+        source: E,
+        module: &naga::Module,
+        tuneables: &Tuneables,
+        functions: &FuncsInstance,
+        capabilities: naga::valid::Capabilities,
+    ) -> Self {
+        Self {
+            source,
+            #[cfg(debug_assertions)]
+            module: module.clone(),
+            #[cfg(debug_assertions)]
+            tuneables: tuneables.clone(),
+            #[cfg(debug_assertions)]
+            functions: functions.clone(),
+            #[cfg(debug_assertions)]
+            capabilities,
+        }
+    }
 }
 
 pub fn display_error_recursively(error: &impl Error) -> String {
@@ -206,14 +222,15 @@ pub fn display_error_recursively(error: &impl Error) -> String {
     return error_fmt;
 }
 
-impl Debug for NagaValidationError {
+impl<E: std::error::Error> Debug for ExternalValidationError<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Output naga error
         let mut output_struct = f.debug_struct("failed to validate naga module");
         let output = output_struct.field("naga_error", &display_error_recursively(&self.source));
 
-        #[cfg(not(debug_assertions))]
-        return output.finish_non_exhaustive();
+        if cfg!(not(feature = "big_errors")) {
+            return output.finish_non_exhaustive();
+        }
 
         // Add on lots'a debugging info
         let mut validation_pass_broken = None;

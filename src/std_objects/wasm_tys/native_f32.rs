@@ -115,19 +115,7 @@ impl F32Gen for NativeF32 {
         )
     }
 
-    fn gen_add(
-        module: &mut naga::Module,
-        others: super::f32_instance_gen::AddRequirements,
-    ) -> build::Result<super::f32_instance_gen::Add> {
-        let (function_handle, lhs, rhs) = declare_function! {
-            module => fn f32_add(lhs: others.ty, rhs: others.ty) -> others.ty
-        };
-
-        let res = naga_expr!(module, function_handle => lhs + rhs);
-        module.fn_mut(function_handle).body.push_return(res);
-
-        Ok(function_handle)
-    }
+    super::impl_native_ops! {f32_instance_gen, f32}
 }
 
 // fn<buffer>(word_address: u32) -> f32

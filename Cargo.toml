@@ -27,4 +27,5 @@ spirv-tools = { version = "0.9", features = [
 
 [features]
 #default = ["opt"]
+big_errors = []
 opt = []

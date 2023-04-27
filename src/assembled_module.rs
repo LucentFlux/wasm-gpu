@@ -4,14 +4,17 @@ use self::call_graph::CallGraph;
 use crate::active_module::ActiveModule;
 use crate::function_lookup::FunctionLookup;
 use crate::wasm_front::FuncsInstance;
-use crate::{build, BuildError, NagaValidationError, OptimiseError, Tuneables, ValidationError};
+use crate::{build, BuildError, ExternalValidationError, Tuneables, ValidationError};
 
 /// All of the functions and trampolines for a module, in wgpu objects ready to be called.
 pub struct AssembledModule {
     pub module: naga::Module,
     pub module_info: naga::valid::ModuleInfo,
-    pub functions: FuncsInstance,
-    pub tuneables: Tuneables,
+
+    // Used as debug info
+    functions: FuncsInstance,
+    tuneables: Tuneables,
+    capabilities: naga::valid::Capabilities,
 }
 impl AssembledModule {
     /// Some drivers don't like some edge cases. To avoid driver crashes or panics, several modifications
@@ -34,39 +37,30 @@ impl AssembledModule {
         module: &naga::Module,
         tuneables: &Tuneables,
         functions: &FuncsInstance,
+        capabilities: naga::valid::Capabilities,
     ) -> Result<naga::valid::ModuleInfo, ValidationError> {
-        const VALIDATE_ALL: bool = cfg!(debug_assert);
-
         // Our own sanity checks
         if module.entry_points.is_empty() {
             return Err(ValidationError::NoEntryPoints);
         }
 
-        let flags = if VALIDATE_ALL {
+        // spirv-tools validates for us anyway, so this just helps us get better debug info
+        let flags = if cfg!(debug_assertions) {
             naga::valid::ValidationFlags::all()
         } else {
             naga::valid::ValidationFlags::empty()
         };
 
-        let capabilities = if tuneables.hardware_supports_f64 {
-            naga::valid::Capabilities::FLOAT64
-        } else {
-            naga::valid::Capabilities::empty()
-        };
         let info = naga::valid::Validator::new(flags, capabilities)
             .validate(&module)
             .map_err(|source| {
-                ValidationError::NagaValidationError(NagaValidationError {
-                    source: source.into_inner(),
-                    #[cfg(debug_assertions)]
-                    module: module.clone(),
-                    #[cfg(debug_assertions)]
-                    tuneables: tuneables.clone(),
-                    #[cfg(debug_assertions)]
-                    functions: functions.clone(),
-                    #[cfg(debug_assertions)]
+                ValidationError::NagaValidationError(ExternalValidationError::new(
+                    source.into_inner(),
+                    &module,
+                    &tuneables,
+                    &functions,
                     capabilities,
-                })
+                ))
             })?;
 
         return Ok(info);
@@ -134,32 +128,57 @@ impl AssembledModule {
 
         Self::appease_drivers(&mut module);
 
+        let capabilities = if tuneables.hardware_supports_f64 {
+            naga::valid::Capabilities::FLOAT64
+        } else {
+            naga::valid::Capabilities::empty()
+        };
+
         let assembled = Self {
-            module_info: Self::validate(&module, tuneables, functions)
+            module_info: Self::validate(&module, tuneables, functions, capabilities)
                 .map_err(BuildError::ValidationError)?,
             module,
             tuneables: tuneables.clone(),
             functions: functions.clone(),
+            capabilities,
         };
 
-        let assembled = assembled.perform_passes(true, cfg!(feature = "opt"))
-            .expect("optimisation should not fail for internally generated shaders. This is a bug in wasm-gpu-funcgen");
+        let assembled = assembled.perform_passes(true, true, cfg!(feature = "opt"))?;
+
+        /*
+        // Spam the optimiser a few more times for shits and giggles
+        let assembled = if cfg!(feature = "opt") {
+            let assembled = assembled.perform_passes(false, false, true)?;
+            let assembled = assembled.perform_passes(false, false, true)?;
+            let assembled = assembled.perform_passes(false, false, true)?;
+            assembled
+        } else {
+            assembled
+        };*/
 
         Ok(assembled)
     }
 
-    fn perform_passes(&self, legalization: bool, performance: bool) -> Result<Self, OptimiseError> {
+    fn perform_passes(
+        &self,
+        legalization: bool,
+        size: bool,
+        performance: bool,
+    ) -> build::Result<Self> {
         use spirv_tools::opt::Optimizer;
 
         // First convert to spir-v
         let words = self
             .generate_spv_source()
-            .map_err(OptimiseError::NagaSpvBackError)?;
+            .map_err(BuildError::NagaSpvBackError)?;
 
         // Then optimise the spir-v
         let mut opt = spirv_tools::opt::create(Some(crate::TARGET_ENV));
         if legalization {
             opt.register_hlsl_legalization_passes();
+        }
+        if size {
+            opt.register_size_passes();
         }
         if performance {
             opt.register_performance_passes();
@@ -177,19 +196,28 @@ impl AssembledModule {
                 }),
             )
             .map_err(|e| {
-                OptimiseError::ValidationError(ValidationError::SpvToolsValidationError(e))
+                BuildError::ValidationError(ValidationError::SpvToolsValidationError(
+                    ExternalValidationError::new(
+                        e,
+                        &self.module,
+                        &self.tuneables,
+                        &self.functions,
+                        self.capabilities,
+                    ),
+                ))
             })?;
 
         // Then re-parse
         let module = naga::front::spv::parse_u8_slice(optimised.as_bytes(), &crate::SPV_IN_OPTIONS)
-            .map_err(OptimiseError::NagaSpvFrontError)?;
+            .map_err(BuildError::NagaSpvFrontError)?;
 
         // And re-validate
         let tuneables = self.tuneables.clone();
         let functions = self.functions.clone();
         Ok(Self {
-            module_info: Self::validate(&module, &tuneables, &functions)
-                .map_err(OptimiseError::ValidationError)?,
+            module_info: Self::validate(&module, &tuneables, &functions, self.capabilities)
+                .map_err(BuildError::ValidationError)?,
+            capabilities: self.capabilities,
             module,
             tuneables,
             functions,

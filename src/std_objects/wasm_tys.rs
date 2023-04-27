@@ -4,7 +4,7 @@ use wasm_types::{ExternRef, FuncRef, V128};
 
 use crate::build;
 
-use super::{bindings::StdBindings, StdObjects};
+use super::{bindings::StdBindings, StdObjects, WasmBoolInstance};
 
 pub(crate) mod native_f32;
 pub(crate) mod native_i32;
@@ -30,7 +30,12 @@ macro_rules! wasm_ty_generator {
     };
     (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; []; {$($impl:tt)*}) => {
         super::generator_struct! {
-            pub(crate) struct $struct_name ( word: naga::Handle<naga::Type>, bindings: StdBindings, word_max: naga::Handle<naga::Constant> )
+            pub(crate) struct $struct_name (
+                word: naga::Handle<naga::Type>,
+                bindings: StdBindings,
+                word_max: naga::Handle<naga::Constant>,
+                bool: WasmBoolInstance,
+            )
             {
                 // Things all wasm types have
                 ty: naga::Handle<naga::Type>,
@@ -50,17 +55,27 @@ macro_rules! wasm_ty_generator {
     };
     // The implementation required for numerics (i32, i64, f32, f64)
     // See https://webassembly.github.io/spec/core/syntax/instructions.html#numeric-instructions
-    (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [numeric $(; $parts:tt)*]; {$($impl:tt)*}) => {
+    (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [numeric $(, $parts:tt)*]; {$($impl:tt)*}) => {
         wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts)*]; {
             $($impl)*
 
             add: |ty, word_max| naga::Handle<naga::Function>,
+
+            eq: |ty, bool| naga::Handle<naga::Function>,
+        }}
+    };
+    // The implementation required for integers (i32, i64)
+    (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [integer $(, $parts:tt)*]; {$($impl:tt)*}) => {
+        wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts)*]; {
+            $($impl)*
+
+            eqz: |ty, bool| naga::Handle<naga::Function>,
         }}
     };
 }
 
-wasm_ty_generator!(struct I32Instance; trait I32Gen; i32; [numeric]);
-wasm_ty_generator!(struct I64Instance; trait I64Gen; i64; [numeric]);
+wasm_ty_generator!(struct I32Instance; trait I32Gen; i32; [numeric, integer]);
+wasm_ty_generator!(struct I64Instance; trait I64Gen; i64; [numeric, integer]);
 wasm_ty_generator!(struct F32Instance; trait F32Gen; f32; [numeric]);
 wasm_ty_generator!(struct F64Instance; trait F64Gen; f64; [numeric]);
 wasm_ty_generator!(struct V128Instance; trait V128Gen; V128; []);
@@ -102,3 +117,93 @@ fn make_64_bit_const_from_2vec32(
         naga::Span::UNDEFINED,
     )
 }
+
+macro_rules! impl_native_ops {
+    ($instance_gen:ident, $name:ident) => {
+        paste::paste! {
+            fn gen_add(
+                module: &mut naga::Module,
+                others: $instance_gen::AddRequirements,
+            ) -> build::Result<$instance_gen::Add> {
+                let (function_handle, lhs, rhs) = declare_function! {
+                    module => fn [< $name _add >](lhs: others.ty, rhs: others.ty) -> others.ty
+                };
+
+                let res = naga_expr!(module, function_handle => lhs + rhs);
+                module.fn_mut(function_handle).body.push_return(res);
+
+                Ok(function_handle)
+            }
+
+            fn gen_eq(
+                module: &mut naga::Module,
+                others: $instance_gen::EqRequirements,
+            ) -> build::Result<$instance_gen::Eq> {
+                let (function_handle, lhs, rhs) = declare_function! {
+                    module => fn [< $name _eq >](lhs: others.ty, rhs: others.ty) -> others.bool.ty
+                };
+
+                let t = naga_expr!(module, function_handle => Constant(others.bool.const_true));
+                let f = naga_expr!(module, function_handle => Constant(others.bool.const_false));
+                let res = naga_expr!(module, function_handle => if (lhs == rhs) {t} else {f});
+                module.fn_mut(function_handle).body.push_return(res);
+
+                Ok(function_handle)
+            }
+        }
+    };
+}
+use impl_native_ops;
+
+macro_rules! impl_integer_ops {
+    ($instance_gen:ident, $name:ident) => {
+        paste::paste! {
+            /*fn gen_eqz(
+                module: &mut naga::Module,
+                others: $instance_gen::EqzRequirements,
+            ) -> build::Result<$instance_gen::Eqz> {
+                let (function_handle, value) = declare_function! {
+                    module => fn [< $name _eqz >](value: others.ty) -> others.bool.ty
+                };
+
+                let zero = naga_expr!(module, function_handle => Constant(others.default));
+
+                let res = module.fn_mut(function_handle).expressions.append(naga::Expression::CallResult(others.eq), naga::Span::UNDEFINED);
+
+                module.fn_mut(function_handle).body.push(naga::Statement::Call { function: others.eq, arguments: vec![value, zero], result: Some(res) }, naga::Span::UNDEFINED);
+                module.fn_mut(function_handle).body.push_return(res);
+
+                Ok(function_handle)
+            }*/
+        }
+    };
+}
+use impl_integer_ops;
+
+macro_rules! impl_bitwise_2vec32_numeric_ops {
+    ($instance_gen:ident, $name:ident) => {
+        paste::paste!{
+            fn gen_eq(
+                module: &mut naga::Module,
+                others: $instance_gen::EqRequirements,
+            ) -> build::Result<$instance_gen::Eq> {
+                let (function_handle, lhs, rhs) = declare_function! {
+                    module => fn [< $name _eq >](lhs: others.ty, rhs: others.ty) -> others.bool.ty
+                };
+
+                let t = naga_expr!(module, function_handle => Constant(others.bool.const_true));
+                let f = naga_expr!(module, function_handle => Constant(others.bool.const_false));
+
+                let lhs_high = naga_expr!(module, function_handle => lhs[const 0]);
+                let lhs_low = naga_expr!(module, function_handle => lhs[const 1]);
+                let rhs_high = naga_expr!(module, function_handle => rhs[const 0]);
+                let rhs_low = naga_expr!(module, function_handle => rhs[const 1]);
+                let res = naga_expr!(module, function_handle => if ((lhs_low == rhs_low) & (lhs_high == rhs_high)) {t} else {f});
+                module.fn_mut(function_handle).body.push_return(res);
+
+                Ok(function_handle)
+            }
+        }
+    };
+}
+use impl_bitwise_2vec32_numeric_ops;

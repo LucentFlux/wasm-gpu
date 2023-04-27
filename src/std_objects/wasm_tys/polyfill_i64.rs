@@ -128,6 +128,29 @@ impl I64Gen for PolyfillI64 {
 
         Ok(function_handle)
     }
+
+    super::impl_bitwise_2vec32_numeric_ops! {i64_instance_gen, i64}
+
+    super::impl_integer_ops! {i64_instance_gen, i64}
+
+    fn gen_eqz(
+        module: &mut naga::Module,
+        others: i64_instance_gen::EqzRequirements,
+    ) -> build::Result<i64_instance_gen::Eqz> {
+        let (function_handle, value) = declare_function! {
+            module => fn f64_eqz(value: others.ty) -> others.bool.ty
+        };
+
+        let t = naga_expr!(module, function_handle => Constant(others.bool.const_true));
+        let f = naga_expr!(module, function_handle => Constant(others.bool.const_false));
+
+        let value_high = naga_expr!(module, function_handle => value[const 0]);
+        let value_low = naga_expr!(module, function_handle => value[const 1]);
+        let res = naga_expr!(module, function_handle => if ((value_high == U32(0)) & (value_low == U32(0))) {t} else {f});
+        module.fn_mut(function_handle).body.push_return(res);
+
+        Ok(function_handle)
+    }
 }
 
 // fn<buffer>(word_address: u32) -> i64
