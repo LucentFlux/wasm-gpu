@@ -624,6 +624,11 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
 
             (results, reject_exit_state)
         } else {
+            // To match if branch, write popped args to results
+            for (arg, result) in args.into_iter().zip_eq(results.iter()) {
+                reject.push_store(result.expression, arg)
+            }
+
             // If we don't have an else branch, we continue straight through
             (results, ControlFlowState::Continue)
         };
