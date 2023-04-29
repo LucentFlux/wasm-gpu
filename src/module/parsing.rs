@@ -1,12 +1,13 @@
 use crate::module::error::WasmError;
+use itertools::Itertools;
 use ouroboros::self_referencing;
 use std::collections::HashMap;
 use std::ops::Range;
 use wasm_opcodes::OperatorByProposal;
 use wasmparser::{
-    BinaryReaderError, DataKind, ElementItem, ElementKind, Encoding, ExternalKind, FuncType,
+    BinaryReaderError, DataKind, ElementKind, Encoding, ExternalKind, FuncType,
     FuncValidatorAllocations, GlobalType, MemoryType, NameSectionReader, Operator, Parser, Payload,
-    TableType, Type, TypeRef, ValType, Validator,
+    RefType, Table, TableType, Type, TypeRef, ValType, Validator,
 };
 
 type WasmResult<T> = Result<T, WasmError>;
@@ -45,7 +46,7 @@ pub enum ParsedElementKind<'data> {
     /// The element segment is active.
     Active {
         /// The index of the table being initialized.
-        table_index: u32,
+        table_index: Option<u32>,
         /// The initial expression of the element segment.
         offset_expr: Vec<Operator<'data>>,
     },
@@ -58,7 +59,7 @@ pub struct ParsedElement<'data> {
     /// The initial elements of the element segment.
     pub items: Vec<Vec<Operator<'data>>>,
     /// The type of the elements.
-    pub ty: ValType,
+    pub ty: RefType,
     /// The range of the the element segment.
     pub range: Range<usize>,
 }
@@ -84,10 +85,28 @@ pub struct ParsedData<'data> {
     pub range: Range<usize>,
 }
 
+#[derive(Debug)]
+pub struct ParsedTable<'data> {
+    /// The type of this table, including its element type and its limits.
+    pub ty: TableType,
+    /// The initialization expression for the table.
+    pub init: ParsedTableInit<'data>,
+}
+
+/// Different modes of initializing a table.
+#[derive(Debug)]
+pub enum ParsedTableInit<'data> {
+    /// The table is initialized to all null elements.
+    RefNull,
+    /// Each element in the table is initialized with the specified constant
+    /// expression.
+    Expr(Vec<Operator<'data>>),
+}
+
 pub struct ParsedModule<'data> {
     pub types: Vec<FuncType>,
     pub imports: Vec<(&'data str, &'data str, ImportTypeRef)>,
-    pub tables: Vec<TableType>,
+    pub tables: Vec<ParsedTable<'data>>,
     pub memories: Vec<MemoryType>,
     pub globals: Vec<Global<'data>>,
     pub exports: HashMap<String, ModuleExport>,
@@ -189,7 +208,7 @@ impl ModuleEnviron {
 
             Payload::TypeSection(types) => {
                 self.validator.type_section(&types)?;
-                let num = usize::try_from(types.get_count()).unwrap();
+                let num = usize::try_from(types.count()).unwrap();
                 result.types.reserve(num);
 
                 for ty in types {
@@ -201,7 +220,7 @@ impl ModuleEnviron {
             Payload::ImportSection(imports) => {
                 self.validator.import_section(&imports)?;
 
-                let cnt = usize::try_from(imports.get_count()).unwrap();
+                let cnt = usize::try_from(imports.count()).unwrap();
                 result.imports.reserve(cnt);
 
                 for entry in imports {
@@ -223,7 +242,7 @@ impl ModuleEnviron {
             Payload::FunctionSection(functions) => {
                 self.validator.function_section(&functions)?;
 
-                let cnt = usize::try_from(functions.get_count()).unwrap();
+                let cnt = usize::try_from(functions.count()).unwrap();
                 scratch.function_types.reserve(cnt);
 
                 for entry in functions {
@@ -234,18 +253,29 @@ impl ModuleEnviron {
             Payload::TableSection(tables) => {
                 self.validator.table_section(&tables)?;
 
-                let cnt = usize::try_from(tables.get_count()).unwrap();
+                let cnt = usize::try_from(tables.count()).unwrap();
                 result.tables.reserve(cnt);
 
                 for entry in tables {
-                    result.tables.push(entry?);
+                    let Table { ty, init } = entry?;
+                    result.tables.push(ParsedTable {
+                        ty,
+                        init: match init {
+                            wasmparser::TableInit::RefNull => ParsedTableInit::RefNull,
+                            wasmparser::TableInit::Expr(expr) => ParsedTableInit::Expr(
+                                expr.get_operators_reader()
+                                    .into_iter()
+                                    .collect::<Result<_, _>>()?,
+                            ),
+                        },
+                    });
                 }
             }
 
             Payload::MemorySection(memories) => {
                 self.validator.memory_section(&memories)?;
 
-                let cnt = usize::try_from(memories.get_count()).unwrap();
+                let cnt = usize::try_from(memories.count()).unwrap();
                 result.memories.reserve(cnt);
 
                 for entry in memories {
@@ -263,7 +293,7 @@ impl ModuleEnviron {
             Payload::GlobalSection(globals) => {
                 self.validator.global_section(&globals)?;
 
-                let cnt = usize::try_from(globals.get_count()).unwrap();
+                let cnt = usize::try_from(globals.count()).unwrap();
                 result.globals.reserve(cnt);
 
                 for entry in globals {
@@ -281,7 +311,7 @@ impl ModuleEnviron {
             Payload::ExportSection(exports) => {
                 self.validator.export_section(&exports)?;
 
-                let cnt = usize::try_from(exports.get_count()).unwrap();
+                let cnt = usize::try_from(exports.count()).unwrap();
                 result.exports.reserve(cnt);
 
                 for entry in exports {
@@ -311,47 +341,40 @@ impl ModuleEnviron {
             Payload::ElementSection(elements) => {
                 self.validator.element_section(&elements)?;
 
-                let cnt = usize::try_from(elements.get_count()).unwrap();
+                let cnt = usize::try_from(elements.count()).unwrap();
                 result.elements.reserve(cnt);
 
                 for element in elements {
                     let element = element?;
 
                     // Parse values
-                    let items_reader = element.items.get_items_reader()?;
-                    let cnt = usize::try_from(items_reader.get_count()).unwrap();
+                    let cnt = match &element.items {
+                        wasmparser::ElementItems::Functions(items_reader) => items_reader.count(),
+                        wasmparser::ElementItems::Expressions(items_reader) => items_reader.count(),
+                    };
+                    let cnt = usize::try_from(cnt).unwrap();
 
-                    let items = if items_reader.uses_exprs() {
-                        let mut items = Vec::new();
-                        items.reserve(cnt);
+                    let mut items = Vec::new();
+                    items.reserve(cnt);
 
-                        for item in items_reader {
-                            match item? {
-                                ElementItem::Expr(expr) => {
-                                    let expr: Result<Vec<Operator>, BinaryReaderError> =
-                                        expr.get_operators_reader().into_iter().collect();
-                                    items.push(expr?)
-                                }
-                                _ => unreachable!(),
-                            }
-                        }
-
-                        items
-                    } else {
-                        let mut items = Vec::new();
-                        items.reserve(cnt);
-
-                        for item in items_reader {
-                            match item? {
-                                ElementItem::Func(f) => items.push(vec![
-                                    Operator::RefFunc { function_index: f },
+                    match element.items {
+                        wasmparser::ElementItems::Functions(items_reader) => {
+                            for item in items_reader {
+                                items.push(vec![
+                                    Operator::RefFunc {
+                                        function_index: item?,
+                                    },
                                     Operator::End,
-                                ]),
-                                _ => unreachable!(),
+                                ])
                             }
                         }
-
-                        items
+                        wasmparser::ElementItems::Expressions(items_reader) => {
+                            for expr in items_reader {
+                                let expr: Result<Vec<Operator>, BinaryReaderError> =
+                                    expr?.get_operators_reader().into_iter().collect();
+                                items.push(expr?)
+                            }
+                        }
                     };
 
                     let kind = match element.kind {
@@ -404,8 +427,9 @@ impl ModuleEnviron {
                     func.locals.push(local?);
                 }
                 for operator in body.get_operators_reader()? {
-                    func.operators
-                        .push(OperatorByProposal::from_operator(operator?)?);
+                    let op = OperatorByProposal::from_operator(operator?)?;
+
+                    func.operators.push(op);
                 }
 
                 result.functions.push(func);
@@ -418,37 +442,39 @@ impl ModuleEnviron {
                 result.datas.reserve(cnt);
             }
 
-            Payload::DataSection(mut data) => {
+            Payload::DataSection(data) => {
                 self.validator.data_section(&data)?;
 
-                let data = data.read()?; // Parse values
+                for data in data {
+                    let data = data?;
 
-                let kind = match data.kind {
-                    DataKind::Passive => ParsedDataKind::Passive,
-                    DataKind::Active {
-                        memory_index,
-                        offset_expr,
-                    } => {
-                        let offset_expr: Result<Vec<Operator>, BinaryReaderError> =
-                            offset_expr.get_operators_reader().into_iter().collect();
-                        ParsedDataKind::Active {
+                    let kind = match data.kind {
+                        DataKind::Passive => ParsedDataKind::Passive,
+                        DataKind::Active {
                             memory_index,
-                            offset_expr: offset_expr?,
+                            offset_expr,
+                        } => {
+                            let offset_expr: Result<Vec<Operator>, BinaryReaderError> =
+                                offset_expr.get_operators_reader().into_iter().collect();
+                            ParsedDataKind::Active {
+                                memory_index,
+                                offset_expr: offset_expr?,
+                            }
                         }
-                    }
-                };
+                    };
 
-                result.datas.push(ParsedData {
-                    kind,
-                    data: data.data,
-                    range: data.range,
-                });
+                    result.datas.push(ParsedData {
+                        kind,
+                        data: data.data,
+                        range: data.range,
+                    });
+                }
             }
 
             Payload::CustomSection(s) => {
                 match s.name() {
                     "name" => {
-                        let _reader = NameSectionReader::new(s.data(), 0)?;
+                        let _reader = NameSectionReader::new(s.data(), 0);
                     }
                     _ => {
                         return Err(WasmError::Unsupported(format!(

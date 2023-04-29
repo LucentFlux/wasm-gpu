@@ -23,7 +23,7 @@ use perfect_derive::perfect_derive;
 use std::sync::Arc;
 use wasm_gpu_funcgen::{AssembledModule, BuildError};
 use wasm_types::{ExternRef, FuncRef, Val, V128};
-use wasmparser::{Operator, ValType};
+use wasmparser::{HeapType, Operator};
 use wgpu::BufferAsyncError;
 use wgpu_async::async_device::OutOfMemoryError;
 use wgpu_async::async_queue::AsyncQueue;
@@ -49,10 +49,11 @@ pub(crate) async fn interpret_constexpr<'data>(
             Operator::F32Const { value } => stack.push(Val::F32(f32::from_bits(value.bits()))),
             Operator::F64Const { value } => stack.push(Val::F64(f64::from_bits(value.bits()))),
             Operator::V128Const { value } => stack.push(Val::V128(V128::from(*value))),
-            Operator::RefNull { ty } => match ty {
-                ValType::FuncRef => stack.push(Val::FuncRef(FuncRef::none())),
-                ValType::ExternRef => stack.push(Val::ExternRef(ExternRef::none())),
-                _ => unreachable!(),
+            Operator::RefNull { hty } => match hty {
+                HeapType::Func | HeapType::TypedFunc(_) => {
+                    stack.push(Val::FuncRef(FuncRef::none()))
+                }
+                HeapType::Extern => stack.push(Val::ExternRef(ExternRef::none())),
             },
             Operator::RefFunc { function_index } => {
                 let function_index = usize::try_from(*function_index).unwrap();

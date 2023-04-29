@@ -1,5 +1,5 @@
 pub mod error;
-pub mod module_environ;
+pub mod parsing;
 
 use crate::externs::{Extern, NamedExtern};
 use crate::func::FuncAccessiblePtrs;
@@ -10,7 +10,7 @@ use crate::instance::global::builder::{AbstractGlobalPtr, MappedMutableGlobalsIn
 use crate::instance::global::immutable::MappedImmutableGlobalsInstance;
 use crate::instance::memory::builder::{AbstractMemoryPtr, MappedMemoryInstanceSetBuilder};
 use crate::instance::table::builder::{AbstractTablePtr, MappedTableInstanceSetBuilder};
-use crate::module::module_environ::{
+use crate::module::parsing::{
     ImportTypeRef, ModuleEnviron, ModuleExport, ParsedDataKind, ParsedElementKind, ParsedModuleUnit,
 };
 use crate::store_set::builder::interpret_constexpr;
@@ -22,7 +22,7 @@ use std::slice::Iter;
 use std::sync::Arc;
 use wasm_gpu_funcgen::{FuncData, FunctionModuleData};
 use wasm_types::{FuncRef, Val, ValTypeByteCount};
-use wasmparser::{Type, ValType, Validator};
+use wasmparser::{RefType, Type, ValType, Validator};
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;
 
@@ -251,9 +251,9 @@ impl Module {
                     module_func_ptrs,
                 )
                 .await?;
-                let v = match (v, &element.ty) {
-                    (Val::FuncRef(fr), ValType::FuncRef) => fr.as_u32(),
-                    (Val::ExternRef(er), ValType::ExternRef) => er.as_u32(),
+                let v = match (v, &element.ty.is_func_ref()) {
+                    (Val::FuncRef(fr), true) => fr.as_u32(),
+                    (Val::ExternRef(er), false) => er.as_u32(),
                     _ => unreachable!(),
                 };
                 vals.push(v);
@@ -289,7 +289,7 @@ impl Module {
 
         // Create tables first
         for table_plan in self.parsed.borrow_sections().tables.iter() {
-            let ptr = tables.add_table(table_plan);
+            let ptr = tables.add_table(&table_plan.ty);
             ptrs.push(ptr);
         }
 
@@ -303,7 +303,7 @@ impl Module {
         {
             match &element.kind {
                 ParsedElementKind::Active {
-                    table_index,
+                    table_index: Some(table_index),
                     offset_expr,
                 } => {
                     let table_ptr = ptrs
@@ -579,7 +579,8 @@ impl Module {
                 _ => None,
             })
             .collect_vec();
-        let mut required_defined_tables = sections.tables.clone();
+        let mut required_defined_tables =
+            sections.tables.iter().map(|t| t.ty.clone()).collect_vec();
 
         let mut required_tables = required_imported_tables;
         required_tables.append(&mut required_defined_tables);

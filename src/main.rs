@@ -45,12 +45,18 @@ async fn main() -> anyhow::Result<()> {
     // wasm setup
     let wat = r#"
         (module
-            (func $f (param i32) (result f32)
-                (f32.const 12.0)
-                (local.get 0)
-                (br_if 0)
-                (f32.const 5.0)
-                (f32.add)
+            (func $f (result i32)
+                (local $i i32) 
+                (local.set $i (i32.const 1))                        ;; i = 1
+                loop $LOOP
+                    (i32.le_s (local.get $i) (i32.const 10))        ;; i <= 10
+                    if
+                        (local.set $i                               ;; i = i + 1
+                            (i32.add (local.get $i) (i32.const 1)))
+                        br $LOOP
+                    end
+                end
+                local.get $i
             )
             (export "foi" (func $f))
         )
@@ -70,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
         .expect("could not instantiate all modules");
 
     let function = instances.get_func("foi").unwrap();
-    let function = function.try_typed::<i32, f32>().unwrap();
+    let function = function.try_typed::<(), i32>().unwrap();
 
     let store_source = match store_builder.complete(&queue).await {
         Ok(v) => v,
@@ -87,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
     println!("=====================HLSL SHADER END=====================");
 
     let results = function
-        .call_all(&memory_system, &queue, &mut stores, vec![1])
+        .call_all(&memory_system, &queue, &mut stores, vec![()])
         .await
         .unwrap()
         .await

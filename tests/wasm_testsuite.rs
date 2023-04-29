@@ -103,8 +103,9 @@ impl WastState {
                 memory64: true,
                 extended_const: true,
                 component_model: true,
-
-                deterministic_only: false,
+                floats: true,
+                function_references: true,
+                memory_control: true,
             },
             memory_system,
             queue,

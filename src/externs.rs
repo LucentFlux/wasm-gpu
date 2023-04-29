@@ -96,28 +96,3 @@ impl From<AbstractTablePtr> for Extern {
         Self::Table(t)
     }
 }
-
-#[macro_export]
-macro_rules! imports {
-    (
-        $(
-            $module:literal : {
-                $(
-                    $name:literal : $ext:ident
-                ),* $(,)?
-            }
-        ),* $(,)?
-    ) => {
-        vec![
-            $(
-                $(
-                    $crate::wasp::externs::NamedExtern {
-                        module: $module.to_string(),
-                        name: $name.to_string(),
-                        ext: $crate::wasp::externs::Extern::from($ext)
-                    },
-                )*
-            )*
-        ]
-    };
-}

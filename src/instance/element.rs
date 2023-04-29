@@ -2,7 +2,7 @@ use crate::capabilities::CapabilityStore;
 use crate::impl_immutable_ptr;
 use itertools::Itertools;
 use wasm_types::{FuncRef, WasmTyVal};
-use wasmparser::ValType;
+use wasmparser::{RefType, ValType};
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;
 use wgpu_lazybuffers::{
@@ -58,7 +58,7 @@ impl MappedElementInstance {
     pub async fn try_add_element(
         &mut self,
         queue: &AsyncQueue,
-        ty: ValType,
+        ty: RefType,
         element: Vec<Option<u32>>,
     ) -> Result<ElementPtr, BufferAsyncError> {
         let start = self.meta.head;
@@ -118,7 +118,7 @@ impl MappedElementInstance {
 impl_immutable_ptr!(
     pub struct ElementPtr {
         data...
-        ty: ValType,
+        ty: RefType,
         len: usize,
     }
 );

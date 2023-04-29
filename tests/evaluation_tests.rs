@@ -232,6 +232,27 @@ fn unreachable_traps() {
 }*/
 
 #[test]
+fn get_i32_via_local() {
+    test_parity::<(), i32>(
+        r#"
+        (module
+            (func $f (result i32)
+                (local $i i32)
+                (i32.const 5)
+                (local.set $i)
+                (local.get $i)
+                (local.get $i)
+                (i32.add)
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        (),
+    )
+}
+
+#[test]
 fn add_5_i32() {
     test_parity::<i32, i32>(
         r#"
@@ -431,6 +452,55 @@ fn nested_if(input: i32) {
         r#"
         (module
             (func $f (param i32) (result f32)
+                f32.const 1.1
+                ;; x <= 1
+                local.get 0
+                i32.const 1
+                i32.le_s
+                (if (param f32) (result f32)
+                    (then
+                        f32.const 12.0
+                        f32.add
+                        ;; x == 0
+                        local.get 0
+                        i32.eqz
+                        (if (param f32) (result f32)
+                            (then
+                                f32.const 0.2
+                                f32.add
+                            )
+                        )
+                    )
+                )
+                ;; x <= 2
+                local.get 0
+                i32.const 2
+                i32.le_s
+                (if (param f32) (result f32)
+                    (then
+                        f32.const 3.5
+                        f32.add
+                    )
+                )
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        input,
+    )
+}
+
+do_test!(nested_if(0));
+do_test!(nested_if(1));
+do_test!(nested_if(2));
+do_test!(nested_if(3));
+
+fn nested_if_then(input: i32) {
+    test_parity::<i32, f32>(
+        r#"
+        (module
+            (func $f (param i32) (result f32)
                 ;; x == 0
                 local.get 0
                 i32.eqz
@@ -462,7 +532,61 @@ fn nested_if(input: i32) {
     )
 }
 
-do_test!(nested_if(0));
-do_test!(nested_if(1));
-do_test!(nested_if(2));
-do_test!(nested_if(3));
+do_test!(nested_if_then(0));
+do_test!(nested_if_then(1));
+do_test!(nested_if_then(2));
+do_test!(nested_if_then(3));
+
+#[test]
+fn for_loop_break_from_inside() {
+    test_parity::<(), i32>(
+        r#"
+        (module
+            (func $f (result i32)
+                (local $i i32) 
+                (local.set $i (i32.const 1))                        ;; i = 1
+                loop $LOOP
+                    (i32.le_s (local.get $i) (i32.const 10))        ;; i <= 10
+                    if
+                        (local.set $i                               ;; i = i + 1
+                            (i32.add (local.get $i) (i32.const 1)))
+                        br $LOOP
+                    end
+                end
+                local.get $i
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        (),
+    )
+}
+
+#[test]
+fn for_loop_break_to_outside() {
+    test_parity::<(), i32>(
+        r#"
+        (module
+            (func $f (result i32)
+                (local $i i32) 
+                (local.set $i (i32.const 1))                        ;; i = 1
+                (block
+                    loop $LOOP
+                        (i32.gt_s (local.get $i) (i32.const 7))         ;; i > 7
+                        br_if 1
+                            
+                        (local.set $i                                   ;; i = i + 5
+                            (i32.add (local.get $i) (i32.const 5)))
+                        br $LOOP
+                    end
+                )
+                local.get $i
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        (),
+    )
+}

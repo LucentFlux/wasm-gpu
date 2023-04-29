@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-syn = { version = "1.0", features = ["full"] }
-proc-macro2 = "1.0.40"
-quote = "1.0.20"
-glob = "0.3.0"
-wast = "44.0.0"
-enumset = "1.0.11"
+syn = { version = "2", features = ["full"] }
+proc-macro2 = "1"
+quote = "1"
+glob = "0.3"
+wast = "57"
+enumset = "1"
 
 [lib]
 proc-macro = true

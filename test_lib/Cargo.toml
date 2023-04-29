@@ -9,6 +9,6 @@ wgpu-async = { path = "../../wgpu-async" }
 wgpu-lazybuffers = { path = "../../wgpu-lazybuffers" }
 wasm-types = { path = "../../wasm-types" }
 wasm-gpu = { path = ".." }
-wasmtime = { version = "6", features = ["wat"] }
+wasmtime = { version = "7", features = ["wat"] }
 
-pollster = "0.2"
+pollster = "0.3"
