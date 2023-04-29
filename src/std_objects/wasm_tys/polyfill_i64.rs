@@ -1,9 +1,79 @@
 use std::sync::Arc;
 
-use crate::{build, std_objects::std_objects_gen};
+use crate::{
+    build,
+    std_objects::{std_objects_gen, WasmBoolInstance},
+};
 use naga_ext::{declare_function, naga_expr, BlockExt, ModuleExt};
 
 use super::{i64_instance_gen, I64Gen};
+
+fn gen_boolean_mono(
+    module: &mut naga::Module,
+    f64_ty: naga::Handle<naga::Type>,
+    wasm_bool: WasmBoolInstance,
+    name: &str,
+    make: impl FnOnce(
+        &mut naga::Module,
+        naga::Handle<naga::Function>,
+        naga::Handle<naga::Expression>,
+        naga::Handle<naga::Expression>,
+    ) -> naga::Handle<naga::Expression>,
+) -> build::Result<naga::Handle<naga::Function>> {
+    let (function_handle, value) = declare_function! {
+        module => fn {format!("f64_{}", name)}(value: f64_ty) -> wasm_bool.ty
+    };
+
+    let t = naga_expr!(module, function_handle => Constant(wasm_bool.const_true));
+    let f = naga_expr!(module, function_handle => Constant(wasm_bool.const_false));
+
+    let value_high = naga_expr!(module, function_handle => value[const 0]);
+    let value_low = naga_expr!(module, function_handle => value[const 1]);
+    let cond = make(module, function_handle, value_high, value_low);
+    let res = naga_expr!(module, function_handle => if (cond) {t} else {f});
+    module.fn_mut(function_handle).body.push_return(res);
+
+    Ok(function_handle)
+}
+
+fn gen_boolean_binary(
+    module: &mut naga::Module,
+    f64_ty: naga::Handle<naga::Type>,
+    wasm_bool: WasmBoolInstance,
+    name: &str,
+    make: impl FnOnce(
+        &mut naga::Module,
+        naga::Handle<naga::Function>,
+        naga::Handle<naga::Expression>,
+        naga::Handle<naga::Expression>,
+        naga::Handle<naga::Expression>,
+        naga::Handle<naga::Expression>,
+    ) -> naga::Handle<naga::Expression>,
+) -> build::Result<naga::Handle<naga::Function>> {
+    let (function_handle, lhs, rhs) = declare_function! {
+        module => fn {format!("f64_{}", name)}(lhs: f64_ty, rhs: f64_ty) -> wasm_bool.ty
+    };
+
+    let t = naga_expr!(module, function_handle => Constant(wasm_bool.const_true));
+    let f = naga_expr!(module, function_handle => Constant(wasm_bool.const_false));
+
+    let lhs_high = naga_expr!(module, function_handle => lhs[const 0]);
+    let lhs_low = naga_expr!(module, function_handle => lhs[const 1]);
+    let rhs_high = naga_expr!(module, function_handle => rhs[const 0]);
+    let rhs_low = naga_expr!(module, function_handle => rhs[const 1]);
+    let cond = make(
+        module,
+        function_handle,
+        lhs_high,
+        lhs_low,
+        rhs_high,
+        rhs_low,
+    );
+    let res = naga_expr!(module, function_handle => if (cond) {t} else {f});
+    module.fn_mut(function_handle).body.push_return(res);
+
+    Ok(function_handle)
+}
 
 /// An implementation of i64s using a 2-vector of u32s
 pub(crate) struct PolyfillI64;
@@ -137,19 +207,153 @@ impl I64Gen for PolyfillI64 {
         module: &mut naga::Module,
         others: i64_instance_gen::EqzRequirements,
     ) -> build::Result<i64_instance_gen::Eqz> {
-        let (function_handle, value) = declare_function! {
-            module => fn f64_eqz(value: others.ty) -> others.bool.ty
-        };
+        gen_boolean_mono(
+            module,
+            others.ty,
+            others.wasm_bool,
+            "eqz",
+            |module, handle, high, low| {
+                naga_expr!(module, handle =>
+                    (high == U32(0)) & (low == U32(0))
+                )
+            },
+        )
+    }
 
-        let t = naga_expr!(module, function_handle => Constant(others.bool.const_true));
-        let f = naga_expr!(module, function_handle => Constant(others.bool.const_false));
+    fn gen_lt_s(
+        module: &mut naga::Module,
+        others: i64_instance_gen::LtSRequirements,
+    ) -> build::Result<i64_instance_gen::LtS> {
+        gen_boolean_binary(
+            module,
+            others.ty,
+            others.wasm_bool,
+            "lt_s",
+            |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
+                naga_expr!(module, handle =>
+                    ((lhs_high as Sint) < (rhs_high as Sint)) | ((lhs_high == rhs_high) & (lhs_low < rhs_low))
+                )
+            },
+        )
+    }
 
-        let value_high = naga_expr!(module, function_handle => value[const 0]);
-        let value_low = naga_expr!(module, function_handle => value[const 1]);
-        let res = naga_expr!(module, function_handle => if ((value_high == U32(0)) & (value_low == U32(0))) {t} else {f});
-        module.fn_mut(function_handle).body.push_return(res);
+    fn gen_le_s(
+        module: &mut naga::Module,
+        others: i64_instance_gen::LeSRequirements,
+    ) -> build::Result<i64_instance_gen::LeS> {
+        gen_boolean_binary(
+            module,
+            others.ty,
+            others.wasm_bool,
+            "le_s",
+            |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
+                naga_expr!(module, handle =>
+                    ((lhs_high as Sint) < (rhs_high as Sint)) | ((lhs_high == rhs_high) & (lhs_low <= rhs_low))
+                )
+            },
+        )
+    }
 
-        Ok(function_handle)
+    fn gen_gt_s(
+        module: &mut naga::Module,
+        others: i64_instance_gen::GtSRequirements,
+    ) -> build::Result<i64_instance_gen::GtS> {
+        gen_boolean_binary(
+            module,
+            others.ty,
+            others.wasm_bool,
+            "gt_s",
+            |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
+                naga_expr!(module, handle =>
+                    ((lhs_high as Sint) > (rhs_high as Sint)) | ((lhs_high == rhs_high) & (lhs_low > rhs_low))
+                )
+            },
+        )
+    }
+
+    fn gen_ge_s(
+        module: &mut naga::Module,
+        others: i64_instance_gen::GeSRequirements,
+    ) -> build::Result<i64_instance_gen::GeS> {
+        gen_boolean_binary(
+            module,
+            others.ty,
+            others.wasm_bool,
+            "ge_s",
+            |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
+                naga_expr!(module, handle =>
+                    ((lhs_high as Sint) > (rhs_high as Sint)) | ((lhs_high == rhs_high) & (lhs_low >= rhs_low))
+                )
+            },
+        )
+    }
+
+    fn gen_lt_u(
+        module: &mut naga::Module,
+        others: i64_instance_gen::LtURequirements,
+    ) -> build::Result<i64_instance_gen::LtU> {
+        gen_boolean_binary(
+            module,
+            others.ty,
+            others.wasm_bool,
+            "lt_u",
+            |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
+                naga_expr!(module, handle =>
+                    (lhs_high < rhs_high) | ((lhs_high == rhs_high) & (lhs_low < rhs_low))
+                )
+            },
+        )
+    }
+
+    fn gen_le_u(
+        module: &mut naga::Module,
+        others: i64_instance_gen::LeURequirements,
+    ) -> build::Result<i64_instance_gen::LeU> {
+        gen_boolean_binary(
+            module,
+            others.ty,
+            others.wasm_bool,
+            "le_u",
+            |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
+                naga_expr!(module, handle =>
+                    (lhs_high < rhs_high) | ((lhs_high == rhs_high) & (lhs_low <= rhs_low))
+                )
+            },
+        )
+    }
+
+    fn gen_gt_u(
+        module: &mut naga::Module,
+        others: i64_instance_gen::GtURequirements,
+    ) -> build::Result<i64_instance_gen::GtU> {
+        gen_boolean_binary(
+            module,
+            others.ty,
+            others.wasm_bool,
+            "gt_u",
+            |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
+                naga_expr!(module, handle =>
+                    (lhs_high < rhs_high) | ((lhs_high == rhs_high) & (lhs_low > rhs_low))
+                )
+            },
+        )
+    }
+
+    fn gen_ge_u(
+        module: &mut naga::Module,
+        others: i64_instance_gen::GeURequirements,
+    ) -> build::Result<i64_instance_gen::GeU> {
+        gen_boolean_binary(
+            module,
+            others.ty,
+            others.wasm_bool,
+            "ge_u",
+            |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
+                naga_expr!(module, handle =>
+                    (lhs_high < rhs_high) | ((lhs_high == rhs_high) & (lhs_low >= rhs_low))
+                )
+            },
+        )
     }
 }
 

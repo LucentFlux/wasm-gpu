@@ -16,6 +16,7 @@ use self::{
     locals::FnLocals,
 };
 
+use crate::active_function::active_block::EndInstruction;
 use crate::{build, get_entry_name, std_objects::StdObjects, FuncUnit};
 
 use crate::active_module::ActiveModule;
@@ -128,7 +129,7 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
         } = working_module;
         let constants = &mut module.constants;
         let function = module.functions.get_mut(data.handle);
-        let body_data = BodyData::new(
+        let mut body_data = BodyData::new(
             accessible,
             module_data,
             return_type,
@@ -140,27 +141,30 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
         );
 
         // Define base block
-        let base_block = ActiveBlock::new(&mut function.body, block_type, body_data, vec![]);
+        let base_block = ActiveBlock::new(&mut function.body, block_type, &mut body_data, vec![]);
 
         // Parse instructions
         let mut instructions = func_data
             .data
             .operators
             .iter()
-            .map(OperatorByProposal::clone);
+            .map(OperatorByProposal::clone)
+            .peekable();
 
         // Populate recursively
-        let (results, mut body_data, remaining_parents) =
-            base_block.populate_straight(&mut instructions)?.finish();
+        let (base_block, end) = base_block.populate_straight(&mut instructions)?;
+        assert_eq!(end, EndInstruction::End);
+        let (results, control_flow_state) = base_block.finish();
 
         debug_assert!(instructions.next().is_none(), "validation ensures that all instructions are within the body and that blocks are balanced");
-        debug_assert!(
-            remaining_parents.is_empty(),
-            "blocks should be balanced and push and pop their own block labels"
-        );
 
-        // Return results
-        body_data.push_final_return(&mut function.body, results);
+        // Return results if there's a chance control flow exits the end of the block of the body
+        match control_flow_state {
+            active_block::ControlFlowState::Continue => {
+                body_data.push_final_return(&mut function.body, results)
+            }
+            _ => {}
+        }
 
         return Ok(());
     }

@@ -79,9 +79,10 @@ impl FnLocals {
         // First insert actual wasm locals
         let local_variables = &mut function.local_variables;
         let expressions = &mut function.expressions;
-        for (i_local, local_ty) in parsed_locals {
+        for (local_count, local_ty) in parsed_locals {
+            let i_local = parameters.len() as u32 + local_count - 1;
             locals.insert(
-                *i_local,
+                i_local,
                 FnLocal::append_wasm_to(
                     format!("wasm_defined_local_{}", i_local),
                     local_variables,
@@ -127,6 +128,6 @@ impl FnLocals {
     pub(crate) fn get(&self, local_index: u32) -> &FnLocal {
         self.locals
             .get(&local_index)
-            .expect("unreferencable local should be caught by validation of wasm module")
+            .expect(&format!("unreferencable local should be caught by validation of wasm module when getting local indexed {}", local_index))
     }
 }

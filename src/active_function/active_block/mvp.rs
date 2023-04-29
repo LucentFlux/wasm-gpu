@@ -6,15 +6,15 @@ use wasmtime_environ::Trap;
 
 pub(super) fn eat_mvp_operator(
     state: &mut ActiveBlock<'_, '_>,
-    operator: &MVPOperator,
+    operator: MVPOperator,
 ) -> build::Result<()> {
     match operator {
         MVPOperator::Nop => {
             /* Pass */
             Ok(())
         }
-        MVPOperator::I32Const { value } => state.push_const_val(Val::I32(*value)),
-        MVPOperator::I64Const { value } => state.push_const_val(Val::I64(*value)),
+        MVPOperator::I32Const { value } => state.push_const_val(Val::I32(value)),
+        MVPOperator::I64Const { value } => state.push_const_val(Val::I64(value)),
         MVPOperator::F32Const { value } => {
             state.push_const_val(Val::F32(f32::from_bits(value.bits())))
         }
@@ -27,12 +27,12 @@ pub(super) fn eat_mvp_operator(
             Ok(())
         }
         MVPOperator::LocalGet { local_index } => {
-            let local_ptr = state.local_ptr(*local_index);
+            let local_ptr = state.local_ptr(local_index);
             state.push(naga::Expression::Load { pointer: local_ptr });
             Ok(())
         }
         MVPOperator::LocalSet { local_index } => {
-            let local_ptr = state.local_ptr(*local_index);
+            let local_ptr = state.local_ptr(local_index);
             let value = state.pop();
             state.append(naga::Statement::Store {
                 pointer: local_ptr,
@@ -41,7 +41,7 @@ pub(super) fn eat_mvp_operator(
             Ok(())
         }
         MVPOperator::LocalTee { local_index } => {
-            let local_ptr = state.local_ptr(*local_index);
+            let local_ptr = state.local_ptr(local_index);
             let value = state.peek();
             state.append(naga::Statement::Store {
                 pointer: local_ptr,
@@ -80,25 +80,25 @@ pub(super) fn eat_mvp_operator(
         MVPOperator::I32Eqz => state.pop_one_push_call_mono(state.std_objects().i32.eqz),
         MVPOperator::I32Eq => state.pop_two_push_call_bi(state.std_objects().i32.eq),
         MVPOperator::I32Ne => unimplemented!(),
-        MVPOperator::I32LtS => unimplemented!(),
-        MVPOperator::I32LtU => unimplemented!(),
-        MVPOperator::I32GtS => unimplemented!(),
-        MVPOperator::I32GtU => unimplemented!(),
-        MVPOperator::I32LeS => unimplemented!(),
-        MVPOperator::I32LeU => unimplemented!(),
-        MVPOperator::I32GeS => unimplemented!(),
-        MVPOperator::I32GeU => unimplemented!(),
+        MVPOperator::I32LtS => state.pop_two_push_call_bi(state.std_objects().i32.lt_s),
+        MVPOperator::I32LtU => state.pop_two_push_call_bi(state.std_objects().i32.lt_u),
+        MVPOperator::I32GtS => state.pop_two_push_call_bi(state.std_objects().i32.gt_s),
+        MVPOperator::I32GtU => state.pop_two_push_call_bi(state.std_objects().i32.gt_u),
+        MVPOperator::I32LeS => state.pop_two_push_call_bi(state.std_objects().i32.le_s),
+        MVPOperator::I32LeU => state.pop_two_push_call_bi(state.std_objects().i32.le_u),
+        MVPOperator::I32GeS => state.pop_two_push_call_bi(state.std_objects().i32.ge_s),
+        MVPOperator::I32GeU => state.pop_two_push_call_bi(state.std_objects().i32.ge_u),
         MVPOperator::I64Eqz => state.pop_one_push_call_mono(state.std_objects().i64.eqz),
         MVPOperator::I64Eq => state.pop_two_push_call_bi(state.std_objects().i64.eq),
         MVPOperator::I64Ne => unimplemented!(),
-        MVPOperator::I64LtS => unimplemented!(),
-        MVPOperator::I64LtU => unimplemented!(),
-        MVPOperator::I64GtS => unimplemented!(),
-        MVPOperator::I64GtU => unimplemented!(),
-        MVPOperator::I64LeS => unimplemented!(),
-        MVPOperator::I64LeU => unimplemented!(),
-        MVPOperator::I64GeS => unimplemented!(),
-        MVPOperator::I64GeU => unimplemented!(),
+        MVPOperator::I64LtS => state.pop_two_push_call_bi(state.std_objects().i64.lt_s),
+        MVPOperator::I64LtU => state.pop_two_push_call_bi(state.std_objects().i64.lt_u),
+        MVPOperator::I64GtS => state.pop_two_push_call_bi(state.std_objects().i64.gt_s),
+        MVPOperator::I64GtU => state.pop_two_push_call_bi(state.std_objects().i64.gt_u),
+        MVPOperator::I64LeS => state.pop_two_push_call_bi(state.std_objects().i64.le_s),
+        MVPOperator::I64LeU => state.pop_two_push_call_bi(state.std_objects().i64.le_u),
+        MVPOperator::I64GeS => state.pop_two_push_call_bi(state.std_objects().i64.ge_s),
+        MVPOperator::I64GeU => state.pop_two_push_call_bi(state.std_objects().i64.ge_u),
         MVPOperator::F32Eq => state.pop_two_push_call_bi(state.std_objects().i32.eq),
         MVPOperator::F32Ne => unimplemented!(),
         MVPOperator::F32Lt => unimplemented!(),
@@ -168,7 +168,7 @@ pub(super) fn eat_mvp_operator(
         MVPOperator::F64Trunc => unimplemented!(),
         MVPOperator::F64Nearest => unimplemented!(),
         MVPOperator::F64Sqrt => unimplemented!(),
-        MVPOperator::F64Add => state.pop_two_push_call_bi(state.std_objects().f64.add),
+        MVPOperator::F64Add => unimplemented!(), //state.pop_two_push_call_bi(state.std_objects().f64.add),
         MVPOperator::F64Sub => unimplemented!(),
         MVPOperator::F64Mul => unimplemented!(),
         MVPOperator::F64Div => unimplemented!(),

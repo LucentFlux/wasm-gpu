@@ -445,8 +445,10 @@ macro_rules! extract_type_field {
             ValType::F32 => $self.f32.$($field_accessor)*,
             ValType::F64 => $self.f64.$($field_accessor)*,
             ValType::V128 => $self.v128.$($field_accessor)*,
-            ValType::FuncRef => $self.func_ref.$($field_accessor)*,
-            ValType::ExternRef => $self.extern_ref.$($field_accessor)*,
+            ValType::Ref(rty) => match rty.heap_type() {
+                wasmparser::HeapType::TypedFunc(_) | wasmparser::HeapType::Func => $self.func_ref.$($field_accessor)*,
+                wasmparser::HeapType::Extern => $self.extern_ref.$($field_accessor)*,
+            }
         }
     };
 }

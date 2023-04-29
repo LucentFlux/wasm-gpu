@@ -34,7 +34,7 @@ macro_rules! wasm_ty_generator {
                 word: naga::Handle<naga::Type>,
                 bindings: StdBindings,
                 word_max: naga::Handle<naga::Constant>,
-                bool: WasmBoolInstance,
+                wasm_bool: WasmBoolInstance,
             )
             {
                 // Things all wasm types have
@@ -61,7 +61,7 @@ macro_rules! wasm_ty_generator {
 
             add: |ty, word_max| naga::Handle<naga::Function>,
 
-            eq: |ty, bool| naga::Handle<naga::Function>,
+            eq: |ty, wasm_bool| naga::Handle<naga::Function>,
         }}
     };
     // The implementation required for integers (i32, i64)
@@ -69,7 +69,17 @@ macro_rules! wasm_ty_generator {
         wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts)*]; {
             $($impl)*
 
-            eqz: |ty, bool| naga::Handle<naga::Function>,
+            eqz: |ty, wasm_bool| naga::Handle<naga::Function>,
+
+            lt_s: |ty, wasm_bool| naga::Handle<naga::Function>,
+            le_s: |ty, wasm_bool| naga::Handle<naga::Function>,
+            gt_s: |ty, wasm_bool| naga::Handle<naga::Function>,
+            ge_s: |ty, wasm_bool| naga::Handle<naga::Function>,
+
+            lt_u: |ty, wasm_bool| naga::Handle<naga::Function>,
+            le_u: |ty, wasm_bool| naga::Handle<naga::Function>,
+            gt_u: |ty, wasm_bool| naga::Handle<naga::Function>,
+            ge_u: |ty, wasm_bool| naga::Handle<naga::Function>,
         }}
     };
 }
@@ -118,6 +128,52 @@ fn make_64_bit_const_from_2vec32(
     )
 }
 
+macro_rules! impl_native_bool_binexp {
+    ($instance_gen:ident, $name:ident, $op_name:ident; $op:tt) => {
+        paste::paste! {
+            fn [< gen_ $op_name >](
+                module: &mut naga::Module,
+                others: $instance_gen::[< $op_name:camel Requirements >],
+            ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
+                let (function_handle, lhs, rhs) = declare_function! {
+                    module => fn [< $name $op_name >](lhs: others.ty, rhs: others.ty) -> others.wasm_bool.ty
+                };
+
+                let t = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_true));
+                let f = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_false));
+                let res = naga_expr!(module, function_handle => if (lhs $op rhs) {t} else {f});
+                module.fn_mut(function_handle).body.push_return(res);
+
+                Ok(function_handle)
+            }
+        }
+    };
+}
+use impl_native_bool_binexp;
+
+macro_rules! impl_native_unsigned_bool_binexp {
+    ($instance_gen:ident, $name:ident, $op_name:ident; $op:tt) => {
+        paste::paste! {
+            fn [< gen_ $op_name >](
+                module: &mut naga::Module,
+                others: $instance_gen::[< $op_name:camel Requirements >],
+            ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
+                let (function_handle, lhs, rhs) = declare_function! {
+                    module => fn [< $name $op_name >](lhs: others.ty, rhs: others.ty) -> others.wasm_bool.ty
+                };
+
+                let t = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_true));
+                let f = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_false));
+                let res = naga_expr!(module, function_handle => if ((lhs as Uint) $op (rhs as Uint)) {t} else {f});
+                module.fn_mut(function_handle).body.push_return(res);
+
+                Ok(function_handle)
+            }
+        }
+    };
+}
+use impl_native_unsigned_bool_binexp;
+
 macro_rules! impl_native_ops {
     ($instance_gen:ident, $name:ident) => {
         paste::paste! {
@@ -135,21 +191,7 @@ macro_rules! impl_native_ops {
                 Ok(function_handle)
             }
 
-            fn gen_eq(
-                module: &mut naga::Module,
-                others: $instance_gen::EqRequirements,
-            ) -> build::Result<$instance_gen::Eq> {
-                let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name _eq >](lhs: others.ty, rhs: others.ty) -> others.bool.ty
-                };
-
-                let t = naga_expr!(module, function_handle => Constant(others.bool.const_true));
-                let f = naga_expr!(module, function_handle => Constant(others.bool.const_false));
-                let res = naga_expr!(module, function_handle => if (lhs == rhs) {t} else {f});
-                module.fn_mut(function_handle).body.push_return(res);
-
-                Ok(function_handle)
-            }
+            $crate::std_objects::wasm_tys::impl_native_bool_binexp!{$instance_gen, $name, eq; ==}
         }
     };
 }
@@ -188,11 +230,11 @@ macro_rules! impl_bitwise_2vec32_numeric_ops {
                 others: $instance_gen::EqRequirements,
             ) -> build::Result<$instance_gen::Eq> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name _eq >](lhs: others.ty, rhs: others.ty) -> others.bool.ty
+                    module => fn [< $name _eq >](lhs: others.ty, rhs: others.ty) -> others.wasm_bool.ty
                 };
 
-                let t = naga_expr!(module, function_handle => Constant(others.bool.const_true));
-                let f = naga_expr!(module, function_handle => Constant(others.bool.const_false));
+                let t = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_true));
+                let f = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_false));
 
                 let lhs_high = naga_expr!(module, function_handle => lhs[const 0]);
                 let lhs_low = naga_expr!(module, function_handle => lhs[const 1]);

@@ -124,16 +124,26 @@ impl I32Gen for NativeI32 {
         others: i32_instance_gen::EqzRequirements,
     ) -> build::Result<i32_instance_gen::Eqz> {
         let (function_handle, value) = declare_function! {
-            module => fn i32_eqz(value: others.ty) -> others.bool.ty
+            module => fn i32_eqz(value: others.ty) -> others.wasm_bool.ty
         };
 
-        let t = naga_expr!(module, function_handle => Constant(others.bool.const_true));
-        let f = naga_expr!(module, function_handle => Constant(others.bool.const_false));
+        let t = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_true));
+        let f = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_false));
         let res = naga_expr!(module, function_handle => if (value == I32(0)) {t} else {f});
         module.fn_mut(function_handle).body.push_return(res);
 
         Ok(function_handle)
     }
+
+    super::impl_native_bool_binexp! {i32_instance_gen, i32, gt_s; >}
+    super::impl_native_bool_binexp! {i32_instance_gen, i32, ge_s; >=}
+    super::impl_native_bool_binexp! {i32_instance_gen, i32, lt_s; <}
+    super::impl_native_bool_binexp! {i32_instance_gen, i32, le_s; <=}
+
+    super::impl_native_unsigned_bool_binexp! {i32_instance_gen, i32, gt_u; >}
+    super::impl_native_unsigned_bool_binexp! {i32_instance_gen, i32, ge_u; >=}
+    super::impl_native_unsigned_bool_binexp! {i32_instance_gen, i32, lt_u; <}
+    super::impl_native_unsigned_bool_binexp! {i32_instance_gen, i32, le_u; <=}
 }
 
 // fn<buffer>(word_address: u32) -> i32

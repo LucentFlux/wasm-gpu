@@ -152,6 +152,10 @@ impl WasmFnArgs {
     pub(crate) fn iter(&self) -> std::slice::Iter<WasmFnArg> {
         self.args.iter()
     }
+
+    pub(crate) fn len(&self) -> usize {
+        self.args.len()
+    }
 }
 
 /// The things that every entry function has passed in

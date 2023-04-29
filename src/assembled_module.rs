@@ -144,11 +144,9 @@ impl AssembledModule {
             capabilities,
         };
 
-        let assembled =
-            assembled.perform_spirv_tools_opt_passes(true, true, cfg!(feature = "opt"))?;
-
         let assembled = if cfg!(feature = "opt") {
             assembled
+                .perform_spirv_tools_opt_passes(false, false, true)?
                 .perform_our_opt_passes()?
                 .perform_spirv_tools_opt_passes(false, false, true)?
         } else {
