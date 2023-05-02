@@ -378,19 +378,35 @@ macro_rules! impl_load_and_store {
                 // Otherwise we have to load twice and merge
                 let mut unaligned_block = naga::Block::default();
 
-                // TODO: unaligned path - then fix if below
+                // TODO: unaligned path
+                let aligned_address = naga_expr!(module, function_handle => address >> U32(2));
+                let load_fn = others.read_memory;
+                let load_result = module
+                    .fn_mut(function_handle)
+                    .expressions
+                    .append(naga::Expression::CallResult(load_fn), naga::Span::UNDEFINED);
+                unaligned_block.push(
+                    naga::Statement::Call {
+                        function: load_fn,
+                        arguments: vec![aligned_address],
+                        result: Some(load_result),
+                    },
+                    naga::Span::UNDEFINED,
+                );
+                unaligned_block.push_store(loaded_value_ptr, load_result);
+                // END TODO
 
                 // Test for unalignment
                 let unaligned_condition =
                     naga_expr!(module, function_handle => (address & U32(3)) != U32(0));
                 module.fn_mut(function_handle).body.push_if(unaligned_condition,
-                    aligned_block.clone(), //unaligned_block,
+                    unaligned_block,
                     aligned_block
                 );
 
                 // Then unify load paths
                 let res = naga_expr!(module, function_handle => Load(loaded_value_ptr));
-                module.fn_mut(function_handle).body.push_return(load_result);
+                module.fn_mut(function_handle).body.push_return(res);
 
                 Ok(function_handle)
             }
@@ -423,13 +439,24 @@ macro_rules! impl_load_and_store {
                 // Otherwise we have to load twice, merge in value, and store back
                 let mut unaligned_block = naga::Block::default();
 
-                // TODO: unaligned path - then fix if below
+                // TODO: unaligned path
+                let aligned_address = naga_expr!(module, function_handle => address >> U32(2));
+                let store_fn = others.write_memory;
+                unaligned_block.push(
+                    naga::Statement::Call {
+                        function: store_fn,
+                        arguments: vec![aligned_address, value],
+                        result: None,
+                    },
+                    naga::Span::UNDEFINED,
+                );
+                // END TODO
 
                 // Test for unalignment
                 let unaligned_condition =
                     naga_expr!(module, function_handle => (address & U32(3)) != U32(0));
                 module.fn_mut(function_handle).body.push_if(unaligned_condition,
-                    aligned_block.clone(), //unaligned_block,
+                    unaligned_block,
                     aligned_block,
                 );
 
