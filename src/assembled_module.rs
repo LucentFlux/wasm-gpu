@@ -1,5 +1,7 @@
 mod call_graph;
 
+use itertools::Itertools;
+
 use self::call_graph::CallGraph;
 use crate::active_module::ActiveModule;
 use crate::function_lookup::FunctionLookup;
@@ -221,17 +223,66 @@ impl AssembledModule {
         })
     }
 
+    fn map_expressions_in_block(
+        block: &naga::Block,
+        f: &impl Fn(
+            naga::Expression,
+            Box<dyn Fn(naga::Expression) -> naga::Handle<naga::Expression>>,
+            Box<dyn Fn(naga::Handle<naga::Expression>) -> naga::Expression>,
+        ) -> naga::Expression,
+    ) -> naga::Block {
+        naga::Block::from_vec(
+            block
+                .iter()
+                .flat_map(|statement| match statement {
+                    naga::Statement::Emit(smt) => todo!(),
+                    naga::Statement::Block(b) => todo!(),
+                    naga::Statement::If {
+                        condition,
+                        accept,
+                        reject,
+                    } => todo!(),
+                    naga::Statement::Switch { selector, cases } => todo!(),
+                    naga::Statement::Loop {
+                        body,
+                        continuing,
+                        break_if,
+                    } => todo!(),
+                    _ => std::iter::once(statement.clone()),
+                })
+                .collect_vec(),
+        )
+    }
+
+    fn map_expressions(
+        module: &mut naga::Module,
+        f: impl Fn(
+            naga::Expression,
+            Box<dyn Fn(naga::Expression) -> naga::Handle<naga::Expression>>,
+            Box<dyn Fn(naga::Handle<naga::Expression>) -> naga::Expression>,
+        ) -> naga::Expression,
+    ) {
+        for (function_handle, function) in module.functions.iter_mut() {
+            function.body = Self::map_expressions_in_block(&function.body, &f);
+        }
+    }
+
     /// The spirv-tools library isn't built for generated spirv, it's built for hand-coded shaders. This means
     /// that it fails to optimise some of the wierder things that we do. To get over this, we implement some of our
     /// own optimisations
     fn perform_our_opt_passes(self) -> build::Result<Self> {
         let Self {
-            module,
+            mut module,
             module_info: _, // Throw away old derived info
             functions,
             tuneables,
             capabilities,
         } = self;
+
+        /*naga_map_expressions!(&mut module {
+            // Hoist expressions like `(expr ? a : b) == c` to `expr ? (a == c) : (b == c)`
+            (expr ? a : b) =?op c => (expr ? a =?op c : b =?op c)
+        });*/
 
         // Reduce expressions like `expr ? val : false`, `expr ? false : val`, `expr ? val : true` or `expr ? true : val`
         // TODO

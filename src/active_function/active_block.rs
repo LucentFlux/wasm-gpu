@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter::Peekable, sync::atomic::AtomicUsize};
+use std::{iter::Peekable, sync::atomic::AtomicUsize};
 
 use itertools::Itertools;
 use naga_ext::{naga_expr, BlockExt, ExpressionsExt, ShaderPart};
@@ -6,7 +6,10 @@ use wasm_opcodes::{ControlFlowOperator, OperatorByProposal};
 use wasmparser::ValType;
 use wasmtime_environ::Trap;
 
-use crate::{build, std_objects::StdObjects, BuildError, FuncAccessible, FunctionModuleData};
+use crate::{
+    build, std_objects::StdObjects, BuildError, ExceededComponent, FuncAccessible,
+    FunctionModuleData, MEMORY_STRIDE_WORDS, TOTAL_INVOCATIONS_CONSTANT_INDEX,
+};
 
 use super::{
     locals::{FnLocal, FnLocals},
@@ -14,6 +17,7 @@ use super::{
 };
 
 mod mvp;
+mod threads;
 
 /// Blocks have parameters that they take off the stack, and results that they put back
 #[derive(Clone, Debug)]
@@ -102,6 +106,9 @@ pub(crate) struct BodyData<'a> {
     local_variables: &'a mut naga::Arena<naga::LocalVariable>,
     std_objects: &'a StdObjects,
 
+    // Config from tuneables
+    uses_disjoint_memory: bool,
+
     // Standard things we use
     /// A handle to an expression holding a true value
     wasm_true_expression: naga::Handle<naga::Expression>,
@@ -129,6 +136,7 @@ impl<'a> BodyData<'a> {
         expressions: &'a mut naga::Arena<naga::Expression>,
         local_variables: &'a mut naga::Arena<naga::LocalVariable>,
         std_objects: &'a StdObjects,
+        uses_disjoint_memory: bool,
     ) -> Self {
         let wasm_true_expression = expressions.append_constant(std_objects.wasm_bool.const_true);
         let wasm_false_expression = expressions.append_constant(std_objects.wasm_bool.const_false);
@@ -144,6 +152,7 @@ impl<'a> BodyData<'a> {
             expressions,
             local_variables,
             std_objects,
+            uses_disjoint_memory,
             wasm_true_expression,
             wasm_false_expression,
             naga_true_expression,
@@ -900,13 +909,15 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                     break;
                 }
                 OperatorByProposal::MVP(mvp_op) => mvp::eat_mvp_operator(self, mvp_op)?,
+                OperatorByProposal::Threads(threads_op) => {
+                    threads::eat_threads_operator(self, threads_op)?
+                }
                 OperatorByProposal::Exceptions(_)
                 | OperatorByProposal::TailCall(_)
                 | OperatorByProposal::ReferenceTypes(_)
                 | OperatorByProposal::SignExtension(_)
                 | OperatorByProposal::SaturatingFloatToInt(_)
                 | OperatorByProposal::BulkMemory(_)
-                | OperatorByProposal::Threads(_)
                 | OperatorByProposal::SIMD(_)
                 | OperatorByProposal::RelaxedSIMD(_)
                 | OperatorByProposal::FunctionReferences(_)
@@ -1012,6 +1023,26 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         &self.body_data.std_objects
     }
 
+    /// Takes a byte address in shared memory space and calculates the address in disjoint memory space. I.e. calculates
+    /// `(address / STRIDE) * instance_count + STRIDE * instance_id + (address % STRIDE)`
+    fn disjoint_memory_address(
+        &mut self,
+        shared_address: naga::Handle<naga::Expression>,
+    ) -> naga::Handle<naga::Expression> {
+        let stride_bytes = naga_expr!(self => U32(MEMORY_STRIDE_WORDS * 4));
+
+        let constants_buffer = self.std_objects().bindings.constants;
+        let constants_buffer = self.body_data.expressions.append_global(constants_buffer);
+        let instance_count =
+            naga_expr!(self => Load(constants_buffer[const TOTAL_INVOCATIONS_CONSTANT_INDEX]));
+
+        let instance_id = self.std_objects().instance_id;
+        let instance_id = self.body_data.expressions.append_global(instance_id);
+        let instance_id = naga_expr!(self => Load(instance_id));
+
+        naga_expr!(self => ((shared_address / stride_bytes) * {instance_count}) + (stride_bytes * instance_id) + (shared_address % stride_bytes))
+    }
+
     /// Calls a function and pushes the result of the call onto the stack
     fn push_call(
         &mut self,
@@ -1036,6 +1067,74 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
     ) -> build::Result<()> {
         let value = self.pop();
         self.push_call(function, vec![value])
+    }
+
+    /// Used when calling a memory function, by popping the address, adding the memory arg as constants and pushing a call to the memory function
+    fn pop_one_push_call_mem_func(
+        &mut self,
+        memarg: wasmparser::MemArg,
+        memory_function: naga::Handle<naga::Function>,
+    ) -> Result<(), BuildError> {
+        let wasmparser::MemArg {
+            offset,
+            memory,
+            // Alignment has no semantic influence, it is a performance hint
+            align: _,
+            max_align: _,
+        } = memarg;
+
+        let offset = u32::try_from(offset)
+            .map_err(|_| BuildError::BoundsExceeded(ExceededComponent::MemArgOffset))?;
+
+        let memory = naga_expr!(self => U32(memory));
+
+        let address = self.pop();
+        let address = naga_expr!(self => address + U32(offset));
+
+        if self.body_data.uses_disjoint_memory {
+            let address = self.disjoint_memory_address(address);
+        }
+
+        self.push_call(memory_function, vec![memory, address])
+    }
+
+    /// Used when calling a memory function, by popping the address and operand, adding the memory arg as constants
+    /// and calling the memory function (discarding the return value). This method also optionally incorporates the
+    /// invocation ID to the memory operation, if `disjoint_memory` is enabled.
+    fn pop_two_call_mem_func(
+        &mut self,
+        memarg: wasmparser::MemArg,
+        memory_function: naga::Handle<naga::Function>,
+    ) -> Result<(), BuildError> {
+        let wasmparser::MemArg {
+            offset,
+            memory,
+            // Alignment has no semantic influence, it is a performance hint
+            align: _,
+            max_align: _,
+        } = memarg;
+
+        let offset = u32::try_from(offset)
+            .map_err(|_| BuildError::BoundsExceeded(ExceededComponent::MemArgOffset))?;
+
+        let value = self.pop();
+
+        let memory = naga_expr!(self => U32(memory));
+
+        let address = self.pop();
+        let address = naga_expr!(self => address + U32(offset));
+
+        if self.body_data.uses_disjoint_memory {
+            let address = self.disjoint_memory_address(address);
+        }
+
+        self.append(naga::Statement::Call {
+            function: memory_function,
+            arguments: vec![memory, address, value],
+            result: None,
+        });
+
+        Ok(())
     }
 
     /// Pops two arguments, then calls a function and pushes the result

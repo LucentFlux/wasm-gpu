@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::{f64_instance_gen, F64Gen};
 use crate::{build, std_objects::std_objects_gen};
-use naga_ext::{declare_function, naga_expr, BlockExt, ModuleExt};
+use naga_ext::{declare_function, naga_expr, BlockExt, ExpressionsExt, LocalsExt, ModuleExt};
 
 fn make_const_impl(
     constants: &mut naga::Arena<naga::Constant>,
@@ -13,7 +13,7 @@ fn make_const_impl(
     return Ok(super::make_64_bit_const_from_2vec32(ty, constants, value));
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct FrexpParts {
     sign: naga::Handle<naga::Expression>,
     exponent: naga::Handle<naga::Expression>,
@@ -53,8 +53,38 @@ impl FrexpParts {
         todo!()
     }
 
-    /// Adds two floats
+    /// Generates code that adds two floats
     fn gen_add(
+        self,
+        rhs_frexp: FrexpParts,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> FrexpParts {
+        self // TODO: This
+    }
+
+    /// Generates code that subtracts two floats
+    fn gen_sub(
+        self,
+        rhs_frexp: FrexpParts,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> FrexpParts {
+        self // TODO: This
+    }
+
+    /// Generates code that multiplies two floats
+    fn gen_mul(
+        self,
+        rhs_frexp: FrexpParts,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> FrexpParts {
+        self // TODO: This
+    }
+
+    /// Generates code that divides two floats
+    fn gen_div(
         self,
         rhs_frexp: FrexpParts,
         module: &mut naga::Module,
@@ -70,9 +100,9 @@ impl FrexpParts {
         function_handle: naga::Handle<naga::Function>,
         f64_ty: naga::Handle<naga::Type>,
     ) -> naga::Handle<naga::Expression> {
-        // This is entirely untested
         todo!();
-        let exp_coeff = naga_expr!(module, function_handle => exp2(self.exponent));
+        // This is entirely untested
+        /*let exp_coeff = naga_expr!(module, function_handle => exp2(self.exponent));
         let high_coeff = naga_expr!(module, function_handle => F64(f64::exp2(-19.0)) * exp_coeff);
         let low_coeff = naga_expr!(module, function_handle => F64(f64::exp2(-51.0)) * exp_coeff);
 
@@ -80,7 +110,7 @@ impl FrexpParts {
             naga_expr!(module, function_handle => f64_ty(self.upper_magnitude) * high_coeff);
         let low_val =
             naga_expr!(module, function_handle => f64_ty(self.lower_magnitude) * low_coeff);
-        naga_expr!(module, function_handle => (high_val + low_val) * if ({self.sign} > U32(0)) {F64(-1.0)} else {F64(1.0)})
+        naga_expr!(module, function_handle => (high_val + low_val) * if ({self.sign} > U32(0)) {F64(-1.0)} else {F64(1.0)})*/
     }
 
     /// Combines all of the component expressions back into the underlying representation
@@ -96,13 +126,39 @@ impl FrexpParts {
     }
 }
 
+macro_rules! impl_using_frexp {
+    ($instance_gen:ident, $fn:ident) => {
+        paste::paste! {
+            fn [< gen_ $fn >](
+                module: &mut naga::Module,
+                others: $instance_gen::[< $fn:camel Requirements >],
+            ) -> build::Result<$instance_gen::[< $fn:camel >]> {
+                let f64_ty = others.ty;
+                let (function_handle, lhs, rhs) = declare_function! {
+                    module => fn [< f64_ $fn >](lhs: f64_ty, rhs: f64_ty) -> f64_ty
+                };
+
+                let lhs_frexp = FrexpParts::from_uvec2(module, function_handle, lhs);
+                let rhs_frexp = FrexpParts::from_uvec2(module, function_handle, rhs);
+
+                let res_frexp = lhs_frexp.[< gen_ $fn >](rhs_frexp, module, function_handle);
+
+                let res = res_frexp.gen_uvec2(module, function_handle, f64_ty);
+                module.fn_mut(function_handle).body.push_return(res);
+
+                Ok(function_handle)
+            }
+        }
+    };
+}
+
 /// An implementation of f64s using a 2-vector of u32s
 pub(crate) struct PolyfillF64;
 impl F64Gen for PolyfillF64 {
     fn gen_ty(
         module: &mut naga::Module,
-        _others: super::f64_instance_gen::TyRequirements,
-    ) -> build::Result<super::f64_instance_gen::Ty> {
+        _others: f64_instance_gen::TyRequirements,
+    ) -> build::Result<f64_instance_gen::Ty> {
         let naga_ty = naga::Type {
             name: Some("f64".to_owned()),
             inner: naga::TypeInner::Vector {
@@ -117,22 +173,22 @@ impl F64Gen for PolyfillF64 {
 
     fn gen_default(
         module: &mut naga::Module,
-        others: super::f64_instance_gen::DefaultRequirements,
-    ) -> build::Result<super::f64_instance_gen::Default> {
+        others: f64_instance_gen::DefaultRequirements,
+    ) -> build::Result<f64_instance_gen::Default> {
         make_const_impl(&mut module.constants, others.ty, 0.0)
     }
 
     fn gen_size_bytes(
         _module: &mut naga::Module,
-        _others: super::f64_instance_gen::SizeBytesRequirements,
-    ) -> build::Result<super::f64_instance_gen::SizeBytes> {
+        _others: f64_instance_gen::SizeBytesRequirements,
+    ) -> build::Result<f64_instance_gen::SizeBytes> {
         Ok(8)
     }
 
     fn gen_make_const(
         _module: &mut naga::Module,
-        _others: super::f64_instance_gen::MakeConstRequirements,
-    ) -> build::Result<super::f64_instance_gen::MakeConst> {
+        _others: f64_instance_gen::MakeConstRequirements,
+    ) -> build::Result<f64_instance_gen::MakeConst> {
         Ok(Arc::new(Box::new(|module, std_objects, value| {
             make_const_impl(module, std_objects.f64.ty, value)
         })))
@@ -140,8 +196,8 @@ impl F64Gen for PolyfillF64 {
 
     fn gen_read_input(
         module: &mut naga::Module,
-        others: super::f64_instance_gen::ReadInputRequirements,
-    ) -> build::Result<super::f64_instance_gen::ReadInput> {
+        others: f64_instance_gen::ReadInputRequirements,
+    ) -> build::Result<f64_instance_gen::ReadInput> {
         gen_read(
             module,
             others.word,
@@ -153,8 +209,8 @@ impl F64Gen for PolyfillF64 {
 
     fn gen_write_output(
         module: &mut naga::Module,
-        others: super::f64_instance_gen::WriteOutputRequirements,
-    ) -> build::Result<super::f64_instance_gen::WriteOutput> {
+        others: f64_instance_gen::WriteOutputRequirements,
+    ) -> build::Result<f64_instance_gen::WriteOutput> {
         gen_write(
             module,
             others.word,
@@ -166,8 +222,8 @@ impl F64Gen for PolyfillF64 {
 
     fn gen_read_memory(
         module: &mut naga::Module,
-        others: super::f64_instance_gen::ReadMemoryRequirements,
-    ) -> build::Result<super::f64_instance_gen::ReadMemory> {
+        others: f64_instance_gen::ReadMemoryRequirements,
+    ) -> build::Result<f64_instance_gen::ReadMemory> {
         gen_read(
             module,
             others.word,
@@ -179,8 +235,8 @@ impl F64Gen for PolyfillF64 {
 
     fn gen_write_memory(
         module: &mut naga::Module,
-        others: super::f64_instance_gen::WriteMemoryRequirements,
-    ) -> build::Result<super::f64_instance_gen::WriteMemory> {
+        others: f64_instance_gen::WriteMemoryRequirements,
+    ) -> build::Result<f64_instance_gen::WriteMemory> {
         gen_write(
             module,
             others.word,
@@ -190,27 +246,14 @@ impl F64Gen for PolyfillF64 {
         )
     }
 
-    fn gen_add(
-        module: &mut naga::Module,
-        others: super::f64_instance_gen::AddRequirements,
-    ) -> build::Result<super::f64_instance_gen::Add> {
-        let f64_ty = others.ty;
-        let (function_handle, lhs, rhs) = declare_function! {
-            module => fn f64_add(lhs: f64_ty, rhs: f64_ty) -> f64_ty
-        };
-
-        let lhs_frexp = FrexpParts::from_uvec2(module, function_handle, lhs);
-        let rhs_frexp = FrexpParts::from_uvec2(module, function_handle, rhs);
-
-        let res_frexp = lhs_frexp.gen_add(rhs_frexp, module, function_handle);
-
-        let res = res_frexp.gen_uvec2(module, function_handle, f64_ty);
-        module.fn_mut(function_handle).body.push_return(res);
-
-        Ok(function_handle)
-    }
+    impl_using_frexp! {f64_instance_gen, add}
+    impl_using_frexp! {f64_instance_gen, sub}
+    impl_using_frexp! {f64_instance_gen, mul}
+    impl_using_frexp! {f64_instance_gen, div}
 
     super::impl_bitwise_2vec32_numeric_ops! {f64_instance_gen, f64}
+
+    super::impl_load_and_store! {f64_instance_gen, f64}
 }
 
 // fn<buffer>(word_address: u32) -> f64

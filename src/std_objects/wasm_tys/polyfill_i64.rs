@@ -4,7 +4,7 @@ use crate::{
     build,
     std_objects::{std_objects_gen, WasmBoolInstance},
 };
-use naga_ext::{declare_function, naga_expr, BlockExt, ModuleExt};
+use naga_ext::{declare_function, naga_expr, BlockExt, ExpressionsExt, LocalsExt, ModuleExt};
 
 use super::{i64_instance_gen, I64Gen};
 
@@ -21,7 +21,7 @@ fn gen_boolean_mono(
     ) -> naga::Handle<naga::Expression>,
 ) -> build::Result<naga::Handle<naga::Function>> {
     let (function_handle, value) = declare_function! {
-        module => fn {format!("f64_{}", name)}(value: f64_ty) -> wasm_bool.ty
+        module => fn {format!("i64_{}", name)}(value: f64_ty) -> wasm_bool.ty
     };
 
     let t = naga_expr!(module, function_handle => Constant(wasm_bool.const_true));
@@ -51,7 +51,7 @@ fn gen_boolean_binary(
     ) -> naga::Handle<naga::Expression>,
 ) -> build::Result<naga::Handle<naga::Function>> {
     let (function_handle, lhs, rhs) = declare_function! {
-        module => fn {format!("f64_{}", name)}(lhs: f64_ty, rhs: f64_ty) -> wasm_bool.ty
+        module => fn {format!("i64_{}", name)}(lhs: f64_ty, rhs: f64_ty) -> wasm_bool.ty
     };
 
     let t = naga_expr!(module, function_handle => Constant(wasm_bool.const_true));
@@ -199,9 +199,49 @@ impl I64Gen for PolyfillI64 {
         Ok(function_handle)
     }
 
-    super::impl_bitwise_2vec32_numeric_ops! {i64_instance_gen, i64}
+    fn gen_sub(
+        module: &mut naga::Module,
+        others: super::i64_instance_gen::SubRequirements,
+    ) -> build::Result<super::i64_instance_gen::Sub> {
+        let i64_ty = others.ty;
+        let (function_handle, lhs, rhs) = declare_function! {
+            module => fn i64_sub(lhs: i64_ty, rhs: i64_ty) -> i64_ty
+        };
 
-    super::impl_integer_ops! {i64_instance_gen, i64}
+        let lhs_high = naga_expr!(module, function_handle => lhs[const 0]);
+        let lhs_low = naga_expr!(module, function_handle => lhs[const 1]);
+        let rhs_high = naga_expr!(module, function_handle => rhs[const 0]);
+        let rhs_low = naga_expr!(module, function_handle => rhs[const 1]);
+        let carry_condition = naga_expr!(module, function_handle => lhs_low < rhs_low);
+        let res_low = naga_expr!(module, function_handle => if (carry_condition) {
+            (Constant(others.word_max) - rhs_low) + lhs_low + U32(1)
+        } else {
+            lhs_low - rhs_low
+        });
+        let res_high = naga_expr!(module, function_handle => lhs_high - rhs_high - if (carry_condition) {U32(1)} else {U32(0)});
+        let res = naga_expr!(module, function_handle => i64_ty(res_high, res_low));
+        module.fn_mut(function_handle).body.push_return(res);
+
+        Ok(function_handle)
+    }
+
+    fn gen_mul(
+        module: &mut naga::Module,
+        others: super::i64_instance_gen::MulRequirements,
+    ) -> build::Result<super::i64_instance_gen::Mul> {
+        let i64_ty = others.ty;
+        let (function_handle, lhs, rhs) = declare_function! {
+            module => fn i64_mul(lhs: i64_ty, rhs: i64_ty) -> i64_ty
+        };
+
+        // TODO
+
+        module.fn_mut(function_handle).body.push_return(lhs);
+
+        Ok(function_handle)
+    }
+
+    super::impl_bitwise_2vec32_numeric_ops! {i64_instance_gen, i64}
 
     fn gen_eqz(
         module: &mut naga::Module,
@@ -333,7 +373,7 @@ impl I64Gen for PolyfillI64 {
             "gt_u",
             |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(module, handle =>
-                    (lhs_high < rhs_high) | ((lhs_high == rhs_high) & (lhs_low > rhs_low))
+                    (lhs_high > rhs_high) | ((lhs_high == rhs_high) & (lhs_low > rhs_low))
                 )
             },
         )
@@ -350,11 +390,31 @@ impl I64Gen for PolyfillI64 {
             "ge_u",
             |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(module, handle =>
-                    (lhs_high < rhs_high) | ((lhs_high == rhs_high) & (lhs_low >= rhs_low))
+                    (lhs_high > rhs_high) | ((lhs_high == rhs_high) & (lhs_low >= rhs_low))
                 )
             },
         )
     }
+
+    super::impl_load_and_store! {i64_instance_gen, i64}
+
+    super::impl_integer_loads_and_stores! {i64_instance_gen, i64}
+
+    super::impl_dud_integer_load! {i64_instance_gen, i64, load_32_u}
+    super::impl_dud_integer_load! {i64_instance_gen, i64, load_32_s}
+    super::impl_dud_integer_store! {i64_instance_gen, i64, store_32}
+
+    super::impl_integer_atomic_loads_and_stores! {i64_instance_gen, i64}
+
+    super::impl_dud_integer_load! {i64_instance_gen, i64, atomic_load_32_u}
+    super::impl_dud_integer_store! {i64_instance_gen, i64, atomic_store_32}
+    super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_add_u}
+    super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_sub_u}
+    super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_and_u}
+    super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_or_u}
+    super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_xor_u}
+    super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_xchg_u}
+    super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_cmpxchg_u}
 }
 
 // fn<buffer>(word_address: u32) -> i64

@@ -32,19 +32,21 @@ fn make_word_binding(
 }
 
 macro_rules! word_bindings {
-    (struct $gen_struct_name:ident { flags, $($name:ident),* $(,)? }) => {
+    (struct $gen_struct_name:ident { flags, constants, $($name:ident),* $(,)? }) => {
         paste::paste!{
             #[perfect_derive::perfect_derive(Copy, Clone)]
             pub(crate) struct $gen_struct_name {
-                pub(super) flags: naga::Handle<naga::GlobalVariable>,
+                pub(crate) flags: naga::Handle<naga::GlobalVariable>,
+                pub(crate) constants: naga::Handle<naga::GlobalVariable>,
                 $(
-                    pub(super) $name: naga::Handle<naga::GlobalVariable>,
+                    pub(crate) $name: naga::Handle<naga::GlobalVariable>,
                 )*
             }
 
             impl $gen_struct_name {
                 pub(super) fn gen(
                     module: &mut naga::Module,
+                    constants_ty: std_objects_gen::WordArrayBufferTy,
                     word_array_ty: std_objects_gen::WordArrayBufferTy,
                     flags_array_ty: std_objects_gen::FlagsArrayBufferTy,
                 ) -> crate::build::Result<Self> {
@@ -63,6 +65,21 @@ macro_rules! word_bindings {
                         },
                         naga::Span::UNDEFINED,
                     );
+                    let constants = module.global_variables.append(
+                        naga::GlobalVariable {
+                            name: Some("wasm_exec_constants".to_owned()),
+                            space: naga::AddressSpace::Storage {
+                                access: access(crate::CONSTANTS_BINDING_READ_ONLY),
+                            },
+                            binding: Some(naga::ResourceBinding {
+                                group: 0,
+                                binding: crate::CONSTANTS_BINDING_INDEX,
+                            }),
+                            ty: flags_array_ty,
+                            init: None,
+                        },
+                        naga::Span::UNDEFINED,
+                    );
                     $(
                         let $name = make_word_binding(
                             module,
@@ -75,6 +92,7 @@ macro_rules! word_bindings {
 
                     Ok(Self {
                         flags,
+                        constants,
                         $($name),*
                     })
                 }
@@ -85,6 +103,6 @@ macro_rules! word_bindings {
 
 word_bindings! {
     struct StdBindings {
-        flags, memory, mutable_globals, immutable_globals, tables, data, elements, input, output, stack
+        flags, constants, memory, mutable_globals, immutable_globals, tables, data, elements, input, output, stack
     }
 }

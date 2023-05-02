@@ -3,7 +3,6 @@ mod arguments;
 mod locals;
 mod results;
 
-use itertools::Itertools;
 use naga::Handle;
 use naga_ext::{naga_expr, BlockExt, ModuleExt, ShaderPart};
 use wasm_opcodes::OperatorByProposal;
@@ -138,6 +137,7 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
             &mut function.expressions,
             &mut function.local_variables,
             &std_objects,
+            working_module.uses_disjoint_memory,
         );
 
         // Define base block

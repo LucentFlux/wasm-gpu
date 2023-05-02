@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{build, std_objects::std_objects_gen};
-use naga_ext::{declare_function, naga_expr, BlockExt, ModuleExt};
+use naga_ext::{declare_function, naga_expr, BlockExt, ExpressionsExt, LocalsExt, ModuleExt};
 
 use super::{i32_instance_gen, I32Gen};
 
@@ -115,9 +115,7 @@ impl I32Gen for NativeI32 {
         )
     }
 
-    super::impl_native_ops! {i32_instance_gen, i32}
-
-    super::impl_integer_ops! {i32_instance_gen, i32}
+    super::impl_integer_loads_and_stores! {i32_instance_gen, i32}
 
     fn gen_eqz(
         module: &mut naga::Module,
@@ -135,6 +133,8 @@ impl I32Gen for NativeI32 {
         Ok(function_handle)
     }
 
+    super::impl_native_ops! {i32_instance_gen, i32}
+
     super::impl_native_bool_binexp! {i32_instance_gen, i32, gt_s; >}
     super::impl_native_bool_binexp! {i32_instance_gen, i32, ge_s; >=}
     super::impl_native_bool_binexp! {i32_instance_gen, i32, lt_s; <}
@@ -144,6 +144,10 @@ impl I32Gen for NativeI32 {
     super::impl_native_unsigned_bool_binexp! {i32_instance_gen, i32, ge_u; >=}
     super::impl_native_unsigned_bool_binexp! {i32_instance_gen, i32, lt_u; <}
     super::impl_native_unsigned_bool_binexp! {i32_instance_gen, i32, le_u; <=}
+
+    super::impl_load_and_store! {i32_instance_gen, i32}
+
+    super::impl_integer_atomic_loads_and_stores! {i32_instance_gen, i32}
 }
 
 // fn<buffer>(word_address: u32) -> i32

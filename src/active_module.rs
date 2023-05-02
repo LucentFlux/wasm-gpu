@@ -17,6 +17,7 @@ pub(crate) struct ActiveModule<'a> {
     pub module: &'a mut naga::Module,
     pub std_objects: StdObjects,
     pub workgroup_size: u32,
+    pub uses_disjoint_memory: bool,
 }
 
 impl<'a> ActiveModule<'a> {
@@ -29,6 +30,7 @@ impl<'a> ActiveModule<'a> {
             module,
             std_objects,
             workgroup_size: tuneables.workgroup_size,
+            uses_disjoint_memory: tuneables.disjoint_memory,
         })
     }
 

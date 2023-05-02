@@ -22,8 +22,10 @@ pub const ELEMENTS_BINDING_INDEX: u32 = 8;
 pub const ELEMENTS_BINDING_READ_ONLY: bool = true;
 pub const FLAGS_BINDING_INDEX: u32 = 9;
 pub const FLAGS_BINDING_READ_ONLY: bool = false;
+pub const CONSTANTS_BINDING_INDEX: u32 = 10;
+pub const CONSTANTS_BINDING_READ_ONLY: bool = true;
 
-pub const BINDING_TUPLES: [(u32, bool); 10] = [
+pub const BINDING_TUPLES: [(u32, bool); 11] = [
     (MEMORY_BINDING_INDEX, MEMORY_BINDING_READ_ONLY),
     (
         MUTABLE_GLOBALS_BINDING_INDEX,
@@ -40,6 +42,7 @@ pub const BINDING_TUPLES: [(u32, bool); 10] = [
     (DATA_BINDING_INDEX, DATA_BINDING_READ_ONLY),
     (ELEMENTS_BINDING_INDEX, ELEMENTS_BINDING_READ_ONLY),
     (FLAGS_BINDING_INDEX, FLAGS_BINDING_READ_ONLY),
+    (CONSTANTS_BINDING_INDEX, CONSTANTS_BINDING_READ_ONLY),
 ];
 
 // Stack size is only used for recursive or co-recursive calls, and is currently fixed
@@ -48,6 +51,10 @@ pub const STACK_LEN_BYTES: u32 = 1024 * 1024 * 8; // 8MB
 // Flags are 32-bits wide
 pub const FLAGS_LEN_BYTES: u32 = 4;
 pub const TRAP_FLAG_INDEX: u32 = 0;
+
+// Constants are 32-bits wide
+pub const CONSTANTS_LEN_BYTES: u32 = 4;
+pub const TOTAL_INVOCATIONS_CONSTANT_INDEX: u32 = 0;
 
 // Strides in 4-byte words
 pub const MEMORY_STRIDE_WORDS: u32 = 4;
@@ -121,6 +128,12 @@ pub struct Tuneables {
     pub hardware_supports_f64: bool,
     /// The size of the workgroups per invocation, with y and z being set to 1
     pub workgroup_size: u32,
+    /// If this is true, each parallel instance is executed in its own environment
+    /// and cannot see the values stored in the memories of its peers. If this is
+    /// false, all instances in a set share the same block of memory, and so atomics
+    /// from the threading proposal should be used by your wasm modules to ensure
+    /// proper memory manipulation.
+    pub disjoint_memory: bool,
 }
 
 impl Default for Tuneables {
@@ -128,6 +141,7 @@ impl Default for Tuneables {
         Self {
             hardware_supports_f64: false,
             workgroup_size: 256,
+            disjoint_memory: true,
         }
     }
 }
@@ -147,7 +161,7 @@ pub enum BuildError {
     },
     #[error("wasm contained an unsupported type {wasm_type:?}")]
     UnsupportedTypeError { wasm_type: wasmparser::ValType },
-    #[error("wasm had {0:?} that consisted of more than 4 billion elements, and so was not addressable on the GPU's 32-bit architecture")]
+    #[error("wasm had {0:?} larger than i32::MAX, and so was not addressable on the GPU's 32-bit architecture")]
     BoundsExceeded(ExceededComponent),
     #[error("naga failed to emit spir-v {0:?}")]
     NagaSpvBackError(naga::back::spv::Error),
@@ -267,6 +281,8 @@ pub enum ExceededComponent {
     ReturnType,
     #[error("function parameter list")]
     ParameterCount,
+    #[error("memory operation argument offset size")]
+    MemArgOffset,
 }
 
 pub(crate) mod build {

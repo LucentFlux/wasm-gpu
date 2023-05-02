@@ -9,7 +9,10 @@ use wasm_types::Val;
 use wasmparser::ValType;
 use wasmtime_environ::Trap;
 
-use crate::{build, Tuneables, FLAGS_LEN_BYTES, TRAP_FLAG_INDEX};
+use crate::{
+    build, Tuneables, CONSTANTS_LEN_BYTES, FLAGS_LEN_BYTES, TOTAL_INVOCATIONS_CONSTANT_INDEX,
+    TRAP_FLAG_INDEX,
+};
 
 use self::{
     bindings::StdBindings,
@@ -202,11 +205,12 @@ generator_struct! {
 
         uvec3: naga::Handle<naga::Type>,
 
-        word_array_buffer_ty: |word| naga::Handle<naga::Type>,
-        flags_ty: |word| naga::Handle<naga::Type>,
-        flags_array_buffer_ty: |flags_ty| naga::Handle<naga::Type>,
+        word_array_buffer_ty:   |word| naga::Handle<naga::Type>,
+        constants_buffer_ty:    |word| naga::Handle<naga::Type>,
+        flags_ty:               |word| naga::Handle<naga::Type>,
+        flags_array_buffer_ty:  |flags_ty| naga::Handle<naga::Type>,
 
-        bindings: |word_array_buffer_ty, flags_array_buffer_ty| StdBindings,
+        bindings: |constants_buffer_ty, word_array_buffer_ty, flags_array_buffer_ty| StdBindings,
 
         trap_values: HashMap<Option<Trap>, naga::Handle<naga::Constant>>,
         trap_fn: |word, bindings| naga::Handle<naga::Function>,
@@ -278,6 +282,23 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
         Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
     }
 
+    fn gen_word_max(
+        module: &mut naga::Module,
+        _others: std_objects_gen::WordMaxRequirements,
+    ) -> build::Result<std_objects_gen::WordMax> {
+        Ok(module.constants.append(
+            naga::Constant {
+                name: Some("MAX_WORD".to_owned()),
+                specialization: None,
+                inner: naga::ConstantInner::Scalar {
+                    width: 4,
+                    value: naga::ScalarValue::Uint(u32::MAX as u64),
+                },
+            },
+            naga::Span::UNDEFINED,
+        ))
+    }
+
     fn gen_uvec3(
         module: &mut naga::Module,
         _others: std_objects_gen::Uvec3Requirements,
@@ -313,6 +334,30 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
         Ok(word_array_ty)
     }
 
+    fn gen_constants_buffer_ty(
+        module: &mut naga::Module,
+        others: std_objects_gen::ConstantsBufferTyRequirements,
+    ) -> build::Result<std_objects_gen::ConstantsBufferTy> {
+        let constants_members = vec![naga::StructMember {
+            name: Some("total_invocations".to_owned()),
+            ty: others.word,
+            binding: None,
+            offset: TOTAL_INVOCATIONS_CONSTANT_INDEX * 4,
+        }];
+        let constants_ty = module.types.insert(
+            naga::Type {
+                name: Some("wasm_constants".to_owned()),
+                inner: naga::TypeInner::Struct {
+                    span: CONSTANTS_LEN_BYTES,
+                    members: constants_members,
+                },
+            },
+            naga::Span::UNDEFINED,
+        );
+
+        Ok(constants_ty)
+    }
+
     fn gen_flags_ty(
         module: &mut naga::Module,
         others: std_objects_gen::FlagsTyRequirements,
@@ -327,7 +372,7 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
             naga::Type {
                 name: Some("wasm_flags".to_owned()),
                 inner: naga::TypeInner::Struct {
-                    span: u32::try_from(flag_members.len() * 4).expect("static size"),
+                    span: FLAGS_LEN_BYTES,
                     members: flag_members,
                 },
             },
@@ -362,6 +407,7 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
     ) -> build::Result<std_objects_gen::Bindings> {
         StdBindings::gen(
             module,
+            others.constants_buffer_ty,
             others.word_array_buffer_ty,
             others.flags_array_buffer_ty,
         )
@@ -373,39 +419,24 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
     ) -> build::Result<std_objects_gen::TrapValues> {
         flags::make_trap_constants::<Ps>(module)
     }
-
     fn gen_trap_fn(
         module: &mut naga::Module,
         others: std_objects_gen::TrapFnRequirements,
     ) -> build::Result<std_objects_gen::TrapFn> {
         flags::gen_trap_function::<Ps>(module, others.word, others.bindings.flags)
     }
-
-    impl_gen_wasm! {i32}
-    impl_gen_wasm! {i64}
-    impl_gen_wasm! {f32}
-    impl_gen_wasm! {f64}
-    impl_gen_wasm! {v128}
-    impl_gen_wasm! {func_ref}
-    impl_gen_wasm! {extern_ref}
-
-    fn gen_word_max(
+    fn gen_naga_bool(
         module: &mut naga::Module,
-        _others: std_objects_gen::WordMaxRequirements,
-    ) -> build::Result<std_objects_gen::WordMax> {
-        Ok(module.constants.append(
-            naga::Constant {
-                name: Some("MAX_WORD".to_owned()),
-                specialization: None,
-                inner: naga::ConstantInner::Scalar {
-                    width: 4,
-                    value: naga::ScalarValue::Uint(u32::MAX as u64),
-                },
-            },
-            naga::Span::UNDEFINED,
-        ))
+        _others: std_objects_gen::NagaBoolRequirements,
+    ) -> build::Result<std_objects_gen::NagaBool> {
+        NagaBoolInstance::gen_from::<NagaBoolInstance>(module)
     }
-
+    fn gen_wasm_bool(
+        module: &mut naga::Module,
+        others: std_objects_gen::WasmBoolRequirements,
+    ) -> build::Result<std_objects_gen::WasmBool> {
+        WasmBoolInstance::gen_from::<WasmBoolInstance>(module)
+    }
     fn gen_instance_id(
         module: &mut naga::Module,
         others: std_objects_gen::InstanceIdRequirements,
@@ -421,20 +452,18 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
             naga::Span::UNDEFINED,
         ))
     }
+    impl_gen_wasm! {i32}
+    impl_gen_wasm! {i64}
 
-    fn gen_wasm_bool(
-        module: &mut naga::Module,
-        others: std_objects_gen::WasmBoolRequirements,
-    ) -> build::Result<std_objects_gen::WasmBool> {
-        WasmBoolInstance::gen_from::<WasmBoolInstance>(module)
-    }
+    impl_gen_wasm! {f32}
 
-    fn gen_naga_bool(
-        module: &mut naga::Module,
-        _others: std_objects_gen::NagaBoolRequirements,
-    ) -> build::Result<std_objects_gen::NagaBool> {
-        NagaBoolInstance::gen_from::<NagaBoolInstance>(module)
-    }
+    impl_gen_wasm! {f64}
+
+    impl_gen_wasm! {v128}
+
+    impl_gen_wasm! {func_ref}
+
+    impl_gen_wasm! {extern_ref}
 }
 
 macro_rules! extract_type_field {

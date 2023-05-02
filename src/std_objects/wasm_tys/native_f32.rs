@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{build, std_objects::std_objects_gen};
-use naga_ext::{declare_function, naga_expr, BlockExt, ModuleExt};
+use naga_ext::{declare_function, naga_expr, BlockExt, ExpressionsExt, LocalsExt, ModuleExt};
 
 use super::{f32_instance_gen, F32Gen};
 
@@ -116,6 +116,9 @@ impl F32Gen for NativeF32 {
     }
 
     super::impl_native_ops! {f32_instance_gen, f32}
+    super::impl_native_inner_binexp! {f32_instance_gen, f32, div; /}
+
+    super::impl_load_and_store! {f32_instance_gen, f32}
 }
 
 // fn<buffer>(word_address: u32) -> f32
