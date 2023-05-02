@@ -2,9 +2,7 @@ use std::borrow::Cow;
 
 use elsa::FrozenMap;
 use itertools::Itertools;
-use wasm_gpu_funcgen::{
-    display_error_recursively, get_entry_name, AssembledModule, BINDING_TUPLES,
-};
+use wasm_gpu_funcgen::{get_entry_name, AssembledModule, BINDING_TUPLES};
 use wasm_types::FuncRef;
 use wgpu::{BindGroupLayoutDescriptor, ShaderModule};
 use wgpu_async::{AsyncQueue, WgpuFuture};

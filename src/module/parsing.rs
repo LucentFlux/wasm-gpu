@@ -1,5 +1,4 @@
 use crate::module::error::WasmError;
-use itertools::Itertools;
 use ouroboros::self_referencing;
 use std::collections::HashMap;
 use std::ops::Range;

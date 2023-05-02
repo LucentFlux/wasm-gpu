@@ -255,6 +255,8 @@ impl<'a> Session<'a> {
             .get_mapped_range_mut()
             .copy_from_slice(&u32::to_le_bytes(count));
 
+        buffer.unmap();
+
         return Ok(buffer);
     }
 

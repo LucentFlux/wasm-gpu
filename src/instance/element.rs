@@ -2,7 +2,7 @@ use crate::capabilities::CapabilityStore;
 use crate::impl_immutable_ptr;
 use itertools::Itertools;
 use wasm_types::{FuncRef, WasmTyVal};
-use wasmparser::{RefType, ValType};
+use wasmparser::RefType;
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;
 use wgpu_lazybuffers::{

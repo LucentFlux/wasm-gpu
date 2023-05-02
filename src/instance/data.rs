@@ -1,7 +1,7 @@
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;
 use wgpu_lazybuffers::{
-    EmptyMemoryBlockConfig, LazilyMappable, MappedLazyBuffer, MemorySystem, UnmappedLazyBuffer,
+    EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem, UnmappedLazyBuffer,
 };
 use wgpu_lazybuffers_macros::lazy_mappable;
 
@@ -19,10 +19,13 @@ pub struct UnmappedDataInstance {
 
 impl UnmappedDataInstance {
     /// Used for unit tests. Consumes and gets the contained bytes
+    #[cfg(test)]
     pub(crate) async fn try_read_all(
         self,
         queue: &AsyncQueue,
     ) -> Result<Vec<u8>, BufferAsyncError> {
+        use wgpu_lazybuffers::LazilyMappable;
+
         self.datas
             .map_lazy()
             .try_read_slice_locking(queue, ..)

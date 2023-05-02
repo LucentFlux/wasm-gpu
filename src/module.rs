@@ -22,7 +22,7 @@ use std::slice::Iter;
 use std::sync::Arc;
 use wasm_gpu_funcgen::{FuncData, FunctionModuleData};
 use wasm_types::{FuncRef, Val, ValTypeByteCount};
-use wasmparser::{RefType, Type, ValType, Validator};
+use wasmparser::Validator;
 use wgpu::BufferAsyncError;
 use wgpu_async::async_queue::AsyncQueue;
 
