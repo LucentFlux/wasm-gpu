@@ -4,8 +4,9 @@ use crate::instance::func::UntypedFuncPtr;
 use crate::DeviceStoreSet;
 use futures::{future::BoxFuture, FutureExt};
 use wasm_gpu_funcgen::{
-    u32_to_trap, FLAGS_LEN_BYTES, IO_ARGUMENT_ALIGNMENT_WORDS, IO_INVOCATION_ALIGNMENT_WORDS,
-    STACK_LEN_BYTES, TRAP_FLAG_INDEX,
+    u32_to_trap, CONSTANTS_BINDING_INDEX, CONSTANTS_LEN_BYTES, FLAGS_LEN_BYTES,
+    IO_ARGUMENT_ALIGNMENT_WORDS, IO_INVOCATION_ALIGNMENT_WORDS, STACK_LEN_BYTES,
+    TOTAL_INVOCATIONS_CONSTANT_INDEX, TRAP_FLAG_INDEX,
 };
 use wasm_gpu_funcgen::{
     DATA_BINDING_INDEX, ELEMENTS_BINDING_INDEX, FLAGS_BINDING_INDEX,
@@ -35,6 +36,7 @@ pub struct Bindings<'a> {
     pub input: &'a wgpu::Buffer,
     pub output: &'a wgpu::Buffer,
     pub stack: &'a wgpu::Buffer,
+    pub constants: &'a wgpu::Buffer,
 
     /// When a buffer is empty (has size 0) we need to bind something else instead. This holds ownership of those buffers
     empty_bindings: elsa::FrozenVec<Box<wgpu::Buffer>>,
@@ -89,6 +91,12 @@ impl<'a> Bindings<'a> {
         self.conditionally_attach(&mut entries, device, self.input, INPUT_BINDING_INDEX);
         self.conditionally_attach(&mut entries, device, self.output, OUTPUT_BINDING_INDEX);
         self.conditionally_attach(&mut entries, device, self.stack, STACK_BINDING_INDEX);
+        self.conditionally_attach(
+            &mut entries,
+            device,
+            self.constants,
+            CONSTANTS_BINDING_INDEX,
+        );
 
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
@@ -225,6 +233,31 @@ impl<'a> Session<'a> {
             .await
     }
 
+    async fn make_constants(
+        &self,
+        device: &AsyncDevice,
+        label: &str,
+        count: u32,
+    ) -> Result<AsyncBuffer, OutOfMemoryError> {
+        let buffer = device
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: CONSTANTS_LEN_BYTES as u64,
+                usage: BufferUsages::STORAGE,
+                mapped_at_creation: true,
+            })
+            .await?;
+
+        // Write values
+        let count_loc = TOTAL_INVOCATIONS_CONSTANT_INDEX as u64 * 4;
+        buffer
+            .slice(count_loc..count_loc + 4)
+            .get_mapped_range_mut()
+            .copy_from_slice(&u32::to_le_bytes(count));
+
+        return Ok(buffer);
+    }
+
     async fn extract_output(
         ret_ty: Vec<ValType>,
         len: usize,
@@ -309,6 +342,8 @@ impl<'a> Session<'a> {
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
     ) -> Result<BoxFuture<'a, OutputType>, OutOfMemoryError> {
+        let count = self.args.len();
+
         let input = self
             .make_inputs(
                 queue.device(),
@@ -335,6 +370,16 @@ impl<'a> Session<'a> {
                 &format!("{}_stack_buffer", self.stores.label),
             )
             .await?;
+        let constants = Arc::new(
+            self.make_constants(
+                queue.device(),
+                &format!("{}_constants_buffer", self.stores.label),
+                u32::try_from(count).map_err(|source| OutOfMemoryError {
+                    source: Box::new(source),
+                })?,
+            )
+            .await?,
+        );
 
         let bindings = Bindings {
             data: self.stores.datas.buffer(),
@@ -347,6 +392,7 @@ impl<'a> Session<'a> {
             input: &input,
             output: &output,
             stack: &stack,
+            constants: &constants,
             empty_bindings: elsa::FrozenVec::new(),
         };
 
@@ -360,7 +406,6 @@ impl<'a> Session<'a> {
             .iter()
             .map(ValType::clone)
             .collect();
-        let count = self.args.len();
         // Dispatch and be ready to parse results
         let future = self
             .stores
