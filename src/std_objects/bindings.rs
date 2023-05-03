@@ -75,7 +75,7 @@ macro_rules! word_bindings {
                                 group: 0,
                                 binding: crate::CONSTANTS_BINDING_INDEX,
                             }),
-                            ty: flags_array_ty,
+                            ty: constants_ty,
                             init: None,
                         },
                         naga::Span::UNDEFINED,

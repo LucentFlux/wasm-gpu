@@ -16,9 +16,15 @@ macro_rules! bi {
     };
 }
 
-macro_rules! mem {
+macro_rules! mem_load {
     ($state:ident, $memarg:ident, $ty:ident::$fn:ident) => {
         $state.pop_one_push_call_mem_func($memarg, $state.std_objects().$ty.$fn)
+    };
+}
+
+macro_rules! mem_store {
+    ($state:ident, $memarg:ident, $ty:ident::$fn:ident) => {
+        $state.pop_two_call_mem_func($memarg, $state.std_objects().$ty.$fn)
     };
 }
 
@@ -70,29 +76,29 @@ pub(super) fn eat_mvp_operator(
         MVPOperator::Select => unimplemented!(),
         MVPOperator::GlobalGet { global_index } => unimplemented!(),
         MVPOperator::GlobalSet { global_index } => unimplemented!(),
-        MVPOperator::I32Load { memarg } => mem!(state, memarg, i32::load),
-        MVPOperator::I64Load { memarg } => mem!(state, memarg, i64::load),
-        MVPOperator::F32Load { memarg } => mem!(state, memarg, f32::load),
-        MVPOperator::F64Load { memarg } => mem!(state, memarg, f64::load),
-        MVPOperator::I32Load8S { memarg } => mem!(state, memarg, i32::load_8_s),
-        MVPOperator::I32Load8U { memarg } => mem!(state, memarg, i32::load_8_u),
-        MVPOperator::I32Load16S { memarg } => mem!(state, memarg, i32::load_16_s),
-        MVPOperator::I32Load16U { memarg } => mem!(state, memarg, i32::load_16_u),
-        MVPOperator::I64Load8S { memarg } => mem!(state, memarg, i64::load_8_s),
-        MVPOperator::I64Load8U { memarg } => mem!(state, memarg, i64::load_8_u),
-        MVPOperator::I64Load16S { memarg } => mem!(state, memarg, i64::load_16_s),
-        MVPOperator::I64Load16U { memarg } => mem!(state, memarg, i64::load_16_u),
-        MVPOperator::I64Load32S { memarg } => mem!(state, memarg, i64::load_32_s),
-        MVPOperator::I64Load32U { memarg } => mem!(state, memarg, i64::load_32_u),
-        MVPOperator::I32Store { memarg } => mem!(state, memarg, i32::store),
-        MVPOperator::I64Store { memarg } => mem!(state, memarg, i64::store),
-        MVPOperator::F32Store { memarg } => mem!(state, memarg, f32::store),
-        MVPOperator::F64Store { memarg } => mem!(state, memarg, f64::store),
-        MVPOperator::I32Store8 { memarg } => mem!(state, memarg, i32::store_8),
-        MVPOperator::I32Store16 { memarg } => mem!(state, memarg, i32::store_16),
-        MVPOperator::I64Store8 { memarg } => mem!(state, memarg, i64::store_8),
-        MVPOperator::I64Store16 { memarg } => mem!(state, memarg, i64::store_16),
-        MVPOperator::I64Store32 { memarg } => mem!(state, memarg, i64::store_32),
+        MVPOperator::I32Load { memarg } => mem_load!(state, memarg, i32::load),
+        MVPOperator::I64Load { memarg } => mem_load!(state, memarg, i64::load),
+        MVPOperator::F32Load { memarg } => mem_load!(state, memarg, f32::load),
+        MVPOperator::F64Load { memarg } => mem_load!(state, memarg, f64::load),
+        MVPOperator::I32Load8S { memarg } => mem_load!(state, memarg, i32::load_8_s),
+        MVPOperator::I32Load8U { memarg } => mem_load!(state, memarg, i32::load_8_u),
+        MVPOperator::I32Load16S { memarg } => mem_load!(state, memarg, i32::load_16_s),
+        MVPOperator::I32Load16U { memarg } => mem_load!(state, memarg, i32::load_16_u),
+        MVPOperator::I64Load8S { memarg } => mem_load!(state, memarg, i64::load_8_s),
+        MVPOperator::I64Load8U { memarg } => mem_load!(state, memarg, i64::load_8_u),
+        MVPOperator::I64Load16S { memarg } => mem_load!(state, memarg, i64::load_16_s),
+        MVPOperator::I64Load16U { memarg } => mem_load!(state, memarg, i64::load_16_u),
+        MVPOperator::I64Load32S { memarg } => mem_load!(state, memarg, i64::load_32_s),
+        MVPOperator::I64Load32U { memarg } => mem_load!(state, memarg, i64::load_32_u),
+        MVPOperator::I32Store { memarg } => mem_store!(state, memarg, i32::store),
+        MVPOperator::I64Store { memarg } => mem_store!(state, memarg, i64::store),
+        MVPOperator::F32Store { memarg } => mem_store!(state, memarg, f32::store),
+        MVPOperator::F64Store { memarg } => mem_store!(state, memarg, f64::store),
+        MVPOperator::I32Store8 { memarg } => mem_store!(state, memarg, i32::store_8),
+        MVPOperator::I32Store16 { memarg } => mem_store!(state, memarg, i32::store_16),
+        MVPOperator::I64Store8 { memarg } => mem_store!(state, memarg, i64::store_8),
+        MVPOperator::I64Store16 { memarg } => mem_store!(state, memarg, i64::store_16),
+        MVPOperator::I64Store32 { memarg } => mem_store!(state, memarg, i64::store_32),
         MVPOperator::MemorySize { mem, mem_byte } => unimplemented!(),
         MVPOperator::MemoryGrow { mem, mem_byte } => unimplemented!(),
         MVPOperator::I32Eqz => mono!(state, i32::eqz),

@@ -474,7 +474,7 @@ macro_rules! impl_dud_integer_load {
                 module: &mut naga::Module,
                 others: $instance_gen::[< $fn:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $fn:camel >]> {
-                let (function_handle, memory, address) = declare_function! {
+                let (function_handle, ..) = declare_function! {
                     module => fn [< $name _ $fn >](memory: others.word, address: others.word) -> others.ty
                 };
                 let default = module.fn_mut(function_handle).expressions.append_constant(others.default);
@@ -494,7 +494,7 @@ macro_rules! impl_dud_integer_store {
                 module: &mut naga::Module,
                 others: $instance_gen::[< $fn:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $fn:camel >]> {
-                let (function_handle, memory, address, value) = declare_function! {
+                let (function_handle, ..) = declare_function! {
                     module => fn [< $name _ $fn >](memory: others.word, address: others.word, value: others.ty)
                 };
 
@@ -512,7 +512,7 @@ macro_rules! impl_dud_integer_rmw {
                 module: &mut naga::Module,
                 others: $instance_gen::[< $fn:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $fn:camel >]> {
-                let (function_handle, memory, address, value) = declare_function! {
+                let (function_handle, ..) = declare_function! {
                     module => fn [< $name _ $fn >](memory: others.word, address: others.word, operand: others.ty)
                 };
 

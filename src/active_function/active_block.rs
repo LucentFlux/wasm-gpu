@@ -1089,10 +1089,10 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         let memory = naga_expr!(self => U32(memory));
 
         let address = self.pop();
-        let address = naga_expr!(self => address + U32(offset));
+        let mut address = naga_expr!(self => address + U32(offset));
 
         if self.body_data.uses_disjoint_memory {
-            let address = self.disjoint_memory_address(address);
+            address = self.disjoint_memory_address(address);
         }
 
         self.push_call(memory_function, vec![memory, address])
@@ -1122,10 +1122,10 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         let memory = naga_expr!(self => U32(memory));
 
         let address = self.pop();
-        let address = naga_expr!(self => address + U32(offset));
+        let mut address = naga_expr!(self => address + U32(offset));
 
         if self.body_data.uses_disjoint_memory {
-            let address = self.disjoint_memory_address(address);
+            address = self.disjoint_memory_address(address);
         }
 
         self.append(naga::Statement::Call {
