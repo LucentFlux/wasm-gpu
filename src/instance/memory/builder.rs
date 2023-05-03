@@ -2,6 +2,7 @@ use crate::capabilities::CapabilityStore;
 use crate::impl_abstract_ptr;
 use crate::instance::memory::instance::{MemoryPtr, UnmappedMemoryInstanceSet};
 use wasmparser::MemoryType;
+use wasmtime_environ::WASM_PAGE_SIZE;
 use wgpu::BufferAsyncError;
 use wgpu_async::async_device::OutOfMemoryError;
 use wgpu_async::async_queue::AsyncQueue;
@@ -56,7 +57,7 @@ impl MappedMemoryInstanceSetBuilder {
 
     pub fn add_memory(&mut self, plan: &MemoryType) -> AbstractMemoryPtr {
         let ptr = self.memory.len();
-        let len = usize::try_from(plan.initial)
+        let len = usize::try_from(plan.initial * WASM_PAGE_SIZE as u64)
             .expect("memory must be expressable in RAM, but was too big");
         self.memory.extend_lazy(len);
         self.cap_set = self.cap_set.resize_ref(self.memory.len());

@@ -590,3 +590,54 @@ fn for_loop_break_to_outside() {
         (),
     )
 }
+
+fn read_memory_back(address: i32) {
+    test_parity::<i32, i32>(
+        r#"
+            (module
+                (memory (data "1029374529"))
+                (func $f (param i32) (result i32)
+                    local.get 0
+                    i32.load
+                )
+                (export "foi" (func $f))
+            )
+        "#,
+        "foi",
+        address,
+    )
+}
+
+do_test!(read_memory_back(0));
+/*do_test!(read_memory_back(1));
+do_test!(read_memory_back(2));
+do_test!(read_memory_back(3));*/
+do_test!(read_memory_back(4));
+do_test!(read_memory_back(8));
+
+fn write_then_read_memory_back(address: i32) {
+    test_parity::<i32, i32>(
+        r#"
+            (module
+                (memory (data "00000000"))
+                (func $f (param i32) (result i32)
+                    local.get 0
+                    i32.const 12345
+                    i32.store
+                    i32.const 0
+                    i32.load
+                )
+                (export "foi" (func $f))
+            )
+        "#,
+        "foi",
+        address,
+    )
+}
+
+do_test!(write_then_read_memory_back(0));
+/*do_test!(write_then_read_memory_back(1));
+do_test!(write_then_read_memory_back(2));
+do_test!(write_then_read_memory_back(3));*/
+do_test!(write_then_read_memory_back(4));
+do_test!(write_then_read_memory_back(8));
