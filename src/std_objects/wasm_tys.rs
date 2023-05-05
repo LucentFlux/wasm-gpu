@@ -75,6 +75,7 @@ macro_rules! wasm_ty_generator {
         wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts),*]; {
             $($impl)*
 
+            // Memory
             load_8_u:  |ty, default, word, read_memory|  naga::Handle<naga::Function>,
             load_8_s:  |ty, default, word, read_memory|  naga::Handle<naga::Function>,
             load_16_u: |ty, default, word, read_memory|  naga::Handle<naga::Function>,
@@ -82,6 +83,7 @@ macro_rules! wasm_ty_generator {
             store_8:   |ty, default, word, write_memory| naga::Handle<naga::Function>,
             store_16:  |ty, default, word, write_memory| naga::Handle<naga::Function>,
 
+            // Comparisons
             eqz: |ty, wasm_bool| naga::Handle<naga::Function>,
 
             lt_s: |ty, wasm_bool| naga::Handle<naga::Function>,
@@ -93,6 +95,23 @@ macro_rules! wasm_ty_generator {
             le_u: |ty, wasm_bool| naga::Handle<naga::Function>,
             gt_u: |ty, wasm_bool| naga::Handle<naga::Function>,
             ge_u: |ty, wasm_bool| naga::Handle<naga::Function>,
+
+            // Operations
+            clz: |ty, word_max| naga::Handle<naga::Function>,
+            ctz: |ty, word_max| naga::Handle<naga::Function>,
+            div_s: |ty, word_max| naga::Handle<naga::Function>,
+            div_u: |ty, word_max| naga::Handle<naga::Function>,
+            rem_s: |ty, word_max| naga::Handle<naga::Function>,
+            rem_u: |ty, word_max| naga::Handle<naga::Function>,
+            rotl: |ty, word_max| naga::Handle<naga::Function>,
+            rotr: |ty, word_max| naga::Handle<naga::Function>,
+            popcnt: |ty, word_max| naga::Handle<naga::Function>,
+            and: |ty, word_max| naga::Handle<naga::Function>,
+            or: |ty, word_max| naga::Handle<naga::Function>,
+            xor: |ty, word_max| naga::Handle<naga::Function>,
+            shl: |ty, word_max| naga::Handle<naga::Function>,
+            shr_s: |ty, word_max| naga::Handle<naga::Function>,
+            shr_u: |ty, word_max| naga::Handle<naga::Function>,
 
             // Atomics (from thread proposal)
             atomic_load:             |ty, default, word| naga::Handle<naga::Function>,
@@ -245,6 +264,7 @@ macro_rules! impl_native_inner_binexp {
 }
 use impl_native_inner_binexp;
 
+/// Something of the form `f(A, A) -> Bool` which can be implemented with native functions and bitcasts to unsigned
 macro_rules! impl_native_unsigned_bool_binexp {
     ($instance_gen:ident, $name:ident, $op_name:ident; $op:tt) => {
         paste::paste! {
@@ -267,6 +287,57 @@ macro_rules! impl_native_unsigned_bool_binexp {
     };
 }
 use impl_native_unsigned_bool_binexp;
+
+/// Something of the form `f(A, A) -> A` which can be implemented with native functions and bitcasts to and from unsigned
+macro_rules! impl_native_unsigned_inner_binexp {
+    ($instance_gen:ident, $name:ident, $op_name:ident; $op:tt) => {
+        paste::paste! {
+            fn [< gen_ $op_name >](
+                module: &mut naga::Module,
+                others: $instance_gen::[< $op_name:camel Requirements >],
+            ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
+                let (function_handle, lhs, rhs) = declare_function! {
+                    module => fn [< $name $op_name >](lhs: others.ty, rhs: others.ty) -> others.ty
+                };
+
+                let res = naga_expr!(module, function_handle => ((lhs as Uint) $op (rhs as Uint)) as Sint);
+                module.fn_mut(function_handle).body.push_return(res);
+
+                Ok(function_handle)
+            }
+        }
+    };
+}
+use impl_native_unsigned_inner_binexp;
+
+/// Something of the form `f(A, A) -> A` which can be implemented with an inbuilt math function
+macro_rules! impl_native_inner_math_fn {
+    ($instance_gen:ident, $name:ident, $op_name:ident; $op:ident) => {
+        paste::paste! {
+            fn [< gen_ $op_name >](
+                module: &mut naga::Module,
+                others: $instance_gen::[< $op_name:camel Requirements >],
+            ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
+                let (function_handle, lhs, rhs) = declare_function! {
+                    module => fn [< $name $op_name >](lhs: others.ty, rhs: others.ty) -> others.ty
+                };
+
+                let res = module.fn_mut(function_handle).expressions.append(naga::Expression::Math {
+                    fun: naga::MathFunction::$op,
+                    arg: lhs,
+                    arg1: Some(rhs),
+                    arg2: None,
+                    arg3: None
+                }, naga::Span::UNDEFINED);
+                module.fn_mut(function_handle).body.push_emit(res);
+                module.fn_mut(function_handle).body.push_return(res);
+
+                Ok(function_handle)
+            }
+        }
+    };
+}
+use impl_native_inner_math_fn;
 
 macro_rules! impl_native_ops {
     ($instance_gen:ident, $name:ident) => {

@@ -148,6 +148,37 @@ impl I32Gen for NativeI32 {
     super::impl_load_and_store! {i32_instance_gen, i32}
 
     super::impl_integer_atomic_loads_and_stores! {i32_instance_gen, i32}
+
+    super::impl_native_inner_math_fn! {i32_instance_gen, i32, clz; FindMsb}
+    super::impl_native_inner_math_fn! {i32_instance_gen, i32, ctz; FindLsb}
+    super::impl_native_inner_math_fn! {i32_instance_gen, i32, popcnt; CountOneBits}
+
+    super::impl_native_inner_binexp!(i32_instance_gen, i32, div_s; /);
+    super::impl_native_unsigned_inner_binexp!(i32_instance_gen, i32, div_u; /);
+    super::impl_native_inner_binexp!(i32_instance_gen, i32, rem_s; %);
+    super::impl_native_unsigned_inner_binexp!(i32_instance_gen, i32, rem_u; %);
+
+    fn gen_rotl(
+        module: &mut naga::Module,
+        others: i32_instance_gen::RotlRequirements,
+    ) -> build::Result<i32_instance_gen::Rotl> {
+        todo!()
+    }
+
+    fn gen_rotr(
+        module: &mut naga::Module,
+        others: i32_instance_gen::RotrRequirements,
+    ) -> build::Result<i32_instance_gen::Rotr> {
+        // To unsigned, shift some up and some down and then or
+    }
+
+    super::impl_native_inner_binexp!(i32_instance_gen, i32, and; &);
+    super::impl_native_inner_binexp!(i32_instance_gen, i32, or; |);
+    super::impl_native_inner_binexp!(i32_instance_gen, i32, xor; ^);
+    super::impl_native_inner_binexp!(i32_instance_gen, i32, shl; <<);
+
+    super::impl_native_inner_binexp!(i32_instance_gen, i32, shr_s; >>);
+    super::impl_native_unsigned_inner_binexp!(i32_instance_gen, i32, shr_u; >>);
 }
 
 // fn<buffer>(word_address: u32) -> i32
