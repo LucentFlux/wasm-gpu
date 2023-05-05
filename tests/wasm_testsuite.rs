@@ -3,6 +3,7 @@
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::runtime::Runtime;
 use wasm_gpu::NamedExtern;
 use wasm_gpu::{MappedStoreSetBuilder, ModuleInstanceReferences, Tuneables, WasmFeatures};
@@ -23,6 +24,9 @@ fn gen_check(path: &str, test_index: usize) {
 }
 
 pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
+    // Pause because egl doesn't like being spammed - Joe 13/04/2023
+    std::thread::sleep(Duration::from_millis(100));
+
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         dx12_shader_compiler: wgpu::Dx12Compiler::Fxc,
