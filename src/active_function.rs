@@ -159,11 +159,8 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
         debug_assert!(instructions.next().is_none(), "validation ensures that all instructions are within the body and that blocks are balanced");
 
         // Return results if there's a chance control flow exits the end of the block of the body
-        match control_flow_state {
-            active_block::ControlFlowState::Continue => {
-                body_data.push_final_return(&mut function.body, results)
-            }
-            _ => {}
+        if control_flow_state.upper_unconditional_depth.is_none() {
+            body_data.push_final_return(&mut function.body, results)
         }
 
         return Ok(());

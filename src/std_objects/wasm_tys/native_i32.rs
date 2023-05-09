@@ -149,9 +149,9 @@ impl I32Gen for NativeI32 {
 
     super::impl_integer_atomic_loads_and_stores! {i32_instance_gen, i32}
 
-    super::impl_native_inner_math_fn! {i32_instance_gen, i32, clz; FindMsb}
-    super::impl_native_inner_math_fn! {i32_instance_gen, i32, ctz; FindLsb}
-    super::impl_native_inner_math_fn! {i32_instance_gen, i32, popcnt; CountOneBits}
+    super::impl_native_unary_inner_math_fn! {i32_instance_gen, i32, clz; FindMsb}
+    super::impl_native_unary_inner_math_fn! {i32_instance_gen, i32, ctz; FindLsb}
+    super::impl_native_unary_inner_math_fn! {i32_instance_gen, i32, popcnt; CountOneBits}
 
     super::impl_native_inner_binexp!(i32_instance_gen, i32, div_s; /);
     super::impl_native_unsigned_inner_binexp!(i32_instance_gen, i32, div_u; /);
@@ -162,14 +162,34 @@ impl I32Gen for NativeI32 {
         module: &mut naga::Module,
         others: i32_instance_gen::RotlRequirements,
     ) -> build::Result<i32_instance_gen::Rotl> {
-        todo!()
+        let (function_handle, lhs, rhs) = declare_function! {
+            module => fn i32_rotl(lhs: others.ty, rhs: others.ty) -> others.ty
+        };
+
+        let lhs = naga_expr!(module, function_handle => lhs as Uint);
+        let rhs = naga_expr!(module, function_handle => rhs as Uint);
+        let res = naga_expr!(module, function_handle => (lhs << rhs) | (lhs >> (rhs + U32(32))));
+        let res = naga_expr!(module, function_handle => res as Sint);
+        module.fn_mut(function_handle).body.push_return(res);
+
+        Ok(function_handle)
     }
 
     fn gen_rotr(
         module: &mut naga::Module,
         others: i32_instance_gen::RotrRequirements,
     ) -> build::Result<i32_instance_gen::Rotr> {
-        // To unsigned, shift some up and some down and then or
+        let (function_handle, lhs, rhs) = declare_function! {
+            module => fn i32_rotr(lhs: others.ty, rhs: others.ty) -> others.ty
+        };
+
+        let lhs = naga_expr!(module, function_handle => lhs as Uint);
+        let rhs = naga_expr!(module, function_handle => rhs as Uint);
+        let res = naga_expr!(module, function_handle => (lhs >> rhs) | (lhs << (rhs + U32(32))));
+        let res = naga_expr!(module, function_handle => res as Sint);
+        module.fn_mut(function_handle).body.push_return(res);
+
+        Ok(function_handle)
     }
 
     super::impl_native_inner_binexp!(i32_instance_gen, i32, and; &);
@@ -179,6 +199,34 @@ impl I32Gen for NativeI32 {
 
     super::impl_native_inner_binexp!(i32_instance_gen, i32, shr_s; >>);
     super::impl_native_unsigned_inner_binexp!(i32_instance_gen, i32, shr_u; >>);
+
+    fn gen_extend_8_s(
+        module: &mut naga::Module,
+        others: i32_instance_gen::Extend8SRequirements,
+    ) -> build::Result<i32_instance_gen::Extend8S> {
+        let (function_handle, value) = declare_function! {
+            module => fn i32_extend_8_s(value: others.ty) -> others.ty
+        };
+
+        let res = naga_expr!(module, function_handle => (value << U32(24)) >> U32(24));
+        module.fn_mut(function_handle).body.push_return(res);
+
+        Ok(function_handle)
+    }
+
+    fn gen_extend_16_s(
+        module: &mut naga::Module,
+        others: i32_instance_gen::Extend16SRequirements,
+    ) -> build::Result<i32_instance_gen::Extend16S> {
+        let (function_handle, value) = declare_function! {
+            module => fn i32_extend_16_s(value: others.ty) -> others.ty
+        };
+
+        let res = naga_expr!(module, function_handle => (value << U32(16)) >> U32(16));
+        module.fn_mut(function_handle).body.push_return(res);
+
+        Ok(function_handle)
+    }
 }
 
 // fn<buffer>(word_address: u32) -> i32

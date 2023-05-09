@@ -17,6 +17,7 @@ use super::{
 };
 
 mod mvp;
+mod sign_extension;
 mod threads;
 
 /// Blocks have parameters that they take off the stack, and results that they put back
@@ -203,145 +204,108 @@ pub(crate) enum EndInstruction {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub(crate) enum ControlFlowState {
-    /// Denotes that, after this instruction, control flow should continue assuming nothing has changed.
-    /// This is used after function calls and assumed as the default for blocks until control flow is
-    /// encountered.
-    Continue,
-    /// Denotes that we are branching within this block to `relative_depth` blocks above this one.
-    /// Means that nothing can happen after this instruction, and that there isn't any point checking break
-    /// state.
-    UnconditionalBranch {
-        relative_unconditional_depth: u32,
-        relative_additional_conditional_depth: u32,
-    },
-    /// Denotes that we may be branching within this block or `relative_depth` blocks above this one. Used by `br_if`
-    ConditionalBranch { relative_depth: u32 },
+pub(crate) struct ControlFlowState {
+    /// The depth at which it is guaranteed that we will be unconditionally branching. A conservative upper bound.
+    pub(crate) upper_unconditional_depth: Option<u32>,
+    /// The lower depth at which it is possible that we will be conditionally branching. A conservative lower bound.
+    pub(crate) lower_conditional_depth: Option<u32>,
+    /// The upper depth at which it is possible that we will be conditionally branching. A conservative upper bound.
+    pub(crate) upper_conditional_depth: Option<u32>,
 }
 impl ControlFlowState {
     /// Finds the state given that control flow may have come from the left or righ branch.
     fn union(lhs: ControlFlowState, rhs: ControlFlowState) -> ControlFlowState {
-        match (lhs, rhs) {
-            // ConditionalBranch { relative_depth } & Continue => ConditionalBranch { relative_depth }
-            (
-                ControlFlowState::ConditionalBranch { relative_depth },
-                ControlFlowState::Continue,
-            ) => ControlFlowState::ConditionalBranch { relative_depth },
-            (
-                ControlFlowState::Continue,
-                ControlFlowState::ConditionalBranch { relative_depth },
-            ) => ControlFlowState::ConditionalBranch { relative_depth },
-            // Continue & Continue => Continue
-            (ControlFlowState::Continue, ControlFlowState::Continue) => ControlFlowState::Continue,
-            // ConditionalBranch { rd1 } & ConditionalBranch { rd2 } => ConditionalBranch { max(rd1, rd2) }
-            (
-                ControlFlowState::ConditionalBranch {
-                    relative_depth: rd1,
-                },
-                ControlFlowState::ConditionalBranch {
-                    relative_depth: rd2,
-                },
-            ) => ControlFlowState::ConditionalBranch {
-                relative_depth: u32::max(rd1, rd2),
-            },
-            // UnconditionalBranch { relative_depth } & Continue => ConditionalBranch { relative_depth }
-            (
-                ControlFlowState::UnconditionalBranch {
-                    relative_unconditional_depth,
-                    relative_additional_conditional_depth,
-                },
-                ControlFlowState::Continue,
-            ) => ControlFlowState::ConditionalBranch {
-                relative_depth: relative_unconditional_depth
-                    + relative_additional_conditional_depth,
-            },
-            (
-                ControlFlowState::Continue,
-                ControlFlowState::UnconditionalBranch {
-                    relative_unconditional_depth,
-                    relative_additional_conditional_depth,
-                },
-            ) => ControlFlowState::ConditionalBranch {
-                relative_depth: relative_unconditional_depth
-                    + relative_additional_conditional_depth,
-            },
-            // UnconditionalBranch { rd1 } & ConditionalBranch { rd2 } => ConditionalBranch { max(rd1, rd2) }
-            (
-                ControlFlowState::UnconditionalBranch {
-                    relative_unconditional_depth,
-                    relative_additional_conditional_depth,
-                },
-                ControlFlowState::ConditionalBranch { relative_depth },
-            ) => ControlFlowState::ConditionalBranch {
-                relative_depth: u32::max(
-                    relative_unconditional_depth + relative_additional_conditional_depth,
-                    relative_depth,
-                ),
-            },
-            (
-                ControlFlowState::ConditionalBranch { relative_depth },
-                ControlFlowState::UnconditionalBranch {
-                    relative_unconditional_depth,
-                    relative_additional_conditional_depth,
-                },
-            ) => ControlFlowState::ConditionalBranch {
-                relative_depth: u32::max(
-                    relative_unconditional_depth + relative_additional_conditional_depth,
-                    relative_depth,
-                ),
-            },
-            // UnconditionalBranch { uc_rd1, c_rd1 } & UnconditionalBranch { uc_rd2, c_rd2 } => UnconditionalBranch { min(uc_rd1, uc_rd2), max(uc_rd1 + c_rd1, uc_rd2 + c_rd2) - min(uc_rd1, uc_rd2) }
-            (
-                ControlFlowState::UnconditionalBranch {
-                    relative_unconditional_depth: uc_rd1,
-                    relative_additional_conditional_depth: c_rd1,
-                },
-                ControlFlowState::UnconditionalBranch {
-                    relative_unconditional_depth: uc_rd2,
-                    relative_additional_conditional_depth: c_rd2,
-                },
-            ) => ControlFlowState::UnconditionalBranch {
-                relative_unconditional_depth: u32::min(uc_rd1, uc_rd2),
-                relative_additional_conditional_depth: u32::max(uc_rd1 + c_rd1, uc_rd2 + c_rd2)
-                    - u32::min(uc_rd1, uc_rd2),
-            },
+        ControlFlowState {
+            upper_unconditional_depth: <Option<u32>>::min(
+                lhs.upper_unconditional_depth,
+                rhs.upper_unconditional_depth,
+            ),
+            lower_conditional_depth: <Option<u32>>::min(
+                lhs.lower_conditional_depth,
+                rhs.lower_conditional_depth,
+            ),
+            upper_conditional_depth: <Option<u32>>::max(
+                lhs.upper_conditional_depth,
+                rhs.upper_conditional_depth,
+            ),
         }
     }
 
-    /// Gives the control flow state of this when viewed from one block above. I.e. an UnconditionalBranch of
-    /// depth 1 gives an UnconditionalBranch of depth 0, UnconditionalBranch with depth of 0 and additional
-    /// depth of 2 gives a ConditionalBranch with a depth of 2
-    fn downgrade(&self) -> ControlFlowState {
-        match *self {
-            ControlFlowState::Continue
-            | ControlFlowState::UnconditionalBranch {
-                relative_unconditional_depth: 0,
-                relative_additional_conditional_depth: 0,
-            }
-            | ControlFlowState::ConditionalBranch { relative_depth: 0 } => {
-                ControlFlowState::Continue
-            }
-            ControlFlowState::UnconditionalBranch {
-                relative_unconditional_depth: 0,
-                relative_additional_conditional_depth,
-            } => ControlFlowState::ConditionalBranch {
-                relative_depth: relative_additional_conditional_depth,
-            },
-            ControlFlowState::UnconditionalBranch {
-                relative_unconditional_depth,
-                relative_additional_conditional_depth,
-            } => ControlFlowState::UnconditionalBranch {
-                relative_unconditional_depth: relative_unconditional_depth - 1,
-                relative_additional_conditional_depth,
-            },
-            ControlFlowState::ConditionalBranch { relative_depth } => {
-                ControlFlowState::ConditionalBranch {
-                    relative_depth: relative_depth - 1,
+    /// Finds the state given that control flow flowed through the first, and then the second block.
+    fn concat(first: ControlFlowState, second: ControlFlowState) -> ControlFlowState {
+        match first.upper_unconditional_depth {
+            Some(_) => first,
+            None => {
+                let lower_conditional_depth = <Option<u32>>::min(
+                    first.lower_conditional_depth,
+                    second.lower_conditional_depth,
+                );
+                ControlFlowState {
+                    upper_unconditional_depth: <Option<u32>>::min(
+                        second.upper_unconditional_depth,
+                        lower_conditional_depth,
+                    ),
+                    lower_conditional_depth,
+                    upper_conditional_depth: <Option<u32>>::max(
+                        first.upper_conditional_depth,
+                        second.upper_conditional_depth,
+                    ),
                 }
             }
         }
     }
+
+    /// Gives the control flow state of this when viewed from one block above. I.e. a branch of
+    /// depth 1 gives an branch of depth 0, a branch with unconditional depth of 0 and conditional
+    /// depth of 2 gives a branch with a conditional depth of 1
+    fn decrement(&self) -> ControlFlowState {
+        Self {
+            upper_unconditional_depth: self
+                .upper_unconditional_depth
+                .and_then(|v| v.checked_sub(1)),
+            lower_conditional_depth: self.lower_conditional_depth.and_then(|v| v.checked_sub(1)),
+            upper_conditional_depth: self.upper_conditional_depth.and_then(|v| v.checked_sub(1)),
+        }
+    }
 }
+
+impl Default for ControlFlowState {
+    fn default() -> Self {
+        Self {
+            upper_unconditional_depth: None,
+            upper_conditional_depth: None,
+            lower_conditional_depth: None,
+        }
+    }
+}
+
+macro_rules! unary {
+    ($state:ident, $ty:ident::$fn:ident) => {
+        $state.pop_one_push_call_mono($state.std_objects().$ty.$fn)
+    };
+}
+use unary;
+
+macro_rules! binary {
+    ($state:ident, $ty:ident::$fn:ident) => {
+        $state.pop_two_push_call_bi($state.std_objects().$ty.$fn)
+    };
+}
+use binary;
+
+macro_rules! mem_load {
+    ($state:ident, $memarg:ident, $ty:ident::$fn:ident) => {
+        $state.pop_one_push_call_mem_func($memarg, $state.std_objects().$ty.$fn)
+    };
+}
+use mem_load;
+
+macro_rules! mem_store {
+    ($state:ident, $memarg:ident, $ty:ident::$fn:ident) => {
+        $state.pop_two_call_mem_func($memarg, $state.std_objects().$ty.$fn)
+    };
+}
+use mem_store;
 
 /// When we're building the body of a function, we don't actually need to know what the function is.
 /// We can simply build the block objects, and keep a mutable reference to the expressions within the
@@ -432,7 +396,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
             results,
             block,
             stack,
-            exit_state: ControlFlowState::Continue,
+            exit_state: ControlFlowState::default(),
         }
     }
 
@@ -505,9 +469,10 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
             self.body_data.naga_true_expression,
             relative_depth,
         );
-        ControlFlowState::UnconditionalBranch {
-            relative_unconditional_depth: relative_depth,
-            relative_additional_conditional_depth: 0,
+        ControlFlowState {
+            upper_unconditional_depth: Some(relative_depth),
+            upper_conditional_depth: Some(relative_depth),
+            lower_conditional_depth: Some(relative_depth),
         }
     }
 
@@ -534,7 +499,11 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
             naga::Span::UNDEFINED,
         );
 
-        ControlFlowState::ConditionalBranch { relative_depth }
+        ControlFlowState {
+            upper_unconditional_depth: None,
+            lower_conditional_depth: Some(relative_depth),
+            upper_conditional_depth: Some(relative_depth),
+        }
     }
 
     fn do_block(
@@ -639,7 +608,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
             }
 
             // If we don't have an else branch, we continue straight through
-            (results, ControlFlowState::Continue)
+            (results, ControlFlowState::default())
         };
 
         self.block.push(
@@ -715,9 +684,11 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
 
     fn do_return(&mut self) -> ControlFlowState {
         self.body_data.push_return(&mut self.block, &mut self.stack);
-        ControlFlowState::UnconditionalBranch {
-            relative_unconditional_depth: u32::MAX, // Gone
-            relative_additional_conditional_depth: 0,
+
+        ControlFlowState {
+            upper_unconditional_depth: Some(u32::MAX), // Gone
+            lower_conditional_depth: Some(u32::MAX),
+            upper_conditional_depth: Some(u32::MAX),
         }
     }
 
@@ -758,8 +729,10 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                 } => unimplemented!(),
             };
 
+            self.exit_state = ControlFlowState::concat(self.exit_state, state.decrement());
+
             // No need to do any control flow shenanigans if there's no control flow happening
-            if matches!(state, ControlFlowState::Continue) {
+            if state.upper_conditional_depth.is_none() {
                 continue;
             }
 
@@ -775,19 +748,28 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
             on_rp_branching(&mut self, &mut rp_branching);
 
             match state {
-                ControlFlowState::Continue => {}
-                ControlFlowState::UnconditionalBranch {
-                    relative_unconditional_depth: 0,
+                ControlFlowState {
+                    upper_unconditional_depth: None,
+                    upper_conditional_depth: None,
+                    ..
+                } => {}
+                ControlFlowState {
+                    upper_unconditional_depth: Some(0),
                     ..
                 } => {
                     self.block.append(&mut r0_branching);
-                    Self::eat_to_end(instructions);
                 }
-                ControlFlowState::UnconditionalBranch { .. } => {
+                ControlFlowState {
+                    upper_unconditional_depth: Some(_),
+                    ..
+                } => {
                     self.block.append(&mut rp_branching);
-                    Self::eat_to_end(instructions);
                 }
-                ControlFlowState::ConditionalBranch { relative_depth } => {
+                ControlFlowState {
+                    upper_unconditional_depth: None,
+                    upper_conditional_depth: Some(relative_depth),
+                    ..
+                } => {
                     // Get r0 break expression
                     let r0_break_expr = self
                         .parents
@@ -832,7 +814,10 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                 }
             }
 
-            self.exit_state = ControlFlowState::union(self.exit_state, state.downgrade())
+            // If we're done with this block, leave
+            if state.upper_unconditional_depth.is_some() {
+                Self::eat_to_end(instructions);
+            }
         };
 
         Ok((self, end_instruction))
@@ -909,13 +894,15 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                     break;
                 }
                 OperatorByProposal::MVP(mvp_op) => mvp::eat_mvp_operator(self, mvp_op)?,
+                OperatorByProposal::SignExtension(sign_ext_op) => {
+                    sign_extension::eat_sign_extension_operator(self, sign_ext_op)?
+                }
                 OperatorByProposal::Threads(threads_op) => {
                     threads::eat_threads_operator(self, threads_op)?
                 }
                 OperatorByProposal::Exceptions(_)
                 | OperatorByProposal::TailCall(_)
                 | OperatorByProposal::ReferenceTypes(_)
-                | OperatorByProposal::SignExtension(_)
                 | OperatorByProposal::SaturatingFloatToInt(_)
                 | OperatorByProposal::BulkMemory(_)
                 | OperatorByProposal::SIMD(_)

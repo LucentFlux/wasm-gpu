@@ -415,6 +415,72 @@ impl I64Gen for PolyfillI64 {
     super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_xor_u}
     super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_xchg_u}
     super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_cmpxchg_u}
+
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, clz }
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, ctz }
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, div_s }
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, div_u }
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, rem_s }
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, rem_u }
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, rotl }
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, rotr }
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, popcnt }
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, and }
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, or }
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, xor }
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, shl }
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, shr_s }
+    super::impl_dud_inner_binexp! {i64_instance_gen, i64, shr_u }
+
+    fn gen_extend_8_s(
+        module: &mut naga::Module,
+        others: i64_instance_gen::Extend8SRequirements,
+    ) -> build::Result<i64_instance_gen::Extend8S> {
+        let (function_handle, value) = declare_function! {
+            module => fn i64_extend_8_s(value: others.ty) -> others.ty
+        };
+
+        let low = naga_expr!(module, function_handle => value[const 1] as Sint);
+        let high = naga_expr!(module, function_handle => (low << U32(31)) >> U32(31));
+        let low = naga_expr!(module, function_handle => (low << U32(24)) >> U32(24));
+        let res = naga_expr!(module, function_handle => (others.ty)(high as Uint, low as Uint));
+        module.fn_mut(function_handle).body.push_return(res);
+
+        Ok(function_handle)
+    }
+
+    fn gen_extend_16_s(
+        module: &mut naga::Module,
+        others: i64_instance_gen::Extend16SRequirements,
+    ) -> build::Result<i64_instance_gen::Extend16S> {
+        let (function_handle, value) = declare_function! {
+            module => fn i64_extend_16_s(value: others.ty) -> others.ty
+        };
+
+        let low = naga_expr!(module, function_handle => value[const 1] as Sint);
+        let high = naga_expr!(module, function_handle => (low << U32(31)) >> U32(31));
+        let low = naga_expr!(module, function_handle => (low << U32(16)) >> U32(16));
+        let res = naga_expr!(module, function_handle => (others.ty)(high as Uint, low as Uint));
+        module.fn_mut(function_handle).body.push_return(res);
+
+        Ok(function_handle)
+    }
+
+    fn gen_extend_32_s(
+        module: &mut naga::Module,
+        others: i64_instance_gen::Extend32SRequirements,
+    ) -> build::Result<i64_instance_gen::Extend32S> {
+        let (function_handle, value) = declare_function! {
+            module => fn i64_extend_16_s(value: others.ty) -> others.ty
+        };
+
+        let low = naga_expr!(module, function_handle => value[const 1]);
+        let high = naga_expr!(module, function_handle => ((low as Sint) << U32(31)) >> U32(31));
+        let res = naga_expr!(module, function_handle => (others.ty)(high as Uint, low));
+        module.fn_mut(function_handle).body.push_return(res);
+
+        Ok(function_handle)
+    }
 }
 
 // fn<buffer>(word_address: u32) -> i64

@@ -113,6 +113,10 @@ macro_rules! wasm_ty_generator {
             shr_s: |ty, word_max| naga::Handle<naga::Function>,
             shr_u: |ty, word_max| naga::Handle<naga::Function>,
 
+            // Extensions
+            extend_8_s: |ty| naga::Handle<naga::Function>,
+            extend_16_s: |ty| naga::Handle<naga::Function>,
+
             // Atomics (from thread proposal)
             atomic_load:             |ty, default, word| naga::Handle<naga::Function>,
             atomic_load_8_u:         |ty, default, word| naga::Handle<naga::Function>,
@@ -151,6 +155,9 @@ macro_rules! wasm_ty_generator {
             load_32_u:  |ty, default, word, read_memory|  naga::Handle<naga::Function>,
             load_32_s:  |ty, default, word, read_memory|  naga::Handle<naga::Function>,
             store_32:   |ty, default, word, write_memory| naga::Handle<naga::Function>,
+
+            // Extensions
+            extend_32_s: |ty| naga::Handle<naga::Function>,
 
             // Atomics (from thread proposal)
             atomic_load_32_u:        |ty, default, word| naga::Handle<naga::Function>,
@@ -310,22 +317,22 @@ macro_rules! impl_native_unsigned_inner_binexp {
 }
 use impl_native_unsigned_inner_binexp;
 
-/// Something of the form `f(A, A) -> A` which can be implemented with an inbuilt math function
-macro_rules! impl_native_inner_math_fn {
+/// Something of the form `f(A) -> A` which can be implemented with an inbuilt math function
+macro_rules! impl_native_unary_inner_math_fn {
     ($instance_gen:ident, $name:ident, $op_name:ident; $op:ident) => {
         paste::paste! {
             fn [< gen_ $op_name >](
                 module: &mut naga::Module,
                 others: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
-                let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name $op_name >](lhs: others.ty, rhs: others.ty) -> others.ty
+                let (function_handle, value) = declare_function! {
+                    module => fn [< $name $op_name >](value: others.ty) -> others.ty
                 };
 
                 let res = module.fn_mut(function_handle).expressions.append(naga::Expression::Math {
                     fun: naga::MathFunction::$op,
-                    arg: lhs,
-                    arg1: Some(rhs),
+                    arg: value,
+                    arg1: None,
                     arg2: None,
                     arg3: None
                 }, naga::Span::UNDEFINED);
@@ -337,7 +344,28 @@ macro_rules! impl_native_inner_math_fn {
         }
     };
 }
-use impl_native_inner_math_fn;
+use impl_native_unary_inner_math_fn;
+
+/// A placeholder for something of the form `f(A, A) -> A`
+macro_rules! impl_dud_inner_binexp {
+    ($instance_gen:ident, $name:ident, $op_name:ident) => {
+        paste::paste! {
+            fn [< gen_ $op_name >](
+                module: &mut naga::Module,
+                others: $instance_gen::[< $op_name:camel Requirements >],
+            ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
+                let (function_handle, lhs, _) = declare_function! {
+                    module => fn [< $name $op_name >](lhs: others.ty, rhs: others.ty) -> others.ty
+                };
+
+                module.fn_mut(function_handle).body.push_return(lhs);
+
+                Ok(function_handle)
+            }
+        }
+    };
+}
+use impl_dud_inner_binexp;
 
 macro_rules! impl_native_ops {
     ($instance_gen:ident, $name:ident) => {
