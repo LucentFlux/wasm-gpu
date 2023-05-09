@@ -30,8 +30,6 @@ use wgpu_async::async_queue::AsyncQueue;
 use wgpu_lazybuffers::{DelayedOutOfMemoryError, LazilyMappable, LazilyUnmappable, MemorySystem};
 use wgpu_lazybuffers_macros::lazy_mappable;
 
-use super::MappedStoreSetData;
-
 /// Used during instantiation to evaluate an expression in a single pass
 pub(crate) async fn interpret_constexpr<'data>(
     queue: &AsyncQueue,
@@ -160,7 +158,7 @@ impl MappedStoreSetBuilder {
             elements,
             datas,
             immutable_globals,
-            shader_module,
+            shader_module: _,
             owned,
             tuneables,
         } = src;
@@ -396,13 +394,25 @@ impl CompletedBuilder {
         queue: &AsyncQueue,
         count: usize,
     ) -> Result<DeviceStoreSet, OutOfMemoryError> {
-        let tables = self.tables.try_build(memory_system, queue, count).await?;
+        let duplication_count = if self.tuneables.disjoint_memory {
+            count
+        } else {
+            1
+        };
 
-        let memories = self.memories.try_build(memory_system, queue, count).await?;
+        let tables = self
+            .tables
+            .try_build(memory_system, queue, duplication_count)
+            .await?;
+
+        let memories = self
+            .memories
+            .try_build(memory_system, queue, duplication_count)
+            .await?;
 
         let mutable_globals = self
             .mutable_globals
-            .try_build(memory_system, queue, count)
+            .try_build(memory_system, queue, duplication_count)
             .await?;
 
         Ok(DeviceStoreSet {
