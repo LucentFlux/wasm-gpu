@@ -28,6 +28,7 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
+    println!("cargo:rerun-if-env-changed=FULL_TESTS");
     let test_all = env::var("FULL_TESTS") == Ok("true".to_owned());
     let mut to_test = HashSet::new();
     for entry in &test_files {
