@@ -3,7 +3,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::HashSet;
 use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::path::Path;
 use syn::spanned::Spanned;
 use syn::{parse2, ItemFn, LitStr};
@@ -28,14 +28,17 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    let test_all = std::env::var("FULL_TESTS") == Ok("true".to_owned());
+    let test_all = env::var("FULL_TESTS") == Ok("true".to_owned());
     let mut to_test = HashSet::new();
     for entry in &test_files {
         if let Some(file_name) = entry.file_name().and_then(OsStr::to_str) {
             let file_name = file_name.to_owned();
             let entry_name = file_name.split(".").next().unwrap().to_string();
             let flag_name = format!("TEST_{}", entry_name);
-            if test_all || std::env::var(&flag_name) == Ok("true".to_owned()) {
+
+            println!("cargo:rerun-if-env-changed={}", flag_name);
+
+            if test_all || env::var(&flag_name) == Ok("true".to_owned()) {
                 to_test.insert(entry_name);
             }
         }
@@ -53,6 +56,8 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
         if to_test.len() != 0 && !to_test.contains(&entry_name) {
             continue;
         }
+
+        println!("cargo:rerun-if-changed={}", entry.display());
 
         let source = std::fs::read_to_string(entry.clone())
             .expect(&format!("could not read file {}", entry.to_str().unwrap()));
