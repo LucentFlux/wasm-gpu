@@ -1,5 +1,8 @@
 pub mod builder;
 
+use wasm_gpu_funcgen::Tuneables;
+use wgpu_async::{AsyncQueue, OutOfMemoryError};
+use wgpu_lazybuffers::MemorySystem;
 use wgpu_lazybuffers_macros::lazy_mappable;
 
 use crate::instance::data::UnmappedDataInstance;
@@ -37,6 +40,8 @@ pub struct StoreSet<O> {
     pub shader_module: Arc<WasmShaderModule>,
 
     pub owned: O,
+
+    pub tuneables: Tuneables,
 }
 
 pub type DeviceStoreSet = StoreSet<UnmappedStoreSetData>;
@@ -52,7 +57,12 @@ impl DeviceStoreSet {
     /// identity on an object of type `StoreSetBuilder` and you will get back to where you started
     /// (with lots of unnecessary memory operations, and as long as the iterator passed into `build`
     /// isn't empty).
-    pub async fn snapshot(&self, store_index: usize) -> MappedStoreSetBuilder {
-        MappedStoreSetBuilder::snapshot(&self, store_index).await
+    pub async fn snapshot(
+        &self,
+        memory_system: &MemorySystem,
+        queue: &AsyncQueue,
+        store_index: usize,
+    ) -> Result<MappedStoreSetBuilder, OutOfMemoryError> {
+        MappedStoreSetBuilder::snapshot(memory_system, queue, &self, store_index).await
     }
 }

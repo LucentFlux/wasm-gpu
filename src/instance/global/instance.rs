@@ -16,6 +16,9 @@ pub struct UnmappedMutableGlobalsInstanceSet {
     mutables: UnmappedInterleavedBuffer<STRIDE>,
 
     cap_set: CapabilityStore,
+
+    /// Number of bytes used in buffer. Used when reconstructing builder
+    head: usize,
 }
 
 impl UnmappedMutableGlobalsInstanceSet {
@@ -23,8 +26,9 @@ impl UnmappedMutableGlobalsInstanceSet {
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
         mutables_source: &UnmappedLazyBuffer,
-        count: usize,
+        repetitions: usize,
         cap_set: CapabilityStore, // Same as abstract
+        head: usize,
     ) -> Result<Self, OutOfMemoryError> {
         Ok(Self {
             mutables: mutables_source
@@ -33,7 +37,7 @@ impl UnmappedMutableGlobalsInstanceSet {
                     queue,
                     &InterleavedBufferConfig {
                         label: &format!("{}_instance_set", mutables_source.label()),
-                        repetitions: count,
+                        repetitions,
                         usages: wgpu::BufferUsages::STORAGE,
                         locking_size: None,
                         transfer_size: None,
@@ -41,11 +45,27 @@ impl UnmappedMutableGlobalsInstanceSet {
                 )
                 .await?,
             cap_set,
+            head,
         })
     }
 
     pub(crate) fn buffer(&self) -> &UnmappedLazyBuffer {
         &self.mutables
+    }
+
+    /// Duplicates the data from a given instance into a new buffer
+    pub(super) async fn take(
+        &self,
+        memory_system: &MemorySystem,
+        queue: &AsyncQueue,
+        interleaved_index: usize,
+    ) -> Result<(UnmappedLazyBuffer, usize, CapabilityStore), OutOfMemoryError> {
+        let buffer = self
+            .mutables
+            .try_uninterleave(memory_system, queue, interleaved_index)
+            .await?;
+
+        Ok((buffer, self.head, self.cap_set.clone()))
     }
 }
 impl_concrete_ptr!(

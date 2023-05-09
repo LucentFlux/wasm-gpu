@@ -44,14 +44,39 @@ async fn main() -> anyhow::Result<()> {
 
     // wasm setup
     let wat = r#"
-            (module
-                (memory (data "1029374529"))
-                (func $f (param i32) (result i32)
-                    local.get 0
-                    i32.load
+        (module
+            (func $f (param i32) (result i32)
+                (local i32)
+                (block
+                    (block
+                        (block
+                            ;; x == 0
+                            local.get 0
+                            i32.eqz
+                            br_if 0
+
+                            ;; x == 1
+                            local.get 0
+                            i32.const 1
+                            i32.eq
+                            br_if 1
+
+                            ;; else
+                            i32.const 7
+                            local.set 1
+                            br 2
+                        )
+                        i32.const 42
+                        local.set 1
+                        br 1
+                    )
+                    i32.const 99
+                    local.set 1
                 )
-                (export "foi" (func $f))
+                local.get 1
             )
+            (export "foi" (func $f))
+        )
         "#;
     let module = wasm_gpu::Module::new(
         &wasmparser::WasmFeatures::default(),

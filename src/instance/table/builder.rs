@@ -6,9 +6,11 @@ use wasmparser::TableType;
 use wgpu_async::async_device::OutOfMemoryError;
 use wgpu_async::async_queue::AsyncQueue;
 use wgpu_lazybuffers::{
-    EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem, UnmappedLazyBuffer,
+    EmptyMemoryBlockConfig, LazilyMappable, MappedLazyBuffer, MemorySystem, UnmappedLazyBuffer,
 };
 use wgpu_lazybuffers_macros::lazy_mappable;
+
+use super::instance::MappedTableInstanceSet;
 
 #[derive(Debug, Clone)]
 struct Meta {}
@@ -50,6 +52,22 @@ impl MappedTableInstanceSetBuilder {
             }),
             cap_set: CapabilityStore::new(0),
         }
+    }
+
+    /// Takes a live buffer and creates a new builder from the given invocation
+    pub async fn from_existing(
+        memory_system: &MemorySystem,
+        queue: &AsyncQueue,
+        existing: &UnmappedTableInstanceSet,
+        interleaved_index: usize,
+    ) -> Result<Self, OutOfMemoryError> {
+        let (tables, cap_set) = existing
+            .take(memory_system, queue, interleaved_index)
+            .await?;
+        Ok(Self {
+            tables: tables.map_lazy(),
+            cap_set,
+        })
     }
 
     pub fn add_table(&mut self, plan: &TableType) -> AbstractTablePtr {

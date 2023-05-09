@@ -237,7 +237,12 @@ impl WastState {
         );
 
         // Unbuild
-        self.store_builder = Some(instances.snapshot(0).await);
+        self.store_builder = Some(
+            instances
+                .snapshot(&self.memory_system, &self.queue, 0)
+                .await
+                .unwrap(),
+        );
 
         return res;
     }

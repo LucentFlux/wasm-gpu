@@ -13,7 +13,7 @@ use wgpu::BufferAsyncError;
 use wgpu_async::{AsyncQueue, OutOfMemoryError};
 use wgpu_lazybuffers::MemorySystem;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FuncsInstance {
     wasm_functions: Vec<FuncUnit>,
     cap_set: CapabilityStore,

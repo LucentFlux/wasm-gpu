@@ -11,6 +11,7 @@ use wasmparser::{GlobalType, ValType};
 use wgpu::BufferAsyncError;
 use wgpu_async::async_device::OutOfMemoryError;
 use wgpu_async::async_queue::AsyncQueue;
+use wgpu_lazybuffers::LazilyMappable;
 use wgpu_lazybuffers::{
     EmptyMemoryBlockConfig, MappedLazyBuffer, MemorySystem, UnmappedLazyBuffer,
 };
@@ -39,6 +40,7 @@ impl UnmappedMutableGlobalsInstanceBuilder {
             &self.mutable_values,
             count,
             self.cap_set.clone(),
+            self.head,
         )
         .await;
     }
@@ -56,6 +58,23 @@ impl MappedMutableGlobalsInstanceBuilder {
             head: 0,
             cap_set: CapabilityStore::new(0),
         }
+    }
+
+    /// Takes a live buffer and creates a new builder from the given invocation
+    pub async fn from_existing(
+        memory_system: &MemorySystem,
+        queue: &AsyncQueue,
+        existing: &UnmappedMutableGlobalsInstanceSet,
+        interleaved_index: usize,
+    ) -> Result<Self, OutOfMemoryError> {
+        let (mutable_values, head, cap_set) = existing
+            .take(memory_system, queue, interleaved_index)
+            .await?;
+        Ok(Self {
+            mutable_values: mutable_values.map_lazy(),
+            head,
+            cap_set,
+        })
     }
 
     /// values_count is given in units of bytes, so an f64 is 8 bytes

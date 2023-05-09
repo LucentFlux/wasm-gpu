@@ -27,8 +27,10 @@ use wasmparser::{HeapType, Operator};
 use wgpu::BufferAsyncError;
 use wgpu_async::async_device::OutOfMemoryError;
 use wgpu_async::async_queue::AsyncQueue;
-use wgpu_lazybuffers::{DelayedOutOfMemoryError, LazilyUnmappable, MemorySystem};
+use wgpu_lazybuffers::{DelayedOutOfMemoryError, LazilyMappable, LazilyUnmappable, MemorySystem};
 use wgpu_lazybuffers_macros::lazy_mappable;
+
+use super::MappedStoreSetData;
 
 /// Used during instantiation to evaluate an expression in a single pass
 pub(crate) async fn interpret_constexpr<'data>(
@@ -144,10 +146,66 @@ impl MappedStoreSetBuilder {
         }
     }
 
-    pub(crate) async fn snapshot(src: &DeviceStoreSet, store_index: usize) -> Self {
+    pub(crate) async fn snapshot(
+        memory_system: &MemorySystem,
+        queue: &AsyncQueue,
+        src: &DeviceStoreSet,
+        store_index: usize,
+    ) -> Result<Self, OutOfMemoryError> {
         // We're doing this so you can execute a bit then load more modules, then execute some more.
         // See wizer for the idea origin.
-        unimplemented!()
+        let DeviceStoreSet {
+            label,
+            functions,
+            elements,
+            datas,
+            immutable_globals,
+            shader_module,
+            owned,
+            tuneables,
+        } = src;
+
+        let functions = functions.as_ref().clone();
+        let elements = elements.as_ref().try_duplicate(queue).await?;
+        let immutable_globals = immutable_globals.as_ref().try_duplicate(queue).await?;
+        let datas = datas.as_ref().try_duplicate(queue).await?;
+
+        // Things that need to be un-interleaved
+        let UnmappedStoreSetData {
+            tables,
+            memories,
+            mutable_globals,
+        } = owned;
+
+        let tables =
+            MappedTableInstanceSetBuilder::from_existing(memory_system, queue, tables, store_index)
+                .await?;
+        let memories = MappedMemoryInstanceSetBuilder::from_existing(
+            memory_system,
+            queue,
+            memories,
+            store_index,
+        )
+        .await?;
+        let mutable_globals = MappedMutableGlobalsInstanceBuilder::from_existing(
+            memory_system,
+            queue,
+            mutable_globals,
+            store_index,
+        )
+        .await?;
+
+        Ok(Self {
+            label: label.clone(),
+            functions,
+            elements: elements.map_lazy(),
+            immutable_globals: immutable_globals.map_lazy(),
+            datas: datas.map_lazy(),
+            tuneables: tuneables.clone(),
+            tables,
+            memories,
+            mutable_globals,
+        })
     }
 
     /// Instantiation within a builder moves all of the data to the device. This means that constructing
@@ -297,6 +355,7 @@ impl MappedStoreSetBuilder {
             functions: Arc::new(functions),
             shader_module: Arc::new(shader_module),
             assembled_module,
+            tuneables,
         })
     }
 }
@@ -318,6 +377,7 @@ pub struct CompletedBuilder {
     /// hoisting this is for optimisation reasons.
     shader_module: Arc<WasmShaderModule>,
     assembled_module: AssembledModule,
+    tuneables: Tuneables,
 }
 
 impl CompletedBuilder {
@@ -358,6 +418,7 @@ impl CompletedBuilder {
                 memories,
                 mutable_globals,
             },
+            tuneables: self.tuneables,
         })
     }
 }

@@ -42,6 +42,21 @@ impl UnmappedTableInstanceSet {
     pub(crate) fn buffer(&self) -> &UnmappedLazyBuffer {
         &self.tables
     }
+
+    /// Duplicates the data from a given instance into a new buffer
+    pub(super) async fn take(
+        &self,
+        memory_system: &MemorySystem,
+        queue: &AsyncQueue,
+        interleaved_index: usize,
+    ) -> Result<(UnmappedLazyBuffer, CapabilityStore), OutOfMemoryError> {
+        let buffer = self
+            .tables
+            .try_uninterleave(memory_system, queue, interleaved_index)
+            .await?;
+
+        Ok((buffer, self.cap_set.clone()))
+    }
 }
 
 impl_concrete_ptr!(
