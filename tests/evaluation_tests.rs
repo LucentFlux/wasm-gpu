@@ -666,3 +666,22 @@ fn trap_out_of_loop() {
         (),
     )
 }
+
+#[test]
+fn double_trap_only_gives_first() {
+    test_parity::<(), ()>(
+        r#"
+        (module
+            (func $f
+                (i32.div_s (i32.const 5) (i32.const 0))
+                drop
+                (i32.div_s (i32.const 0x80000000) (i32.const -1))
+                drop
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        (),
+    )
+}
