@@ -36,8 +36,8 @@ macro_rules! wasm_ty_generator {
                 word_max: naga::Handle<naga::Constant>,
                 wasm_bool: WasmBoolInstance,
                 invocation_global: naga::Handle<naga::GlobalVariable>,
-                trap_values: std::collections::HashMap<Option<wasmtime_environ::Trap>, naga::Handle<naga::Constant>>,
-                trap_fn: naga::Handle<naga::Function>,
+                trap_values: crate::std_objects::flags::TrapValuesInstance,
+                trap_state: naga::Handle<naga::GlobalVariable>,
             )
             {
                 // Things all wasm types have
@@ -62,8 +62,8 @@ macro_rules! wasm_ty_generator {
         wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts),*]; {
             $($impl)*
 
-            load:  |ty, word, invocation_global, bindings, read_memory|  naga::Handle<naga::Function>,
-            store: |ty, word, invocation_global, bindings, write_memory| naga::Handle<naga::Function>,
+            load:  |ty, word, read_memory|  naga::Handle<naga::Function>,
+            store: |ty, word, trap_state, write_memory| naga::Handle<naga::Function>,
 
             add: |ty, word_max| naga::Handle<naga::Function>,
             sub: |ty, word_max| naga::Handle<naga::Function>,
@@ -102,10 +102,10 @@ macro_rules! wasm_ty_generator {
             // Operations
             clz: |ty, word_max| naga::Handle<naga::Function>,
             ctz: |ty, word_max| naga::Handle<naga::Function>,
-            div_s: |ty, word_max, trap_values, trap_fn| naga::Handle<naga::Function>,
-            div_u: |ty, word_max, trap_values, trap_fn| naga::Handle<naga::Function>,
-            rem_s: |ty, word_max, trap_values, trap_fn| naga::Handle<naga::Function>,
-            rem_u: |ty, word_max, trap_values, trap_fn| naga::Handle<naga::Function>,
+            div_s: |ty, word_max, trap_values, trap_state| naga::Handle<naga::Function>,
+            div_u: |ty, word_max, trap_values, trap_state| naga::Handle<naga::Function>,
+            rem_s: |ty, word_max, trap_values, trap_state| naga::Handle<naga::Function>,
+            rem_u: |ty, word_max, trap_values, trap_state| naga::Handle<naga::Function>,
             rotl: |ty, word_max| naga::Handle<naga::Function>,
             rotr: |ty, word_max| naga::Handle<naga::Function>,
             popcnt: |ty, word_max| naga::Handle<naga::Function>,
@@ -527,10 +527,9 @@ macro_rules! impl_load_and_store {
                 // If we have trapped, don't store
                 let mut trapped_block = naga::Block::default();
                 trapped_block.push_bare_return();
-                let invocation_id = naga_expr!(module, function_handle => Load(Global(others.invocation_global)));
-                let trap_state = naga_expr!(module, function_handle => Load(Global(others.bindings.flags)[invocation_id][const crate::TRAP_FLAG_INDEX]));
+                let trap_state = others.trap_state;
                 let trapped_condition =
-                    naga_expr!(module, function_handle => trap_state != U32(0));
+                    naga_expr!(module, function_handle => Load(Global(trap_state)) != U32(0));
                 module.fn_mut(function_handle).body.push_if(trapped_condition,
                     trapped_block,
                     naga::Block::default(),

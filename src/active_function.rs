@@ -335,6 +335,14 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
             self.store_output(results_ty, instance_index, results_expr)?;
         }
 
+        // Write trap status
+        let flag_state = self.working_module.std_objects.trap_state;
+        let flags_buffer = self.working_module.std_objects.bindings.flags;
+        let flag_state = naga_expr!(self => Load(Global(flag_state)));
+        let write_word_loc =
+            naga_expr!(self => Global(flags_buffer)[instance_index][const crate::TRAP_FLAG_INDEX]);
+        self.fn_mut().body.push_store(write_word_loc, flag_state);
+
         return Ok(());
     }
 }

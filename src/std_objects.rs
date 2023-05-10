@@ -2,12 +2,11 @@ mod bindings;
 mod flags;
 mod wasm_tys;
 
-use std::{collections::HashMap, marker::PhantomData};
+use std::marker::PhantomData;
 
 use naga_ext::ConstantsExt;
 use wasm_types::Val;
 use wasmparser::ValType;
-use wasmtime_environ::Trap;
 
 use crate::{
     build, Tuneables, CONSTANTS_LEN_BYTES, FLAGS_LEN_BYTES, TOTAL_INVOCATIONS_CONSTANT_INDEX,
@@ -16,6 +15,7 @@ use crate::{
 
 use self::{
     bindings::StdBindings,
+    flags::TrapValuesInstance,
     wasm_tys::{
         native_f32::NativeF32, native_i32::NativeI32, pollyfill_extern_ref::PolyfillExternRef,
         pollyfill_func_ref::PolyfillFuncRef, polyfill_f64::PolyfillF64, polyfill_i64::PolyfillI64,
@@ -214,19 +214,19 @@ generator_struct! {
 
         bindings: |constants_buffer_ty, word_array_buffer_ty, flags_array_buffer_ty| StdBindings,
 
-        trap_values: HashMap<Option<Trap>, naga::Handle<naga::Constant>>,
-        trap_fn: |word, instance_id, bindings| naga::Handle<naga::Function>,
+        trap_values: TrapValuesInstance,
+        trap_state: |word| naga::Handle<naga::GlobalVariable>,
 
         naga_bool: NagaBoolInstance,
         wasm_bool: WasmBoolInstance,
 
-        i32: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_fn| wasm_tys::I32Instance,
-        i64: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_fn| wasm_tys::I64Instance,
-        f32: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_fn| wasm_tys::F32Instance,
-        f64: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_fn| wasm_tys::F64Instance,
-        v128: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_fn| wasm_tys::V128Instance,
-        func_ref: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_fn| wasm_tys::FuncRefInstance,
-        extern_ref: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_fn| wasm_tys::ExternRefInstance,
+        i32: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state| wasm_tys::I32Instance,
+        i64: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state| wasm_tys::I64Instance,
+        f32: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state| wasm_tys::F32Instance,
+        f64: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state| wasm_tys::F64Instance,
+        v128: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state| wasm_tys::V128Instance,
+        func_ref: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state| wasm_tys::FuncRefInstance,
+        extern_ref: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state| wasm_tys::ExternRefInstance,
     } with trait GenStdObjects;
 }
 
@@ -261,7 +261,7 @@ macro_rules! impl_gen_wasm {
                     others.wasm_bool,
                     others.instance_id,
                     others.trap_values,
-                    others.trap_fn,
+                    others.trap_state,
                 )
             }
         }
@@ -420,18 +420,24 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
         module: &mut naga::Module,
         _others: std_objects_gen::TrapValuesRequirements,
     ) -> build::Result<std_objects_gen::TrapValues> {
-        flags::make_trap_constants::<Ps>(module)
+        Ok(TrapValuesInstance::gen(module))
     }
-    fn gen_trap_fn(
+    fn gen_trap_state(
         module: &mut naga::Module,
-        others: std_objects_gen::TrapFnRequirements,
-    ) -> build::Result<std_objects_gen::TrapFn> {
-        flags::gen_trap_function::<Ps>(
-            module,
-            others.word,
-            others.instance_id,
-            others.bindings.flags,
-        )
+        others: std_objects_gen::TrapStateRequirements,
+    ) -> build::Result<std_objects_gen::TrapState> {
+        let zero = module.constants.append_u32(0);
+
+        Ok(module.global_variables.append(
+            naga::GlobalVariable {
+                name: Some("trap_state".to_owned()),
+                space: naga::AddressSpace::Private,
+                binding: None,
+                ty: others.word,
+                init: Some(zero),
+            },
+            naga::Span::UNDEFINED,
+        ))
     }
     fn gen_naga_bool(
         module: &mut naga::Module,

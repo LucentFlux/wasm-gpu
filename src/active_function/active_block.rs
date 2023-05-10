@@ -647,8 +647,8 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         blockty: wasmparser::BlockType,
         instructions: &mut Peekable<impl Iterator<Item = OperatorByProposal>>,
     ) -> build::Result<ControlFlowState> {
-        let instance_id = self.body_data.std_objects.instance_id;
-        let flags = self.body_data.std_objects.bindings.flags;
+        let trap_state = self.body_data.std_objects.trap_state;
+        let trap_state = naga_expr!(self => Global(trap_state));
 
         let block_type = BlockType::from_parsed(blockty, &self.body_data.module_data.types);
 
@@ -671,10 +671,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         );
 
         // To avoid infinite loops on trapped modules, periodically check if we have trapped
-        // TODO: Don't check every iteration
-        let instance_id = naga_expr!(&mut inner_active_block => Load(Global(instance_id)));
-        let trap_state = naga_expr!(&mut inner_active_block => Load(Global(flags)[instance_id][const crate::TRAP_FLAG_INDEX]));
-        let trapped_condition = naga_expr!(&mut inner_active_block => trap_state != U32(0));
+        let trapped_condition = naga_expr!(&mut inner_active_block => Load(trap_state) != U32(0));
         let mut trapped_block = naga::Block::default();
         trapped_block.push(naga::Statement::Break, naga::Span::UNDEFINED);
         inner_active_block
@@ -997,23 +994,11 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
 
     /// Calls trap, recording the given flag
     fn append_trap(&mut self, trap_id: Trap) -> build::Result<()> {
-        let val = self
-            .body_data
-            .std_objects
-            .trap_values
-            .get(&Some(trap_id))
-            .expect("unknown trap id")
-            .clone();
-
-        let trap_val_handle = self.body_data.expressions.append_constant(val);
-
-        let trap_fn_handle = self.std_objects().trap_fn;
-
-        self.append(naga::Statement::Call {
-            function: trap_fn_handle,
-            arguments: vec![trap_val_handle],
-            result: None,
-        });
+        self.body_data.std_objects.trap_values.emit_set_trap(
+            trap_id,
+            self.body_data.std_objects.trap_state,
+            self,
+        );
 
         Ok(())
     }

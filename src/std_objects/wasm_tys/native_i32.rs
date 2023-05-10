@@ -210,19 +210,11 @@ impl I32Gen for NativeI32 {
 
         // Div by 0 test
         let is_0 = naga_expr!(module, function_handle => rhs == I32(0));
-        let trap_code = *others
-            .trap_values
-            .get(&Some(Trap::IntegerDivisionByZero))
-            .expect("unknown trap id");
-        let trap_code = naga_expr!(module, function_handle => Constant(trap_code));
         let mut if_0 = naga::Block::default();
-        if_0.push(
-            naga::Statement::Call {
-                function: others.trap_fn,
-                arguments: vec![trap_code],
-                result: None,
-            },
-            naga::Span::UNDEFINED,
+        others.trap_values.emit_set_trap(
+            Trap::IntegerDivisionByZero,
+            others.trap_state,
+            &mut (&mut *module, function_handle, &mut if_0),
         );
         module
             .fn_mut(function_handle)
@@ -232,19 +224,11 @@ impl I32Gen for NativeI32 {
         // Overflow test
         let is_overflowing =
             naga_expr!(module, function_handle => (lhs == I32(-2147483648)) & (rhs == I32(-1)));
-        let trap_code = *others
-            .trap_values
-            .get(&Some(Trap::IntegerOverflow))
-            .expect("unknown trap id");
-        let trap_code = naga_expr!(module, function_handle => Constant(trap_code));
         let mut if_overflowing = naga::Block::default();
-        if_overflowing.push(
-            naga::Statement::Call {
-                function: others.trap_fn,
-                arguments: vec![trap_code],
-                result: None,
-            },
-            naga::Span::UNDEFINED,
+        others.trap_values.emit_set_trap(
+            Trap::IntegerOverflow,
+            others.trap_state,
+            &mut (&mut *module, function_handle, &mut if_overflowing),
         );
         module.fn_mut(function_handle).body.push_if(
             is_overflowing,
@@ -267,19 +251,11 @@ impl I32Gen for NativeI32 {
 
         // Div by 0 test
         let is_0 = naga_expr!(module, function_handle => rhs == I32(0));
-        let trap_code = *others
-            .trap_values
-            .get(&Some(Trap::IntegerDivisionByZero))
-            .expect("unknown trap id");
-        let trap_code = naga_expr!(module, function_handle => Constant(trap_code));
         let mut if_0 = naga::Block::default();
-        if_0.push(
-            naga::Statement::Call {
-                function: others.trap_fn,
-                arguments: vec![trap_code],
-                result: None,
-            },
-            naga::Span::UNDEFINED,
+        others.trap_values.emit_set_trap(
+            Trap::IntegerDivisionByZero,
+            others.trap_state,
+            &mut (&mut *module, function_handle, &mut if_0),
         );
         module
             .fn_mut(function_handle)
@@ -301,19 +277,11 @@ impl I32Gen for NativeI32 {
 
         // Div by 0 test
         let is_0 = naga_expr!(module, function_handle => rhs == I32(0));
-        let trap_code = *others
-            .trap_values
-            .get(&Some(Trap::IntegerDivisionByZero))
-            .expect("unknown trap id");
-        let trap_code = naga_expr!(module, function_handle => Constant(trap_code));
         let mut if_0 = naga::Block::default();
-        if_0.push(
-            naga::Statement::Call {
-                function: others.trap_fn,
-                arguments: vec![trap_code],
-                result: None,
-            },
-            naga::Span::UNDEFINED,
+        others.trap_values.emit_set_trap(
+            Trap::IntegerDivisionByZero,
+            others.trap_state,
+            &mut (&mut *module, function_handle, &mut if_0),
         );
         module
             .fn_mut(function_handle)
@@ -333,22 +301,14 @@ impl I32Gen for NativeI32 {
           module => fn i32_rem_u(lhs:others.ty,rhs:others.ty)->others.ty
         };
 
+        let trap_location = naga_expr!(module, function_handle => Global(others.trap_state));
+
         // Div by 0 test
         let is_0 = naga_expr!(module, function_handle => rhs == I32(0));
-        let trap_code = *others
-            .trap_values
-            .get(&Some(Trap::IntegerDivisionByZero))
-            .expect("unknown trap id");
+        let trap_code = others.trap_values.get(Trap::IntegerDivisionByZero);
         let trap_code = naga_expr!(module, function_handle => Constant(trap_code));
         let mut if_0 = naga::Block::default();
-        if_0.push(
-            naga::Statement::Call {
-                function: others.trap_fn,
-                arguments: vec![trap_code],
-                result: None,
-            },
-            naga::Span::UNDEFINED,
-        );
+        if_0.push_store(trap_location, trap_code);
         module
             .fn_mut(function_handle)
             .body
