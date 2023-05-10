@@ -87,6 +87,7 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
 
                     let entry_name = entry_name.replace("-", "_");
                     let (test_line, test_col) = span.linecol_in(&source);
+                    let test_line = test_line + 1;
                     let test_name = if test_col <= 1 {
                         format!(
                             "{}_{}_line_{:0line_padding$}",

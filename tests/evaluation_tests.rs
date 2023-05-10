@@ -641,3 +641,28 @@ do_test!(write_then_read_memory_back(2));
 do_test!(write_then_read_memory_back(3));*/
 do_test!(write_then_read_memory_back(4));
 do_test!(write_then_read_memory_back(8));
+
+#[test]
+fn trap_out_of_loop() {
+    test_parity::<(), ()>(
+        r#"
+        (module
+            (func $f
+                (local i32)
+                (local.set 0 (i32.const 100))
+                loop $LOOP
+                    (i32.div_s (i32.const 5) (local.get 0))
+                    drop
+                        
+                    (local.set 0 (i32.sub (local.get 0) (i32.const 1)))
+
+                    br $LOOP
+                end
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        (),
+    )
+}

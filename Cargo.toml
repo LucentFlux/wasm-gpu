@@ -21,6 +21,7 @@ wgpu-lazybuffers-macros = { path = "../wgpu-lazybuffers-macros" }
 wasm-opcodes = { path = "../wasm-opcodes" }
 wasm-types = { path = "../wasm-types" }
 wasm-gpu-funcgen = { path = "../wasm-gpu-funcgen" }
+lf-gfx = { path = "../lf-gfx" }
 
 thiserror = "1.0"
 anyhow = "1.0"

@@ -143,6 +143,10 @@ impl<'a> Session<'a> {
                 data.push(0u8)
             }
         }
+        // Pad out
+        while data.len() < 128 {
+            data.push(0u8)
+        }
 
         let input_buffer = device
             .create_buffer(&wgpu::BufferDescriptor {
@@ -182,6 +186,7 @@ impl<'a> Session<'a> {
         let output_length = Self::output_instance_len(self.entry_func.ty().results());
         let output_length =
             self.args.len() * usize::try_from(output_length).expect("that's a big type");
+        let output_length = usize::max(output_length, 128);
 
         memory_system
             .try_create_device_memory_block(&MemoryBlockConfig {
