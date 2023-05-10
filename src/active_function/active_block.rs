@@ -1,7 +1,7 @@
 use std::{iter::Peekable, sync::atomic::AtomicUsize};
 
 use itertools::Itertools;
-use naga_ext::{naga_expr, BlockExt, ExpressionsExt, ShaderPart};
+use naga_ext::{naga_expr, BlockExt, ConstantsExt, ExpressionsExt, LocalsExt, ShaderPart};
 use wasm_opcodes::{ControlFlowOperator, OperatorByProposal};
 use wasmparser::ValType;
 use wasmtime_environ::Trap;
@@ -123,6 +123,9 @@ pub(crate) struct BodyData<'a> {
     /// To allow reuse of labels across blocks, we first pop from this, then create if that gave None
     unused_labels: Vec<BlockLabel>,
 
+    /// To avoid checking if we have trapped too often, this counter is used and incremented on each loop iteration
+    trap_check_counter: naga::Handle<naga::Expression>,
+
     /// Used to generate unique IDs for each block
     block_count: AtomicUsize,
 }
@@ -144,6 +147,13 @@ impl<'a> BodyData<'a> {
         let naga_true_expression = expressions.append_constant(std_objects.naga_bool.const_true);
         let naga_false_expression = expressions.append_constant(std_objects.naga_bool.const_false);
 
+        let trap_check_counter = local_variables.new_local(
+            "trap_check_counter",
+            std_objects.word,
+            Some(constants.append_u32(0)),
+        );
+        let trap_check_counter = expressions.append_local(trap_check_counter);
+
         Self {
             accessible,
             module_data,
@@ -158,13 +168,13 @@ impl<'a> BodyData<'a> {
             wasm_false_expression,
             naga_true_expression,
             naga_false_expression,
+            trap_check_counter,
             unused_labels: vec![],
             block_count: AtomicUsize::new(0),
         }
     }
 
-    /// Return results from the current stack, or just returns if the function has no such return values.
-    /// Returns the values that were popped from the stack to form the return expression
+    /// Return results by popping from the current stack, or just returns if the function has no such return values.
     fn push_return(
         &mut self,
         block: &mut naga::Block,
@@ -179,7 +189,7 @@ impl<'a> BodyData<'a> {
             results.reverse();
             return_type.push_return(self.expressions, block, results);
         } else {
-            block.push_empty_return()
+            block.push_bare_return()
         }
     }
 
@@ -637,6 +647,9 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         blockty: wasmparser::BlockType,
         instructions: &mut Peekable<impl Iterator<Item = OperatorByProposal>>,
     ) -> build::Result<ControlFlowState> {
+        let instance_id = self.body_data.std_objects.instance_id;
+        let flags = self.body_data.std_objects.bindings.flags;
+
         let block_type = BlockType::from_parsed(blockty, &self.body_data.module_data.types);
 
         // Get args
@@ -646,14 +659,27 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         }
         args.reverse();
 
-        // Make new block, temporarily moving out of this
+        // Loop body
         let mut inner_block = naga::Block::default();
-        let inner_active_block = ActiveBlock::new(
+
+        // Make new block, temporarily moving out of this
+        let mut inner_active_block = ActiveBlock::new(
             &mut inner_block,
             block_type,
             self.body_data,
             self.parents.clone(),
         );
+
+        // To avoid infinite loops on trapped modules, periodically check if we have trapped
+        // TODO: Don't check every iteration
+        let instance_id = naga_expr!(&mut inner_active_block => Load(Global(instance_id)));
+        let trap_state = naga_expr!(&mut inner_active_block => Load(Global(flags)[instance_id][const crate::TRAP_FLAG_INDEX]));
+        let trapped_condition = naga_expr!(&mut inner_active_block => trap_state != U32(0));
+        let mut trapped_block = naga::Block::default();
+        trapped_block.push(naga::Statement::Break, naga::Span::UNDEFINED);
+        inner_active_block
+            .block
+            .push_if(trapped_condition, trapped_block, naga::Block::default());
 
         // Write args
         inner_active_block.assign_arguments(&mut self.block, args);

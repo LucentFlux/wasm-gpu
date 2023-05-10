@@ -404,9 +404,9 @@ impl I64Gen for PolyfillI64 {
     super::impl_dud_integer_load! {i64_instance_gen, i64, load_32_s}
     super::impl_dud_integer_store! {i64_instance_gen, i64, store_32}
 
-    super::impl_integer_atomic_loads_and_stores! {i64_instance_gen, i64}
+    //super::impl_integer_atomic_loads_and_stores! {i64_instance_gen, i64}
 
-    super::impl_dud_integer_load! {i64_instance_gen, i64, atomic_load_32_u}
+    /*super::impl_dud_integer_load! {i64_instance_gen, i64, atomic_load_32_u}
     super::impl_dud_integer_store! {i64_instance_gen, i64, atomic_store_32}
     super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_add_u}
     super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_sub_u}
@@ -414,7 +414,7 @@ impl I64Gen for PolyfillI64 {
     super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_or_u}
     super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_xor_u}
     super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_xchg_u}
-    super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_cmpxchg_u}
+    super::impl_dud_integer_rmw! {i64_instance_gen, i64, atomic_rmw_32_cmpxchg_u}*/
 
     super::impl_dud_inner_binexp! {i64_instance_gen, i64, clz }
     super::impl_dud_inner_binexp! {i64_instance_gen, i64, ctz }

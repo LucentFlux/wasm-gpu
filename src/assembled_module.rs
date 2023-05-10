@@ -1,7 +1,5 @@
 mod call_graph;
 
-use itertools::Itertools;
-
 use self::call_graph::CallGraph;
 use crate::active_module::ActiveModule;
 use crate::function_lookup::FunctionLookup;
@@ -228,7 +226,7 @@ impl AssembledModule {
     /// own optimisations
     fn perform_our_opt_passes(self) -> build::Result<Self> {
         let Self {
-            mut module,
+            module,
             module_info: _, // Throw away old derived info
             functions,
             tuneables,

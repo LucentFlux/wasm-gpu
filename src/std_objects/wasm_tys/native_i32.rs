@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::{build, std_objects::std_objects_gen};
 use naga_ext::{declare_function, naga_expr, BlockExt, ExpressionsExt, LocalsExt, ModuleExt};
+use wasmtime_environ::Trap;
 
 use super::{i32_instance_gen, I32Gen};
 
@@ -147,16 +148,216 @@ impl I32Gen for NativeI32 {
 
     super::impl_load_and_store! {i32_instance_gen, i32}
 
-    super::impl_integer_atomic_loads_and_stores! {i32_instance_gen, i32}
+    //super::impl_integer_atomic_loads_and_stores! {i32_instance_gen, i32}
 
-    super::impl_native_unary_inner_math_fn! {i32_instance_gen, i32, clz; FindMsb}
-    super::impl_native_unary_inner_math_fn! {i32_instance_gen, i32, ctz; FindLsb}
+    fn gen_clz(
+        module: &mut naga::Module,
+        others: i32_instance_gen::ClzRequirements,
+    ) -> build::Result<i32_instance_gen::Clz> {
+        let (function_handle, value) = declare_function! {
+          module => fn i32_clz(value:others.ty) -> others.ty
+        };
+        let res = module.fn_mut(function_handle).expressions.append(
+            naga::Expression::Math {
+                fun: naga::MathFunction::FindMsb,
+                arg: value,
+                arg1: None,
+                arg2: None,
+                arg3: None,
+            },
+            naga::Span::UNDEFINED,
+        );
+        module.fn_mut(function_handle).body.push_emit(res);
+        let res = naga_expr!(module, function_handle => I32(31) - res);
+        // Check if last bit set
+        let res = naga_expr!(module, function_handle => if ((value & I32(-2147483648)) != I32(0)) {I32(0)} else {res});
+        module.fn_mut(function_handle).body.push_return(res);
+        Ok(function_handle)
+    }
+
+    fn gen_ctz(
+        module: &mut naga::Module,
+        others: i32_instance_gen::CtzRequirements,
+    ) -> build::Result<i32_instance_gen::Ctz> {
+        let (function_handle, value) = declare_function! {
+          module => fn i32_ctz(value:others.ty) -> others.ty
+        };
+        let res = module.fn_mut(function_handle).expressions.append(
+            naga::Expression::Math {
+                fun: naga::MathFunction::FindLsb,
+                arg: value,
+                arg1: None,
+                arg2: None,
+                arg3: None,
+            },
+            naga::Span::UNDEFINED,
+        );
+        module.fn_mut(function_handle).body.push_emit(res);
+        let res = naga_expr!(module, function_handle => if (value == I32(0)) {I32(32)} else {res});
+        module.fn_mut(function_handle).body.push_return(res);
+        Ok(function_handle)
+    }
+
     super::impl_native_unary_inner_math_fn! {i32_instance_gen, i32, popcnt; CountOneBits}
 
-    super::impl_native_inner_binexp!(i32_instance_gen, i32, div_s; /);
-    super::impl_native_unsigned_inner_binexp!(i32_instance_gen, i32, div_u; /);
-    super::impl_native_inner_binexp!(i32_instance_gen, i32, rem_s; %);
-    super::impl_native_unsigned_inner_binexp!(i32_instance_gen, i32, rem_u; %);
+    fn gen_div_s(
+        module: &mut naga::Module,
+        others: i32_instance_gen::DivSRequirements,
+    ) -> build::Result<i32_instance_gen::DivS> {
+        let (function_handle, lhs, rhs) = declare_function! {
+          module => fn i32_div_s(lhs:others.ty,rhs:others.ty)->others.ty
+        };
+
+        // Div by 0 test
+        let is_0 = naga_expr!(module, function_handle => rhs == I32(0));
+        let trap_code = *others
+            .trap_values
+            .get(&Some(Trap::IntegerDivisionByZero))
+            .expect("unknown trap id");
+        let trap_code = naga_expr!(module, function_handle => Constant(trap_code));
+        let mut if_0 = naga::Block::default();
+        if_0.push(
+            naga::Statement::Call {
+                function: others.trap_fn,
+                arguments: vec![trap_code],
+                result: None,
+            },
+            naga::Span::UNDEFINED,
+        );
+        module
+            .fn_mut(function_handle)
+            .body
+            .push_if(is_0, if_0, naga::Block::default());
+
+        // Overflow test
+        let is_overflowing =
+            naga_expr!(module, function_handle => (lhs == I32(-2147483648)) & (rhs == I32(-1)));
+        let trap_code = *others
+            .trap_values
+            .get(&Some(Trap::IntegerOverflow))
+            .expect("unknown trap id");
+        let trap_code = naga_expr!(module, function_handle => Constant(trap_code));
+        let mut if_overflowing = naga::Block::default();
+        if_overflowing.push(
+            naga::Statement::Call {
+                function: others.trap_fn,
+                arguments: vec![trap_code],
+                result: None,
+            },
+            naga::Span::UNDEFINED,
+        );
+        module.fn_mut(function_handle).body.push_if(
+            is_overflowing,
+            if_overflowing,
+            naga::Block::default(),
+        );
+
+        let res = naga_expr!(module, function_handle => lhs/rhs);
+        module.fn_mut(function_handle).body.push_return(res);
+        Ok(function_handle)
+    }
+
+    fn gen_div_u(
+        module: &mut naga::Module,
+        others: i32_instance_gen::DivURequirements,
+    ) -> build::Result<i32_instance_gen::DivU> {
+        let (function_handle, lhs, rhs) = declare_function! {
+          module => fn i32_div_u(lhs:others.ty,rhs:others.ty)->others.ty
+        };
+
+        // Div by 0 test
+        let is_0 = naga_expr!(module, function_handle => rhs == I32(0));
+        let trap_code = *others
+            .trap_values
+            .get(&Some(Trap::IntegerDivisionByZero))
+            .expect("unknown trap id");
+        let trap_code = naga_expr!(module, function_handle => Constant(trap_code));
+        let mut if_0 = naga::Block::default();
+        if_0.push(
+            naga::Statement::Call {
+                function: others.trap_fn,
+                arguments: vec![trap_code],
+                result: None,
+            },
+            naga::Span::UNDEFINED,
+        );
+        module
+            .fn_mut(function_handle)
+            .body
+            .push_if(is_0, if_0, naga::Block::default());
+
+        let res = naga_expr!(module, function_handle => ((lhs as Uint)/(rhs as Uint))as Sint);
+        module.fn_mut(function_handle).body.push_return(res);
+        Ok(function_handle)
+    }
+
+    fn gen_rem_s(
+        module: &mut naga::Module,
+        others: i32_instance_gen::RemSRequirements,
+    ) -> build::Result<i32_instance_gen::RemS> {
+        let (function_handle, lhs, rhs) = declare_function! {
+          module => fn i32_rem_s(lhs:others.ty,rhs:others.ty)->others.ty
+        };
+
+        // Div by 0 test
+        let is_0 = naga_expr!(module, function_handle => rhs == I32(0));
+        let trap_code = *others
+            .trap_values
+            .get(&Some(Trap::IntegerDivisionByZero))
+            .expect("unknown trap id");
+        let trap_code = naga_expr!(module, function_handle => Constant(trap_code));
+        let mut if_0 = naga::Block::default();
+        if_0.push(
+            naga::Statement::Call {
+                function: others.trap_fn,
+                arguments: vec![trap_code],
+                result: None,
+            },
+            naga::Span::UNDEFINED,
+        );
+        module
+            .fn_mut(function_handle)
+            .body
+            .push_if(is_0, if_0, naga::Block::default());
+
+        let res = naga_expr!(module,function_handle => lhs%rhs);
+        module.fn_mut(function_handle).body.push_return(res);
+        Ok(function_handle)
+    }
+
+    fn gen_rem_u(
+        module: &mut naga::Module,
+        others: i32_instance_gen::RemURequirements,
+    ) -> build::Result<i32_instance_gen::RemU> {
+        let (function_handle, lhs, rhs) = declare_function! {
+          module => fn i32_rem_u(lhs:others.ty,rhs:others.ty)->others.ty
+        };
+
+        // Div by 0 test
+        let is_0 = naga_expr!(module, function_handle => rhs == I32(0));
+        let trap_code = *others
+            .trap_values
+            .get(&Some(Trap::IntegerDivisionByZero))
+            .expect("unknown trap id");
+        let trap_code = naga_expr!(module, function_handle => Constant(trap_code));
+        let mut if_0 = naga::Block::default();
+        if_0.push(
+            naga::Statement::Call {
+                function: others.trap_fn,
+                arguments: vec![trap_code],
+                result: None,
+            },
+            naga::Span::UNDEFINED,
+        );
+        module
+            .fn_mut(function_handle)
+            .body
+            .push_if(is_0, if_0, naga::Block::default());
+
+        let res = naga_expr!(module,function_handle => ((lhs as Uint)%(rhs as Uint))as Sint);
+        module.fn_mut(function_handle).body.push_return(res);
+        Ok(function_handle)
+    }
 
     fn gen_rotl(
         module: &mut naga::Module,
@@ -167,8 +368,10 @@ impl I32Gen for NativeI32 {
         };
 
         let lhs = naga_expr!(module, function_handle => lhs as Uint);
-        let rhs = naga_expr!(module, function_handle => rhs as Uint);
-        let res = naga_expr!(module, function_handle => (lhs << rhs) | (lhs >> (rhs + U32(32))));
+        let rhs = naga_expr!(module, function_handle => rhs % U32(32)); // Between -31 and 31
+        let rhs = naga_expr!(module, function_handle => rhs + U32(32));
+        let rhs = naga_expr!(module, function_handle => rhs % U32(32)); // Between 0 and 31
+        let res = naga_expr!(module, function_handle => (lhs << rhs) | (lhs >> (U32(32) - rhs)));
         let res = naga_expr!(module, function_handle => res as Sint);
         module.fn_mut(function_handle).body.push_return(res);
 
@@ -184,8 +387,10 @@ impl I32Gen for NativeI32 {
         };
 
         let lhs = naga_expr!(module, function_handle => lhs as Uint);
-        let rhs = naga_expr!(module, function_handle => rhs as Uint);
-        let res = naga_expr!(module, function_handle => (lhs >> rhs) | (lhs << (rhs + U32(32))));
+        let rhs = naga_expr!(module, function_handle => rhs % U32(32)); // Between -31 and 31
+        let rhs = naga_expr!(module, function_handle => rhs + U32(32));
+        let rhs = naga_expr!(module, function_handle => rhs % U32(32)); // Between 0 and 31
+        let res = naga_expr!(module, function_handle => (lhs >> rhs) | (lhs << (U32(32) - rhs)));
         let res = naga_expr!(module, function_handle => res as Sint);
         module.fn_mut(function_handle).body.push_return(res);
 

@@ -24,5 +24,6 @@ impl BrainFunction {
         working_module: &mut ActiveModule,
         stack_functions: &FunctionLookup<InternalFunction>,
     ) {
+        // TODO: Check if trapped to ensure no infinite trap loops
     }
 }

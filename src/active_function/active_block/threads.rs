@@ -34,8 +34,8 @@ pub(super) fn eat_threads_operator(
     let err = Err(BuildError::UnsupportedInstructionError {
         instruction_opcode: operator.opcode(),
     });
-
-    impl_op! {
+    return err;
+    /*impl_op! {
         match operator {
             state {
                 pop_one_push_call_mem_func {
@@ -120,5 +120,5 @@ pub(super) fn eat_threads_operator(
             ThreadsOperator::MemoryAtomicWait64 { memarg } => err,
             ThreadsOperator::AtomicFence => err,
         }
-    }
+    }*/
 }

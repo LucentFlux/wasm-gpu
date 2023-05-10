@@ -203,6 +203,8 @@ generator_struct! {
         word: naga::Handle<naga::Type>,
         word_max: naga::Handle<naga::Constant>, // Used for overflow calculations
 
+        instance_id: |word| naga::Handle<naga::GlobalVariable>,
+
         uvec3: naga::Handle<naga::Type>,
 
         word_array_buffer_ty:   |word| naga::Handle<naga::Type>,
@@ -213,20 +215,18 @@ generator_struct! {
         bindings: |constants_buffer_ty, word_array_buffer_ty, flags_array_buffer_ty| StdBindings,
 
         trap_values: HashMap<Option<Trap>, naga::Handle<naga::Constant>>,
-        trap_fn: |word, bindings| naga::Handle<naga::Function>,
+        trap_fn: |word, instance_id, bindings| naga::Handle<naga::Function>,
 
         naga_bool: NagaBoolInstance,
         wasm_bool: WasmBoolInstance,
 
-        i32: |word, bindings, word_max, wasm_bool| wasm_tys::I32Instance,
-        i64: |word, bindings, word_max, wasm_bool| wasm_tys::I64Instance,
-        f32: |word, bindings, word_max, wasm_bool| wasm_tys::F32Instance,
-        f64: |word, bindings, word_max, wasm_bool| wasm_tys::F64Instance,
-        v128: |word, bindings, word_max, wasm_bool| wasm_tys::V128Instance,
-        func_ref: |word, bindings, word_max, wasm_bool| wasm_tys::FuncRefInstance,
-        extern_ref: |word, bindings, word_max, wasm_bool| wasm_tys::ExternRefInstance,
-
-        instance_id: |word| naga::Handle<naga::GlobalVariable>,
+        i32: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_fn| wasm_tys::I32Instance,
+        i64: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_fn| wasm_tys::I64Instance,
+        f32: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_fn| wasm_tys::F32Instance,
+        f64: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_fn| wasm_tys::F64Instance,
+        v128: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_fn| wasm_tys::V128Instance,
+        func_ref: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_fn| wasm_tys::FuncRefInstance,
+        extern_ref: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_fn| wasm_tys::ExternRefInstance,
     } with trait GenStdObjects;
 }
 
@@ -259,6 +259,9 @@ macro_rules! impl_gen_wasm {
                     others.bindings,
                     others.word_max,
                     others.wasm_bool,
+                    others.instance_id,
+                    others.trap_values,
+                    others.trap_fn,
                 )
             }
         }
@@ -423,7 +426,12 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
         module: &mut naga::Module,
         others: std_objects_gen::TrapFnRequirements,
     ) -> build::Result<std_objects_gen::TrapFn> {
-        flags::gen_trap_function::<Ps>(module, others.word, others.bindings.flags)
+        flags::gen_trap_function::<Ps>(
+            module,
+            others.word,
+            others.instance_id,
+            others.bindings.flags,
+        )
     }
     fn gen_naga_bool(
         module: &mut naga::Module,
@@ -433,7 +441,7 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
     }
     fn gen_wasm_bool(
         module: &mut naga::Module,
-        others: std_objects_gen::WasmBoolRequirements,
+        _others: std_objects_gen::WasmBoolRequirements,
     ) -> build::Result<std_objects_gen::WasmBool> {
         WasmBoolInstance::gen_from::<WasmBoolInstance>(module)
     }
@@ -454,15 +462,10 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
     }
     impl_gen_wasm! {i32}
     impl_gen_wasm! {i64}
-
     impl_gen_wasm! {f32}
-
     impl_gen_wasm! {f64}
-
     impl_gen_wasm! {v128}
-
     impl_gen_wasm! {func_ref}
-
     impl_gen_wasm! {extern_ref}
 }
 
@@ -489,7 +492,7 @@ impl StdObjects {
 
     pub(crate) fn from_tuneables(
         module: &mut naga::Module,
-        tuneables: &Tuneables,
+        _tuneables: &Tuneables,
     ) -> build::Result<StdObjects> {
         // TODO: Support native f64 and i64
         StdObjects::new::<FullPolyfill>(module)

@@ -23,7 +23,7 @@ pub(super) fn eat_mvp_operator(
         }
         MVPOperator::Unreachable => state.append_trap(Trap::UnreachableCodeReached),
         MVPOperator::Drop => {
-            /* Pass for now */
+            state.pop(); // And do nothing
             Ok(())
         }
         MVPOperator::LocalGet { local_index } => {

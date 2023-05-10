@@ -35,6 +35,9 @@ macro_rules! wasm_ty_generator {
                 bindings: StdBindings,
                 word_max: naga::Handle<naga::Constant>,
                 wasm_bool: WasmBoolInstance,
+                invocation_global: naga::Handle<naga::GlobalVariable>,
+                trap_values: std::collections::HashMap<Option<wasmtime_environ::Trap>, naga::Handle<naga::Constant>>,
+                trap_fn: naga::Handle<naga::Function>,
             )
             {
                 // Things all wasm types have
@@ -59,8 +62,8 @@ macro_rules! wasm_ty_generator {
         wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts),*]; {
             $($impl)*
 
-            load:  |ty, word, read_memory|  naga::Handle<naga::Function>,
-            store: |ty, word, write_memory| naga::Handle<naga::Function>,
+            load:  |ty, word, invocation_global, bindings, read_memory|  naga::Handle<naga::Function>,
+            store: |ty, word, invocation_global, bindings, write_memory| naga::Handle<naga::Function>,
 
             add: |ty, word_max| naga::Handle<naga::Function>,
             sub: |ty, word_max| naga::Handle<naga::Function>,
@@ -99,10 +102,10 @@ macro_rules! wasm_ty_generator {
             // Operations
             clz: |ty, word_max| naga::Handle<naga::Function>,
             ctz: |ty, word_max| naga::Handle<naga::Function>,
-            div_s: |ty, word_max| naga::Handle<naga::Function>,
-            div_u: |ty, word_max| naga::Handle<naga::Function>,
-            rem_s: |ty, word_max| naga::Handle<naga::Function>,
-            rem_u: |ty, word_max| naga::Handle<naga::Function>,
+            div_s: |ty, word_max, trap_values, trap_fn| naga::Handle<naga::Function>,
+            div_u: |ty, word_max, trap_values, trap_fn| naga::Handle<naga::Function>,
+            rem_s: |ty, word_max, trap_values, trap_fn| naga::Handle<naga::Function>,
+            rem_u: |ty, word_max, trap_values, trap_fn| naga::Handle<naga::Function>,
             rotl: |ty, word_max| naga::Handle<naga::Function>,
             rotr: |ty, word_max| naga::Handle<naga::Function>,
             popcnt: |ty, word_max| naga::Handle<naga::Function>,
@@ -118,7 +121,7 @@ macro_rules! wasm_ty_generator {
             extend_16_s: |ty| naga::Handle<naga::Function>,
 
             // Atomics (from thread proposal)
-            atomic_load:             |ty, default, word| naga::Handle<naga::Function>,
+            /*atomic_load:             |ty, default, word| naga::Handle<naga::Function>,
             atomic_load_8_u:         |ty, default, word| naga::Handle<naga::Function>,
             atomic_load_16_u:        |ty, default, word| naga::Handle<naga::Function>,
             atomic_store:            |ty, default, word| naga::Handle<naga::Function>,
@@ -144,7 +147,7 @@ macro_rules! wasm_ty_generator {
             atomic_rmw_16_xchg_u:    |ty, default, word| naga::Handle<naga::Function>,
             atomic_rmw_cmpxchg:      |ty, default, word| naga::Handle<naga::Function>,
             atomic_rmw_8_cmpxchg_u:  |ty, default, word| naga::Handle<naga::Function>,
-            atomic_rmw_16_cmpxchg_u: |ty, default, word| naga::Handle<naga::Function>,
+            atomic_rmw_16_cmpxchg_u: |ty, default, word| naga::Handle<naga::Function>,*/
         }}
     };
     // Just i64
@@ -160,7 +163,7 @@ macro_rules! wasm_ty_generator {
             extend_32_s: |ty| naga::Handle<naga::Function>,
 
             // Atomics (from thread proposal)
-            atomic_load_32_u:        |ty, default, word| naga::Handle<naga::Function>,
+            /*atomic_load_32_u:        |ty, default, word| naga::Handle<naga::Function>,
             atomic_store_32:         |ty, default, word| naga::Handle<naga::Function>,
             atomic_rmw_32_add_u:     |ty, default, word| naga::Handle<naga::Function>,
             atomic_rmw_32_sub_u:     |ty, default, word| naga::Handle<naga::Function>,
@@ -168,7 +171,7 @@ macro_rules! wasm_ty_generator {
             atomic_rmw_32_or_u:      |ty, default, word| naga::Handle<naga::Function>,
             atomic_rmw_32_xor_u:     |ty, default, word| naga::Handle<naga::Function>,
             atomic_rmw_32_xchg_u:    |ty, default, word| naga::Handle<naga::Function>,
-            atomic_rmw_32_cmpxchg_u: |ty, default, word| naga::Handle<naga::Function>,
+            atomic_rmw_32_cmpxchg_u: |ty, default, word| naga::Handle<naga::Function>,*/
         }}
     };
     // The implementation required for floats (f32, f64)
@@ -234,7 +237,7 @@ macro_rules! impl_native_bool_binexp {
                 others: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name $op_name >](lhs: others.ty, rhs: others.ty) -> others.wasm_bool.ty
+                    module => fn [< $name _ $op_name >](lhs: others.ty, rhs: others.ty) -> others.wasm_bool.ty
                 };
 
                 let t = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_true));
@@ -258,7 +261,7 @@ macro_rules! impl_native_inner_binexp {
                 others: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name $op_name >](lhs: others.ty, rhs: others.ty) -> others.ty
+                    module => fn [< $name _ $op_name >](lhs: others.ty, rhs: others.ty) -> others.ty
                 };
 
                 let res = naga_expr!(module, function_handle => lhs $op rhs);
@@ -280,7 +283,7 @@ macro_rules! impl_native_unsigned_bool_binexp {
                 others: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name $op_name >](lhs: others.ty, rhs: others.ty) -> others.wasm_bool.ty
+                    module => fn [< $name _ $op_name >](lhs: others.ty, rhs: others.ty) -> others.wasm_bool.ty
                 };
 
                 let t = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_true));
@@ -304,7 +307,7 @@ macro_rules! impl_native_unsigned_inner_binexp {
                 others: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name $op_name >](lhs: others.ty, rhs: others.ty) -> others.ty
+                    module => fn [< $name _ $op_name >](lhs: others.ty, rhs: others.ty) -> others.ty
                 };
 
                 let res = naga_expr!(module, function_handle => ((lhs as Uint) $op (rhs as Uint)) as Sint);
@@ -326,7 +329,7 @@ macro_rules! impl_native_unary_inner_math_fn {
                 others: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, value) = declare_function! {
-                    module => fn [< $name $op_name >](value: others.ty) -> others.ty
+                    module => fn [< $name _ $op_name >](value: others.ty) -> others.ty
                 };
 
                 let res = module.fn_mut(function_handle).expressions.append(naga::Expression::Math {
@@ -355,7 +358,7 @@ macro_rules! impl_dud_inner_binexp {
                 others: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, lhs, _) = declare_function! {
-                    module => fn [< $name $op_name >](lhs: others.ty, rhs: others.ty) -> others.ty
+                    module => fn [< $name _ $op_name >](lhs: others.ty, rhs: others.ty) -> others.ty
                 };
 
                 module.fn_mut(function_handle).body.push_return(lhs);
@@ -521,6 +524,18 @@ macro_rules! impl_load_and_store {
                 // TODO: Support other memories
                 drop(memory);
 
+                // If we have trapped, don't store
+                let mut trapped_block = naga::Block::default();
+                trapped_block.push_bare_return();
+                let invocation_id = naga_expr!(module, function_handle => Load(Global(others.invocation_global)));
+                let trap_state = naga_expr!(module, function_handle => Load(Global(others.bindings.flags)[invocation_id][const crate::TRAP_FLAG_INDEX]));
+                let trapped_condition =
+                    naga_expr!(module, function_handle => trap_state != U32(0));
+                module.fn_mut(function_handle).body.push_if(trapped_condition,
+                    trapped_block,
+                    naga::Block::default(),
+                );
+
                 // Store aligned
                 let mut aligned_block = naga::Block::default();
                 let aligned_address = naga_expr!(module, function_handle => address >> U32(2));
@@ -636,6 +651,7 @@ macro_rules! impl_integer_loads_and_stores {
 }
 use impl_integer_loads_and_stores;
 
+/*
 macro_rules! impl_integer_atomic_loads_and_stores {
     ($instance_gen:ident, $name:ident) => {
         paste::paste!{
@@ -677,4 +693,4 @@ macro_rules! impl_integer_atomic_loads_and_stores {
         }
     };
 }
-use impl_integer_atomic_loads_and_stores;
+use impl_integer_atomic_loads_and_stores;*/

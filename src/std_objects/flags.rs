@@ -5,31 +5,30 @@ use wasmtime_environ::Trap;
 use super::std_objects_gen;
 use crate::traps::ALL_TRAPS;
 use crate::{trap_to_u32, TRAP_FLAG_INDEX};
-use naga_ext::{declare_function, naga_expr, BlockExt, ExpressionsExt, ModuleExt};
+use naga_ext::{declare_function, naga_expr, BlockExt, ModuleExt};
 
-// fn<buffer>(invocation_id: u32, value: u32) -> !
+// fn<buffer>(value: u32) -> !
 pub(super) fn gen_trap_function<Ps: crate::std_objects::GenerationParameters>(
     module: &mut naga::Module,
     word_ty: std_objects_gen::Word,
+    invocation_global: naga::Handle<naga::GlobalVariable>,
     flags_buffer: naga::Handle<naga::GlobalVariable>,
 ) -> crate::build::Result<naga::Handle<naga::Function>> {
-    let (function_handle, invocation_id, trap_value) = declare_function! {
-        module => fn trap(invocation_id: word_ty, trap_id: word_ty)
+    let (function_handle, trap_value) = declare_function! {
+        module => fn trap(trap_id: word_ty)
     };
 
-    let output_ref = module
-        .fn_mut(function_handle)
-        .expressions
-        .append_global(flags_buffer);
-    let write_word_loc =
-        naga_expr!(module, function_handle => (output_ref[invocation_id])[const TRAP_FLAG_INDEX]);
+    let invocation_id = naga_expr!(module, function_handle => Load(Global(invocation_global)));
+    let write_word_loc = naga_expr!(module, function_handle => Global(flags_buffer)[invocation_id][const TRAP_FLAG_INDEX]);
+
     module
         .fn_mut(function_handle)
         .body
         .push_store(write_word_loc, trap_value);
 
     // Then kill
-    module.fn_mut(function_handle).body.push_kill();
+    // Except we can't kill compute shaders
+    // module.fn_mut(function_handle).body.push_kill();
 
     Ok(function_handle)
 }
