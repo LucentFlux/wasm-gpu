@@ -38,6 +38,7 @@ macro_rules! wasm_ty_generator {
                 invocation_global: naga::Handle<naga::GlobalVariable>,
                 trap_values: crate::std_objects::flags::TrapValuesInstance,
                 trap_state: naga::Handle<naga::GlobalVariable>,
+                fp_options: crate::FloatingPointOptions,
             )
             {
                 // Things all wasm types have
@@ -65,9 +66,9 @@ macro_rules! wasm_ty_generator {
             load:  |ty, word, read_memory|  naga::Handle<naga::Function>,
             store: |ty, word, trap_state, write_memory| naga::Handle<naga::Function>,
 
-            add: |ty, word_max| naga::Handle<naga::Function>,
-            sub: |ty, word_max| naga::Handle<naga::Function>,
-            mul: |ty, word_max| naga::Handle<naga::Function>,
+            add: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+            sub: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+            mul: |ty, word_max, fp_options| naga::Handle<naga::Function>,
 
             eq: |ty, wasm_bool| naga::Handle<naga::Function>,
             ne: |ty, wasm_bool| naga::Handle<naga::Function>,
@@ -179,7 +180,18 @@ macro_rules! wasm_ty_generator {
         wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts),*]; {
             $($impl)*
 
-            div: |ty, word_max| naga::Handle<naga::Function>,
+            abs: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+            neg: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+            ceil: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+            floor: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+            trunc: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+            nearest: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+
+            div: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+            sqrt: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+            min: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+            max: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+            copy_sign: |ty, word_max, fp_options| naga::Handle<naga::Function>,
         }}
     };
 }

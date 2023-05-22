@@ -9,8 +9,8 @@ use wasm_types::Val;
 use wasmparser::ValType;
 
 use crate::{
-    build, Tuneables, CONSTANTS_LEN_BYTES, FLAGS_LEN_BYTES, TOTAL_INVOCATIONS_CONSTANT_INDEX,
-    TRAP_FLAG_INDEX,
+    build, FloatingPointOptions, Tuneables, CONSTANTS_LEN_BYTES, FLAGS_LEN_BYTES,
+    TOTAL_INVOCATIONS_CONSTANT_INDEX, TRAP_FLAG_INDEX,
 };
 
 use self::{
@@ -198,12 +198,13 @@ impl GenNagaBool for NagaBoolInstance {
 }
 
 generator_struct! {
-    pub(crate) struct StdObjects
+    pub(crate) struct StdObjects (fp_options: crate::FloatingPointOptions)
     {
         word: naga::Handle<naga::Type>,
         word_max: naga::Handle<naga::Constant>, // Used for overflow calculations
 
         instance_id: |word| naga::Handle<naga::GlobalVariable>,
+        invocations_count: |word| naga::Handle<naga::GlobalVariable>,
 
         uvec3: naga::Handle<naga::Type>,
 
@@ -220,13 +221,13 @@ generator_struct! {
         naga_bool: NagaBoolInstance,
         wasm_bool: WasmBoolInstance,
 
-        i32: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state| wasm_tys::I32Instance,
-        i64: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state| wasm_tys::I64Instance,
-        f32: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state| wasm_tys::F32Instance,
-        f64: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state| wasm_tys::F64Instance,
-        v128: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state| wasm_tys::V128Instance,
-        func_ref: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state| wasm_tys::FuncRefInstance,
-        extern_ref: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state| wasm_tys::ExternRefInstance,
+        i32: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state, fp_options| wasm_tys::I32Instance,
+        i64: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state, fp_options| wasm_tys::I64Instance,
+        f32: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state, fp_options| wasm_tys::F32Instance,
+        f64: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state, fp_options| wasm_tys::F64Instance,
+        v128: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state, fp_options| wasm_tys::V128Instance,
+        func_ref: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state, fp_options| wasm_tys::FuncRefInstance,
+        extern_ref: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state, fp_options| wasm_tys::ExternRefInstance,
     } with trait GenStdObjects;
 }
 
@@ -262,6 +263,7 @@ macro_rules! impl_gen_wasm {
                     others.instance_id,
                     others.trap_values,
                     others.trap_state,
+                    others.fp_options,
                 )
             }
         }
@@ -466,6 +468,21 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
             naga::Span::UNDEFINED,
         ))
     }
+    fn gen_invocations_count(
+        module: &mut naga::Module,
+        others: std_objects_gen::InvocationsCountRequirements,
+    ) -> build::Result<std_objects_gen::InvocationsCount> {
+        Ok(module.global_variables.append(
+            naga::GlobalVariable {
+                name: Some("invocations_count".to_owned()),
+                space: naga::AddressSpace::Private,
+                binding: None,
+                ty: others.word,
+                init: None,
+            },
+            naga::Span::UNDEFINED,
+        ))
+    }
     impl_gen_wasm! {i32}
     impl_gen_wasm! {i64}
     impl_gen_wasm! {f32}
@@ -492,16 +509,19 @@ macro_rules! extract_type_field {
 }
 
 impl StdObjects {
-    pub(crate) fn new<Ps: GenerationParameters>(module: &mut naga::Module) -> build::Result<Self> {
-        StdObjects::gen_from::<StdObjectsGenerator<Ps>>(module)
+    pub(crate) fn new<Ps: GenerationParameters>(
+        module: &mut naga::Module,
+        fp_options: FloatingPointOptions,
+    ) -> build::Result<Self> {
+        StdObjects::gen_from::<StdObjectsGenerator<Ps>>(module, fp_options)
     }
 
     pub(crate) fn from_tuneables(
         module: &mut naga::Module,
-        _tuneables: &Tuneables,
+        tuneables: &Tuneables,
     ) -> build::Result<StdObjects> {
         // TODO: Support native f64 and i64
-        StdObjects::new::<FullPolyfill>(module)
+        StdObjects::new::<FullPolyfill>(module, tuneables.fp_options)
     }
 
     /// Get's a WASM val type's naga type

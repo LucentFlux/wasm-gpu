@@ -18,6 +18,7 @@ use super::{
 
 mod mvp;
 mod sign_extension;
+mod simd;
 mod threads;
 
 /// Blocks have parameters that they take off the stack, and results that they put back
@@ -920,6 +921,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                 OperatorByProposal::SignExtension(sign_ext_op) => {
                     sign_extension::eat_sign_extension_operator(self, sign_ext_op)?
                 }
+                OperatorByProposal::SIMD(simd_op) => simd::eat_simd_operator(self, simd_op)?,
                 OperatorByProposal::Threads(threads_op) => {
                     threads::eat_threads_operator(self, threads_op)?
                 }
@@ -928,7 +930,6 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                 | OperatorByProposal::ReferenceTypes(_)
                 | OperatorByProposal::SaturatingFloatToInt(_)
                 | OperatorByProposal::BulkMemory(_)
-                | OperatorByProposal::SIMD(_)
                 | OperatorByProposal::RelaxedSIMD(_)
                 | OperatorByProposal::FunctionReferences(_)
                 | OperatorByProposal::MemoryControl(_) => {
@@ -1022,23 +1023,20 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
     }
 
     /// Takes a byte address in shared memory space and calculates the address in disjoint memory space. I.e. calculates
-    /// `(address / STRIDE) * instance_count + STRIDE * instance_id + (address % STRIDE)`
+    /// `(address / STRIDE) * invocations_count + STRIDE * instance_id + (address % STRIDE)`
     fn disjoint_memory_address(
         &mut self,
         shared_address: naga::Handle<naga::Expression>,
     ) -> naga::Handle<naga::Expression> {
         let stride_bytes = naga_expr!(self => U32(MEMORY_STRIDE_WORDS * 4));
 
-        let constants_buffer = self.std_objects().bindings.constants;
-        let constants_buffer = self.body_data.expressions.append_global(constants_buffer);
-        let instance_count =
-            naga_expr!(self => Load(constants_buffer[const TOTAL_INVOCATIONS_CONSTANT_INDEX]));
+        let invocations_count_global = self.std_objects().invocations_count;
+        let invocations_count = naga_expr!(self => Load(Global(invocations_count_global)));
 
-        let instance_id = self.std_objects().instance_id;
-        let instance_id = self.body_data.expressions.append_global(instance_id);
-        let instance_id = naga_expr!(self => Load(instance_id));
+        let instance_id_global = self.std_objects().instance_id;
+        let instance_id = naga_expr!(self => Load(Global(instance_id_global)));
 
-        naga_expr!(self => ((shared_address / stride_bytes) * {instance_count}) + (stride_bytes * instance_id) + (shared_address % stride_bytes))
+        naga_expr!(self => ((shared_address / stride_bytes) * {invocations_count}) + (stride_bytes * instance_id) + (shared_address % stride_bytes))
     }
 
     /// Calls a function and pushes the result of the call onto the stack

@@ -2,6 +2,10 @@
 #![feature(slice_as_chunks)]
 #![feature(int_roundings)]
 
+#![recursion_limit = "4096"]
+
+pub const WORKGROUP_SIZE: u32 = 256;
+
 pub const MEMORY_BINDING_INDEX: u32 = 0;
 pub const MEMORY_BINDING_READ_ONLY: bool = false;
 pub const MUTABLE_GLOBALS_BINDING_INDEX: u32 = 1;
@@ -126,22 +130,36 @@ pub struct Tuneables {
     /// If set to true, the translator will output f64 instructions. If false,
     /// a polyfill will be used
     pub hardware_supports_f64: bool,
-    /// The size of the workgroups per invocation, with y and z being set to 1
-    pub workgroup_size: u32,
     /// If this is true, each parallel instance is executed in its own environment
     /// and cannot see the values stored in the memories of its peers. If this is
     /// false, all instances in a set share the same block of memory, and so atomics
     /// from the threading proposal should be used by your wasm modules to ensure
     /// proper memory manipulation.
     pub disjoint_memory: bool,
+    /// Which extra things to do when performing floating point operations to ensure
+    /// alignment with the specification
+    pub fp_options: FloatingPointOptions,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct FloatingPointOptions {
+    pub emulate_subnormals: bool,
 }
 
 impl Default for Tuneables {
     fn default() -> Self {
         Self {
             hardware_supports_f64: false,
-            workgroup_size: 256,
             disjoint_memory: true,
+            fp_options: FloatingPointOptions::default(),
+        }
+    }
+}
+
+impl Default for FloatingPointOptions {
+    fn default() -> Self {
+        Self {
+            emulate_subnormals: true,
         }
     }
 }

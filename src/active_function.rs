@@ -4,7 +4,7 @@ mod locals;
 mod results;
 
 use naga::Handle;
-use naga_ext::{naga_expr, BlockExt, ModuleExt, ShaderPart};
+use naga_ext::{naga_expr, BlockExt, ExpressionsExt, ModuleExt, ShaderPart};
 use wasm_opcodes::OperatorByProposal;
 use wasm_types::FuncRef;
 
@@ -217,7 +217,6 @@ impl EntryFunction {
         module: &mut naga::Module,
         std_objects: &StdObjects,
         ptr: FuncRef,
-        workgroup_size: u32,
     ) -> Self {
         let name = get_entry_name(ptr);
 
@@ -230,7 +229,7 @@ impl EntryFunction {
             name,
             stage: naga::ShaderStage::Compute,
             early_depth_test: None,
-            workgroup_size: [workgroup_size, 1, 1],
+            workgroup_size: [crate::WORKGROUP_SIZE, 1, 1],
             function,
         });
 
@@ -300,17 +299,37 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
         arguments: &WasmFnArgs,
         results_ty: &Option<WasmFnResTy>,
     ) -> build::Result<()> {
-        let instance_index = self.get_workgroup_index();
+        let invocation_id = self.get_workgroup_index();
+
+        let constants_buffer = self.std_objects().bindings.constants;
+        let constants_buffer = self.fn_mut().expressions.append_global(constants_buffer);
+        let invocations_count = naga_expr!(self => Load(constants_buffer[const crate::TOTAL_INVOCATIONS_CONSTANT_INDEX]));
 
         // Write entry globals
-        let instance_id = self.std_objects().instance_id;
-        let invocation_id_ptr = naga_expr!(self => Global(instance_id));
+        let instance_id_global = self.std_objects().instance_id;
+        let invocation_id_ptr = naga_expr!(self => Global(instance_id_global));
         self.fn_mut()
             .body
-            .push_store(invocation_id_ptr, instance_index);
+            .push_store(invocation_id_ptr, invocation_id);
+
+        let invocations_count_global = self.std_objects().invocations_count;
+        let invocations_count_ptr = naga_expr!(self => Global(invocations_count_global));
+        self.fn_mut()
+            .body
+            .push_store(invocations_count_ptr, invocations_count);
+
+        // Don't execute if we're beyond the invocation count
+        let is_not_being_executed = naga_expr!(self => invocation_id > invocations_count);
+        let mut if_not_being_executed = naga::Block::default();
+        if_not_being_executed.push_bare_return();
+        self.fn_mut().body.push_if(
+            is_not_being_executed,
+            if_not_being_executed,
+            naga::Block::default(),
+        );
 
         // Call fn
-        let arguments = self.read_entry_inputs(arguments, instance_index);
+        let arguments = self.read_entry_inputs(arguments, invocation_id);
         let results: Option<(&WasmFnResTy, Handle<naga::Expression>)> =
             results_ty.as_ref().map(|results_ty| {
                 (
@@ -332,7 +351,7 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
 
         // Write outputs
         if let Some((results_ty, results_expr)) = results {
-            self.store_output(results_ty, instance_index, results_expr)?;
+            self.store_output(results_ty, invocation_id, results_expr)?;
         }
 
         // Write trap status
@@ -340,7 +359,7 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
         let flags_buffer = self.working_module.std_objects.bindings.flags;
         let flag_state = naga_expr!(self => Load(Global(flag_state)));
         let write_word_loc =
-            naga_expr!(self => Global(flags_buffer)[instance_index][const crate::TRAP_FLAG_INDEX]);
+            naga_expr!(self => Global(flags_buffer)[invocation_id][const crate::TRAP_FLAG_INDEX]);
         self.fn_mut().body.push_store(write_word_loc, flag_state);
 
         return Ok(());

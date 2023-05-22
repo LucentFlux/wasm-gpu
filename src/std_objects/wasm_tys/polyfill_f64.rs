@@ -93,6 +93,92 @@ impl FrexpParts {
         self // TODO: This
     }
 
+    /// Generates code that finds the min of two floats
+    fn gen_min(
+        self,
+        rhs_frexp: FrexpParts,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> FrexpParts {
+        self // TODO: This
+    }
+
+    /// Generates code that finds the max of two floats
+    fn gen_max(
+        self,
+        rhs_frexp: FrexpParts,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> FrexpParts {
+        self // TODO: This
+    }
+
+    /// Generates code that copies the sign of one float to another
+    fn gen_copy_sign(
+        self,
+        rhs_frexp: FrexpParts,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> FrexpParts {
+        self // TODO: This
+    }
+
+    fn gen_abs(
+        self,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> FrexpParts {
+        self // TODO: This
+    }
+
+    fn gen_neg(
+        self,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> FrexpParts {
+        self // TODO: This
+    }
+
+    fn gen_ceil(
+        self,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> FrexpParts {
+        self // TODO: This
+    }
+
+    fn gen_floor(
+        self,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> FrexpParts {
+        self // TODO: This
+    }
+
+    fn gen_trunc(
+        self,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> FrexpParts {
+        self // TODO: This
+    }
+
+    fn gen_nearest(
+        self,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> FrexpParts {
+        self // TODO: This
+    }
+
+    fn gen_sqrt(
+        self,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> FrexpParts {
+        self // TODO: This
+    }
+
     /// Combines all of the component expressions into a 64 bit float, possibly losing subnormals and handling inf/nans badly
     fn gen_f64(
         self,
@@ -126,7 +212,32 @@ impl FrexpParts {
     }
 }
 
-macro_rules! impl_using_frexp {
+macro_rules! impl_mono_using_frexp {
+    ($instance_gen:ident, $fn:ident) => {
+        paste::paste! {
+            fn [< gen_ $fn >](
+                module: &mut naga::Module,
+                others: $instance_gen::[< $fn:camel Requirements >],
+            ) -> build::Result<$instance_gen::[< $fn:camel >]> {
+                let f64_ty = others.ty;
+                let (function_handle, value) = declare_function! {
+                    module => fn [< f64_ $fn >](value: f64_ty) -> f64_ty
+                };
+
+                let value_frexp = FrexpParts::from_uvec2(module, function_handle, value);
+
+                let res_frexp = value_frexp.[< gen_ $fn >](module, function_handle);
+
+                let res = res_frexp.gen_uvec2(module, function_handle, f64_ty);
+                module.fn_mut(function_handle).body.push_return(res);
+
+                Ok(function_handle)
+            }
+        }
+    };
+}
+
+macro_rules! impl_binary_using_frexp {
     ($instance_gen:ident, $fn:ident) => {
         paste::paste! {
             fn [< gen_ $fn >](
@@ -246,14 +357,25 @@ impl F64Gen for PolyfillF64 {
         )
     }
 
-    impl_using_frexp! {f64_instance_gen, add}
-    impl_using_frexp! {f64_instance_gen, sub}
-    impl_using_frexp! {f64_instance_gen, mul}
-    impl_using_frexp! {f64_instance_gen, div}
+    impl_binary_using_frexp! {f64_instance_gen, add}
+    impl_binary_using_frexp! {f64_instance_gen, sub}
+    impl_binary_using_frexp! {f64_instance_gen, mul}
+    impl_binary_using_frexp! {f64_instance_gen, div}
+    impl_binary_using_frexp! {f64_instance_gen, min}
+    impl_binary_using_frexp! {f64_instance_gen, max}
+    impl_binary_using_frexp! {f64_instance_gen, copy_sign}
 
     super::impl_bitwise_2vec32_numeric_ops! {f64_instance_gen, f64}
 
     super::impl_load_and_store! {f64_instance_gen, f64}
+
+    impl_mono_using_frexp! {f64_instance_gen, abs}
+    impl_mono_using_frexp! {f64_instance_gen, neg}
+    impl_mono_using_frexp! {f64_instance_gen, ceil}
+    impl_mono_using_frexp! {f64_instance_gen, floor}
+    impl_mono_using_frexp! {f64_instance_gen, trunc}
+    impl_mono_using_frexp! {f64_instance_gen, nearest}
+    impl_mono_using_frexp! {f64_instance_gen, sqrt}
 }
 
 // fn<buffer>(word_address: u32) -> f64

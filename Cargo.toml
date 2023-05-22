@@ -9,7 +9,7 @@ naga-ext = { path = "../naga-ext" }
 wasm-opcodes = { path = "../wasm-opcodes" }
 wasm-types = { path = "../wasm-types" }
 
-naga = { version = "0.11", features = ["validate", "hlsl-out", "spv-in", "spv-out"] }
+naga = { version = "0.12", features = ["validate", "hlsl-out", "spv-in", "spv-out"] }
 itertools = "0.10"
 petgraph = "0.6"
 once_cell = "1.17"

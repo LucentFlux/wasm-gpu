@@ -16,7 +16,6 @@ use wasm_types::FuncRef;
 pub(crate) struct ActiveModule<'a> {
     pub module: &'a mut naga::Module,
     pub std_objects: StdObjects,
-    pub workgroup_size: u32,
     pub uses_disjoint_memory: bool,
 }
 
@@ -29,7 +28,6 @@ impl<'a> ActiveModule<'a> {
         Ok(Self {
             module,
             std_objects,
-            workgroup_size: tuneables.workgroup_size,
             uses_disjoint_memory: tuneables.disjoint_memory,
         })
     }
@@ -51,12 +49,7 @@ impl<'a> ActiveModule<'a> {
 
     /// Forward declare a shader entry function
     pub(crate) fn declare_entry_function(&mut self, ptr: FuncRef) -> EntryFunction {
-        EntryFunction::append_declaration_to(
-            &mut self.module,
-            &self.std_objects,
-            ptr,
-            self.workgroup_size,
-        )
+        EntryFunction::append_declaration_to(&mut self.module, &self.std_objects, ptr)
     }
 
     /// Forward declare a stack function
