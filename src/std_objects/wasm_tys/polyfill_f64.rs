@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use super::{f64_instance_gen, F64Gen};
 use crate::{build, std_objects::std_objects_gen};
-use naga_ext::{declare_function, naga_expr, BlockExt, ExpressionsExt, LocalsExt, ModuleExt};
+use naga_ext::{
+    declare_function, naga_expr, BlockExt, ConstantsExt, ExpressionsExt, LocalsExt, ModuleExt,
+};
 
 fn make_const_impl(
     constants: &mut naga::Arena<naga::Constant>,
@@ -179,6 +181,58 @@ impl FrexpParts {
         self // TODO: This
     }
 
+    fn gen_lt(
+        self,
+        rhs_frexp: FrexpParts,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> naga::Handle<naga::Expression> {
+        let tmp = module.constants.append_i32(0); // TODO: This
+        module
+            .fn_mut(function_handle)
+            .expressions
+            .append_constant(tmp)
+    }
+
+    fn gen_le(
+        self,
+        rhs_frexp: FrexpParts,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> naga::Handle<naga::Expression> {
+        let tmp = module.constants.append_i32(0); // TODO: This
+        module
+            .fn_mut(function_handle)
+            .expressions
+            .append_constant(tmp)
+    }
+
+    fn gen_gt(
+        self,
+        rhs_frexp: FrexpParts,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> naga::Handle<naga::Expression> {
+        let tmp = module.constants.append_i32(0); // TODO: This
+        module
+            .fn_mut(function_handle)
+            .expressions
+            .append_constant(tmp)
+    }
+
+    fn gen_ge(
+        self,
+        rhs_frexp: FrexpParts,
+        module: &mut naga::Module,
+        function_handle: naga::Handle<naga::Function>,
+    ) -> naga::Handle<naga::Expression> {
+        let tmp = module.constants.append_i32(0); // TODO: This
+        module
+            .fn_mut(function_handle)
+            .expressions
+            .append_constant(tmp)
+    }
+
     /// Combines all of the component expressions into a 64 bit float, possibly losing subnormals and handling inf/nans badly
     fn gen_f64(
         self,
@@ -255,6 +309,31 @@ macro_rules! impl_binary_using_frexp {
                 let res_frexp = lhs_frexp.[< gen_ $fn >](rhs_frexp, module, function_handle);
 
                 let res = res_frexp.gen_uvec2(module, function_handle, f64_ty);
+                module.fn_mut(function_handle).body.push_return(res);
+
+                Ok(function_handle)
+            }
+        }
+    };
+}
+
+macro_rules! impl_bool_binary_using_frexp {
+    ($instance_gen:ident, $fn:ident) => {
+        paste::paste! {
+            fn [< gen_ $fn >](
+                module: &mut naga::Module,
+                others: $instance_gen::[< $fn:camel Requirements >],
+            ) -> build::Result<$instance_gen::[< $fn:camel >]> {
+                let f64_ty = others.ty;
+                let (function_handle, lhs, rhs) = declare_function! {
+                    module => fn [< f64_ $fn >](lhs: f64_ty, rhs: f64_ty) -> others.wasm_bool.ty
+                };
+
+                let lhs_frexp = FrexpParts::from_uvec2(module, function_handle, lhs);
+                let rhs_frexp = FrexpParts::from_uvec2(module, function_handle, rhs);
+
+                let res = lhs_frexp.[< gen_ $fn >](rhs_frexp, module, function_handle);
+
                 module.fn_mut(function_handle).body.push_return(res);
 
                 Ok(function_handle)
@@ -376,6 +455,11 @@ impl F64Gen for PolyfillF64 {
     impl_mono_using_frexp! {f64_instance_gen, trunc}
     impl_mono_using_frexp! {f64_instance_gen, nearest}
     impl_mono_using_frexp! {f64_instance_gen, sqrt}
+
+    impl_bool_binary_using_frexp! {f64_instance_gen, lt}
+    impl_bool_binary_using_frexp! {f64_instance_gen, le}
+    impl_bool_binary_using_frexp! {f64_instance_gen, gt}
+    impl_bool_binary_using_frexp! {f64_instance_gen, ge}
 }
 
 // fn<buffer>(word_address: u32) -> f64

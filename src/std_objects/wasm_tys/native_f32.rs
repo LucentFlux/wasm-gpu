@@ -1201,6 +1201,41 @@ impl F32Gen for NativeF32 {
     }
 
     super::impl_load_and_store! {f32_instance_gen, f32}
+
+    fn gen_convert_i32_s(
+        module: &mut naga::Module,
+        others: f32_instance_gen::ConvertI32SRequirements,
+    ) -> build::Result<f32_instance_gen::ConvertI32S> {
+        let (function_handle, value) = declare_function! {
+            module => fn f32_convert_i32_s(value: others.i32_ty) -> others.ty
+        };
+
+        // No subnormal correction required because integers can't be subnormals
+        let res = naga_expr!(module, function_handle => f32(value));
+
+        module.fn_mut(function_handle).body.push_return(res);
+        Ok(function_handle)
+    }
+
+    fn gen_convert_i32_u(
+        module: &mut naga::Module,
+        others: f32_instance_gen::ConvertI32URequirements,
+    ) -> build::Result<f32_instance_gen::ConvertI32U> {
+        let (function_handle, value) = declare_function! {
+            module => fn f32_convert_i32_s(value: others.i32_ty) -> others.ty
+        };
+
+        // No subnormal correction required because integers can't be subnormals
+        let res = naga_expr!(module, function_handle => f32(bitcast<u32>(value)));
+
+        module.fn_mut(function_handle).body.push_return(res);
+        Ok(function_handle)
+    }
+
+    impl_native_bool_binexp! { f32_instance_gen, f32, lt; < }
+    impl_native_bool_binexp! { f32_instance_gen, f32, le; <= }
+    impl_native_bool_binexp! { f32_instance_gen, f32, gt; > }
+    impl_native_bool_binexp! { f32_instance_gen, f32, ge; >= }
 }
 
 // fn<buffer>(word_address: u32) -> f32

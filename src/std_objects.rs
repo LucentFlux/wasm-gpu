@@ -223,7 +223,7 @@ generator_struct! {
 
         i32: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state, fp_options| wasm_tys::I32Instance,
         i64: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state, fp_options| wasm_tys::I64Instance,
-        f32: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state, fp_options| wasm_tys::F32Instance,
+        f32: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state, fp_options, i32| wasm_tys::F32Instance,
         f64: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state, fp_options| wasm_tys::F64Instance,
         v128: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state, fp_options| wasm_tys::V128Instance,
         func_ref: |word, bindings, word_max, wasm_bool, instance_id, trap_values, trap_state, fp_options| wasm_tys::FuncRefInstance,
@@ -485,7 +485,23 @@ impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
     }
     impl_gen_wasm! {i32}
     impl_gen_wasm! {i64}
-    impl_gen_wasm! {f32}
+    fn gen_f32(
+        module: &mut naga::Module,
+        others: std_objects_gen::F32Requirements,
+    ) -> build::Result<std_objects_gen::F32> {
+        std_objects_gen::F32::gen_from::<Ps::F32>(
+            module,
+            others.word,
+            others.bindings,
+            others.word_max,
+            others.wasm_bool,
+            others.instance_id,
+            others.trap_values,
+            others.trap_state,
+            others.fp_options,
+            others.i32.ty,
+        )
+    }
     impl_gen_wasm! {f64}
     impl_gen_wasm! {v128}
     impl_gen_wasm! {func_ref}

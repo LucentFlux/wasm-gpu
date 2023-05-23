@@ -48,8 +48,8 @@ pub const BINDING_TUPLES: [(u32, bool); 11] = [
     (CONSTANTS_BINDING_INDEX, CONSTANTS_BINDING_READ_ONLY),
 ];
 
-// Stack size is only used for recursive or co-recursive calls, and is currently fixed
-pub const STACK_LEN_BYTES: u32 = 1024 * 1024 * 8; // 8MB
+// Stack size is only used for recursive or co-recursive calls, and is currently fixed (and split across all instances)
+pub const STACK_LEN_BYTES: u32 = 128; //268435456; // 256MB
 
 // Flags are 32-bits wide
 pub const FLAGS_LEN_BYTES: u32 = 4;
@@ -161,6 +161,17 @@ impl Default for Tuneables {
         Self {
             disjoint_memory: true,
             fp_options: FloatingPointOptions::default(),
+        }
+    }
+}
+
+impl FloatingPointOptions {
+    /// Use with caution; not emulating any FP operations typically results in undefined behavior on most GPUs.
+    pub unsafe fn no_emulation() -> Self {
+        Self {
+            emulate_subnormals: false,
+            emulate_div_beyond_max: false,
+            emulate_f64: false,
         }
     }
 }

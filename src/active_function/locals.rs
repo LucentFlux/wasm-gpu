@@ -79,18 +79,21 @@ impl FnLocals {
         // First insert actual wasm locals
         let local_variables = &mut function.local_variables;
         let expressions = &mut function.expressions;
+        let mut i_local = parameters.len() as u32;
         for (local_count, local_ty) in parsed_locals {
-            let i_local = parameters.len() as u32 + local_count - 1;
-            locals.insert(
-                i_local,
-                FnLocal::append_wasm_to(
-                    format!("wasm_defined_local_{}", i_local),
-                    local_variables,
-                    expressions,
-                    std_objects,
-                    *local_ty,
-                ),
-            );
+            for _ in 0..*local_count {
+                locals.insert(
+                    i_local,
+                    FnLocal::append_wasm_to(
+                        format!("wasm_defined_local_{}", i_local),
+                        local_variables,
+                        expressions,
+                        std_objects,
+                        *local_ty,
+                    ),
+                );
+                i_local += 1;
+            }
         }
 
         // Then insert parameters as locals, since we need to be able to treat them like they are

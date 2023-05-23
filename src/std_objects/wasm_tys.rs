@@ -26,9 +26,9 @@ type MakeConstFn<Ty> = Arc<
 
 macro_rules! wasm_ty_generator {
     (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [$($parts:tt)*]) => {
-        wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts)*]; { }}
+        wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts)*]; { }; ()}
     };
-    (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; []; {$($impl:tt)*}) => {
+    (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; []; {$($impl:tt)*}; ($($extra_params:tt)*)) => {
         super::generator_struct! {
             pub(crate) struct $struct_name (
                 word: naga::Handle<naga::Type>,
@@ -39,6 +39,7 @@ macro_rules! wasm_ty_generator {
                 trap_values: crate::std_objects::flags::TrapValuesInstance,
                 trap_state: naga::Handle<naga::GlobalVariable>,
                 fp_options: crate::FloatingPointOptions,
+                $($extra_params)*
             )
             {
                 // Things all wasm types have
@@ -59,7 +60,7 @@ macro_rules! wasm_ty_generator {
     };
     // The implementation required for numerics (i32, i64, f32, f64)
     // See https://webassembly.github.io/spec/core/syntax/instructions.html#numeric-instructions
-    (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [numeric $(, $parts:tt)*]; {$($impl:tt)*}) => {
+    (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [numeric $(, $parts:tt)*]; {$($impl:tt)*}; ($($extra_params:tt)*)) => {
         wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts),*]; {
             $($impl)*
 
@@ -72,10 +73,10 @@ macro_rules! wasm_ty_generator {
 
             eq: |ty, wasm_bool| naga::Handle<naga::Function>,
             ne: |ty, wasm_bool| naga::Handle<naga::Function>,
-        }}
+        }; ($($extra_params)*)}
     };
     // The implementation required for integers (i32, i64)
-    (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [integer $(, $parts:tt)*]; {$($impl:tt)*}) => {
+    (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [integer $(, $parts:tt)*]; {$($impl:tt)*}; ($($extra_params:tt)*)) => {
         wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts),*]; {
             $($impl)*
 
@@ -149,10 +150,10 @@ macro_rules! wasm_ty_generator {
             atomic_rmw_cmpxchg:      |ty, default, word| naga::Handle<naga::Function>,
             atomic_rmw_8_cmpxchg_u:  |ty, default, word| naga::Handle<naga::Function>,
             atomic_rmw_16_cmpxchg_u: |ty, default, word| naga::Handle<naga::Function>,*/
-        }}
+        }; ($($extra_params)*)}
     };
     // Just i64
-    (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [i64 $(, $parts:tt)*]; {$($impl:tt)*}) => {
+    (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [i64 $(, $parts:tt)*]; {$($impl:tt)*}; ($($extra_params:tt)*)) => {
         wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts),*]; {
             $($impl)*
 
@@ -173,10 +174,10 @@ macro_rules! wasm_ty_generator {
             atomic_rmw_32_xor_u:     |ty, default, word| naga::Handle<naga::Function>,
             atomic_rmw_32_xchg_u:    |ty, default, word| naga::Handle<naga::Function>,
             atomic_rmw_32_cmpxchg_u: |ty, default, word| naga::Handle<naga::Function>,*/
-        }}
+        }; ($($extra_params)*)}
     };
     // The implementation required for floats (f32, f64)
-    (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [floating $(, $parts:tt)*]; {$($impl:tt)*}) => {
+    (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [floating $(, $parts:tt)*]; {$($impl:tt)*}; ($($extra_params:tt)*)) => {
         wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts),*]; {
             $($impl)*
 
@@ -192,13 +193,27 @@ macro_rules! wasm_ty_generator {
             min: |ty, word_max, fp_options| naga::Handle<naga::Function>,
             max: |ty, word_max, fp_options| naga::Handle<naga::Function>,
             copy_sign: |ty, word_max, fp_options| naga::Handle<naga::Function>,
-        }}
+
+            lt: |ty, wasm_bool, fp_options| naga::Handle<naga::Function>,
+            le: |ty, wasm_bool, fp_options| naga::Handle<naga::Function>,
+            gt: |ty, wasm_bool, fp_options| naga::Handle<naga::Function>,
+            ge: |ty, wasm_bool, fp_options| naga::Handle<naga::Function>,
+        }; ($($extra_params)*)}
+    };
+    // Just f32
+    (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [f32 $(, $parts:tt)*]; {$($impl:tt)*}; ($($extra_params:tt)*)) => {
+        wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts),*]; {
+            $($impl)*
+
+            convert_i32_s: |ty, i32_ty| naga::Handle<naga::Function>,
+            convert_i32_u: |ty, i32_ty| naga::Handle<naga::Function>,
+        }; ($($extra_params)* i32_ty: naga::Handle<naga::Type>,)}
     };
 }
 
 wasm_ty_generator!(struct I32Instance; trait I32Gen; i32; [numeric, integer]);
 wasm_ty_generator!(struct I64Instance; trait I64Gen; i64; [numeric, integer, i64]);
-wasm_ty_generator!(struct F32Instance; trait F32Gen; f32; [numeric, floating]);
+wasm_ty_generator!(struct F32Instance; trait F32Gen; f32; [numeric, floating, f32]);
 wasm_ty_generator!(struct F64Instance; trait F64Gen; f64; [numeric, floating]);
 wasm_ty_generator!(struct V128Instance; trait V128Gen; V128; []);
 wasm_ty_generator!(struct FuncRefInstance; trait FuncRefGen; FuncRef; []);
