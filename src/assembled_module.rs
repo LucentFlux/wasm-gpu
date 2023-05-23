@@ -129,7 +129,7 @@ impl AssembledModule {
 
         Self::appease_drivers(&mut module);
 
-        let capabilities = if tuneables.hardware_supports_f64 {
+        let capabilities = if !tuneables.fp_options.emulate_f64 {
             naga::valid::Capabilities::FLOAT64
         } else {
             naga::valid::Capabilities::empty()

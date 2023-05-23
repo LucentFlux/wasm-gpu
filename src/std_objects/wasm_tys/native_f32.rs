@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::{
     build,
     std_objects::{std_objects_gen, wasm_tys::impl_native_bool_binexp},
+    FloatingPointOptions,
 };
 use naga_ext::{
     declare_function, naga_expr, BlockExt, ExpressionsExt, LocalsExt, ModuleExt, ShaderPart,
@@ -68,11 +69,11 @@ fn scale_down_float(
 ) -> naga::Handle<naga::Expression> {
     naga_expr!(part =>
         let value_u32 = bitcast<u32>(value);
+        let sign = value_u32 & U32(0x80000000);
         let exp = (value_u32 >> U32(23)) & U32(0xFF);
+        let significand = value_u32 & U32(0x007FFFFF);
         if (exp <= U32(scale_amount as u32)) {
             // Manually build subnormal * 2^-x
-            let sign = value_u32 & U32(0x80000000);
-            let significand = value_u32 & U32(0x007FFFFF);
             if ((exp == U32(0)) & (significand == U32(0))) {
                 // If significand and exp are 0, value is 0
                 value
@@ -87,8 +88,15 @@ fn scale_down_float(
                 }
             }
         } else {
+            // Not needed because we multiply by 1/2^n rather than dividing
+            /*if (Bool((exp >= U32(253)) & (exp != U32(255))) {
+                // Manually handle numbers between 2^126 and inf
+                let exp = exp - U32(scale_amount as u32);
+                bitcast<f32>(sign | (exp << U32(23)) | significand)
+            } else {*/
             // Multiply by 2^-x to bring result into non-subnormal range
             value * F32(f32::powi(2.0, -(scale_amount as i32)))
+
         }
     )
 }
@@ -492,19 +500,43 @@ fn subnormal_div(
 
         let mut if_rhs_not_subnormal_or_zero = naga::Block::default();
         {
-            let res_scaled = naga_expr!(module, function_handle, if_rhs_not_subnormal_or_zero => lhs_scaled / rhs);
+            let is_rhs_tiny = naga_expr!(module, function_handle => rhs_exp <= U32(64));
 
-            let res = scale_down_float(
-                &mut (
-                    &mut *module,
-                    function_handle,
-                    &mut if_rhs_not_subnormal_or_zero,
-                ),
-                res_scaled,
-                32,
-            );
+            let mut if_rhs_tiny = naga::Block::default();
+            {
+                let res_scaled =
+                    naga_expr!(module, function_handle, if_rhs_tiny => lhs_scaled / rhs);
 
-            if_rhs_not_subnormal_or_zero.push_store(res_ptr, res_scaled);
+                let res = scale_down_float(
+                    &mut (&mut *module, function_handle, &mut if_rhs_tiny),
+                    res_scaled,
+                    32,
+                );
+
+                if_rhs_tiny.push_store(res_ptr, res);
+            }
+
+            let mut if_rhs_not_tiny = naga::Block::default();
+            {
+                let rhs_scaled = scale_down_float(
+                    &mut (&mut *module, function_handle, &mut if_rhs_not_tiny),
+                    rhs,
+                    32,
+                );
+
+                let res_scaled =
+                    naga_expr!(module, function_handle, if_rhs_not_tiny => lhs_scaled / rhs_scaled);
+
+                let res = scale_down_float(
+                    &mut (&mut *module, function_handle, &mut if_rhs_not_tiny),
+                    res_scaled,
+                    64,
+                );
+
+                if_rhs_not_tiny.push_store(res_ptr, res);
+            }
+
+            if_rhs_not_subnormal_or_zero.push_if(is_rhs_tiny, if_rhs_tiny, if_rhs_not_tiny);
         }
 
         if_not_divide_normally.push_if(
@@ -519,6 +551,55 @@ fn subnormal_div(
         if_divide_normally,
         if_not_divide_normally,
     );
+
+    return naga_expr!(module, function_handle => Load(res_ptr));
+}
+
+fn subnormal_sqrt(
+    module: &mut naga::Module,
+    function_handle: naga::Handle<naga::Function>,
+    ty: naga::Handle<naga::Type>,
+    value: naga::Handle<naga::Expression>,
+) -> naga::Handle<naga::Expression> {
+    // First approx.
+    let res = naga_expr!(module, function_handle => sqrt(value));
+
+    let res_var =
+        module
+            .fn_mut(function_handle)
+            .local_variables
+            .new_local("subnormal_res", ty, None);
+    let res_ptr = module
+        .fn_mut(function_handle)
+        .expressions
+        .append_local(res_var);
+    module.fn_mut(function_handle).body.push_store(res_ptr, res);
+
+    let is_subnormal = naga_expr!(module, function_handle => (res <= F32(9.861e-32)) & ((bitcast<u32>(value) | U32(0x80000000)) != U32(0x80000000)));
+
+    let mut if_subnormal = naga::Block::default();
+    {
+        let value_scaled = scale_up_float(
+            &mut (&mut *module, function_handle, &mut if_subnormal),
+            value,
+            64,
+        );
+
+        let res_scaled = naga_expr!(module, function_handle, if_subnormal => sqrt(value_scaled));
+
+        let res = scale_down_float(
+            &mut (&mut *module, function_handle, &mut if_subnormal),
+            res_scaled,
+            32,
+        );
+
+        if_subnormal.push_store(res_ptr, res);
+    }
+
+    module
+        .fn_mut(function_handle)
+        .body
+        .push_if(is_subnormal, if_subnormal, naga::Block::default());
 
     return naga_expr!(module, function_handle => Load(res_ptr));
 }
@@ -552,13 +633,35 @@ fn subnormal_min(
     {
         // Implement min manually
         let new_res = naga_expr!(module, function_handle, if_subnormal =>
-            // If we flip the sign bit, the min is just the min of the integers of the representations
+            // If we flip the bits in a negative float, and the sign bits, the min is just the min of the integers of the representations
             // (ignoring NaNs, as they are fixed in the min body impl since WebGPU also ignores NaNs)
 
-            let lhs_u32 = bitcast<u32>(lhs) ^ U32(0x80000000);
-            let rhs_u32 = bitcast<u32>(rhs) ^ U32(0x80000000);
+            let lhs_u32 = bitcast<u32>(lhs);
+            let rhs_u32 = bitcast<u32>(rhs);
 
-            bitcast<f32>(min(lhs_u32, rhs_u32) ^ U32(0x80000000))
+            let lhs_xor_mask = (lhs_u32 >> U32(31)) * U32(0x7FFFFFFF);
+            let lhs_u32 = lhs_u32 ^ lhs_xor_mask;
+            let lhs_u32 = lhs_u32 ^ U32(0x80000000);
+            let rhs_xor_mask = (rhs_u32 >> U32(31)) * U32(0x7FFFFFFF);
+            let rhs_u32 = rhs_u32 ^ rhs_xor_mask;
+            let rhs_u32 = rhs_u32 ^ U32(0x80000000);
+
+            let min = min(lhs_u32, rhs_u32);
+
+            let min = min ^ U32(0x80000000);
+            let min_xor_mask = (min >> U32(31)) * U32(0x7FFFFFFF);
+            let min = min ^ min_xor_mask;
+
+            // Account for inf
+            if (lhs_u32 == U32(0x7F800000)) {
+                rhs
+            } else {
+                if (rhs_u32 == U32(0x7F800000)) {
+                    lhs
+                } else {
+                    bitcast<f32>(min)
+                }
+            }
         );
 
         if_subnormal.push_store(res_ptr, new_res);
@@ -604,10 +707,32 @@ fn subnormal_max(
             // If we flip the sign bit, the min is just the min of the integers of the representations
             // (ignoring NaNs, as they are fixed in the min body impl since WebGPU also ignores NaNs)
 
-            let lhs_u32 = bitcast<u32>(lhs) ^ U32(0x80000000);
-            let rhs_u32 = bitcast<u32>(rhs) ^ U32(0x80000000);
+            let lhs_u32 = bitcast<u32>(lhs);
+            let rhs_u32 = bitcast<u32>(rhs);
 
-            bitcast<f32>(max(lhs_u32, rhs_u32) ^ U32(0x80000000))
+            let lhs_xor_mask = (lhs_u32 >> U32(31)) * U32(0x7FFFFFFF);
+            let lhs_u32 = lhs_u32 ^ lhs_xor_mask;
+            let lhs_u32 = lhs_u32 ^ U32(0x80000000);
+            let rhs_xor_mask = (rhs_u32 >> U32(31)) * U32(0x7FFFFFFF);
+            let rhs_u32 = rhs_u32 ^ rhs_xor_mask;
+            let rhs_u32 = rhs_u32 ^ U32(0x80000000);
+
+            let max = max(lhs_u32, rhs_u32);
+
+            let max = max ^ U32(0x80000000);
+            let max_xor_mask = (max >> U32(31)) * U32(0x7FFFFFFF);
+            let max = max ^ max_xor_mask;
+
+            // Account for -inf
+            if (lhs_u32 == U32(0xFF800000)) {
+                rhs
+            } else {
+                if (rhs_u32 == U32(0xFF800000)) {
+                    lhs
+                } else {
+                    bitcast<f32>(max)
+                }
+            }
         );
 
         if_subnormal.push_store(res_ptr, new_res);
@@ -762,7 +887,7 @@ impl F32Gen for NativeF32 {
                     if ((sign == U32(0)) & (significand != U32(0))) {
                         F32(1.0)
                     } else {
-                        F32(0.0)
+                        bitcast<f32>(U32((0.0f32).to_bits()) | sign)
                     }
                 } else {
                     ceil(value)
@@ -794,7 +919,7 @@ impl F32Gen for NativeF32 {
                     if ((sign != U32(0)) & (significand != U32(0))) {
                         F32(-1.0)
                     } else {
-                        F32(0.0)
+                        floor(value)
                     }
                 } else {
                     floor(value)
@@ -847,13 +972,18 @@ impl F32Gen for NativeF32 {
         };
 
         let res = if others.fp_options.emulate_subnormals {
+            let subnormal_sqrt = subnormal_sqrt(module, function_handle, others.ty, value);
             naga_expr!(module, function_handle =>
                 let value_u32 = bitcast<u32>(value);
                 let sign = value_u32 & U32(0x80000000);
                 if (sign != U32(0)) {
-                    F32(f32::NAN)
+                    if (value_u32 == U32(0x80000000)) {
+                        value // sqrt -0.0 is -0.0
+                    } else {
+                        F32(f32::NAN)
+                    }
                 } else {
-                    sqrt(value)
+                    subnormal_sqrt
                 }
             )
         } else {
@@ -879,7 +1009,7 @@ impl F32Gen for NativeF32 {
         };
 
         // Inbuilt `min` doesn't respect NaNs
-        let is_nan = naga_expr!(module, function_handle => (((bitcast<u32>(lhs) & U32(0x7fc00000)) == U32(0x7fc00000)) | ((bitcast<u32>(rhs) & U32(0x7fc00000)) == U32(0x7fc00000))));
+        let is_nan = naga_expr!(module, function_handle => (((bitcast<u32>(lhs) & U32(0x7FFFFFFF)) > U32(0x7f800000)) | ((bitcast<u32>(rhs) & U32(0x7FFFFFFF)) > U32(0x7f800000))));
         let res = naga_expr!(module, function_handle => if (is_nan) {bitcast<f32>(U32(0x7fc00000))} else { min });
 
         module.fn_mut(function_handle).body.push_return(res);
@@ -900,9 +1030,9 @@ impl F32Gen for NativeF32 {
             naga_expr!(module, function_handle => max(lhs, rhs))
         };
 
-        // Inbuilt `min` doesn't respect NaNs
-        let is_nan = naga_expr!(module, function_handle => (((bitcast<u32>(lhs) & U32(0x7fc00000)) == U32(0x7fc00000)) | ((bitcast<u32>(rhs) & U32(0x7fc00000)) == U32(0x7fc00000))));
-        let res = naga_expr!(module, function_handle => if (is_nan) {bitcast<f32>(U32(0x7fc00000))} else { max });
+        // Inbuilt `max` doesn't respect NaNs
+        let is_nan = naga_expr!(module, function_handle => (((bitcast<u32>(lhs) & U32(0x7FFFFFFF)) > U32(0x7f800000)) | ((bitcast<u32>(rhs) & U32(0x7FFFFFFF)) > U32(0x7f800000))));
+        let res = naga_expr!(module, function_handle => if (is_nan) {bitcast<f32>(U32(0x7fC00000))} else { max });
 
         module.fn_mut(function_handle).body.push_return(res);
         Ok(function_handle)
@@ -982,6 +1112,83 @@ impl F32Gen for NativeF32 {
         let (function_handle, lhs, rhs) = declare_function! {
             module => fn f32_div(lhs:others.ty, rhs:others.ty) -> others.ty
         };
+
+        if others.fp_options.emulate_div_beyond_max {
+            let lhs_exp =
+                naga_expr!(module, function_handle => (bitcast<u32>(lhs) >> U32(23)) & U32(0xFF));
+            let rhs_exp =
+                naga_expr!(module, function_handle => (bitcast<u32>(rhs) >> U32(23)) & U32(0xFF));
+            let is_lhs_beyond_max = naga_expr!(module, function_handle => (lhs_exp >= U32(253)) & (lhs_exp != U32(255)));
+            let is_rhs_beyond_max = naga_expr!(module, function_handle => (rhs_exp >= U32(253)) & (rhs_exp != U32(255)));
+            let is_both_beyond_max =
+                naga_expr!(module, function_handle => is_lhs_beyond_max & is_rhs_beyond_max);
+
+            let mut if_both_beyond_max = naga::Block::default();
+            {
+                let lhs_scaled = scale_down_float(
+                    &mut (&mut *module, function_handle, &mut if_both_beyond_max),
+                    lhs,
+                    32,
+                );
+                let rhs_scaled = scale_down_float(
+                    &mut (&mut *module, function_handle, &mut if_both_beyond_max),
+                    rhs,
+                    32,
+                );
+                let res = naga_expr!(module, function_handle, if_both_beyond_max => lhs_scaled / rhs_scaled);
+                if_both_beyond_max.push_return(res);
+            }
+
+            let mut if_lhs_beyond_max = naga::Block::default();
+            {
+                let lhs_scaled = scale_down_float(
+                    &mut (&mut *module, function_handle, &mut if_lhs_beyond_max),
+                    lhs,
+                    32,
+                );
+                let res_scaled =
+                    naga_expr!(module, function_handle, if_lhs_beyond_max => lhs_scaled / rhs);
+                let res = scale_up_float(
+                    &mut (&mut *module, function_handle, &mut if_lhs_beyond_max),
+                    res_scaled,
+                    32,
+                );
+                if_lhs_beyond_max.push_return(res);
+            }
+
+            let mut if_rhs_beyond_max = naga::Block::default();
+            {
+                let rhs_scaled = scale_down_float(
+                    &mut (&mut *module, function_handle, &mut if_rhs_beyond_max),
+                    rhs,
+                    32,
+                );
+                let res_scaled =
+                    naga_expr!(module, function_handle, if_rhs_beyond_max => lhs / rhs_scaled);
+                let res = scale_down_float(
+                    &mut (&mut *module, function_handle, &mut if_rhs_beyond_max),
+                    res_scaled,
+                    32,
+                );
+                if_rhs_beyond_max.push_return(res);
+            }
+
+            module.fn_mut(function_handle).body.push_if(
+                is_both_beyond_max,
+                if_both_beyond_max,
+                naga::Block::default(),
+            );
+            module.fn_mut(function_handle).body.push_if(
+                is_lhs_beyond_max,
+                if_lhs_beyond_max,
+                naga::Block::default(),
+            );
+            module.fn_mut(function_handle).body.push_if(
+                is_rhs_beyond_max,
+                if_rhs_beyond_max,
+                naga::Block::default(),
+            );
+        }
 
         let res = if others.fp_options.emulate_subnormals {
             subnormal_div(module, function_handle, others.ty, lhs, rhs)

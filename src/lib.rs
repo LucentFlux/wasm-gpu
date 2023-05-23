@@ -1,7 +1,6 @@
 #![feature(macro_metavar_expr)]
 #![feature(slice_as_chunks)]
 #![feature(int_roundings)]
-
 #![recursion_limit = "4096"]
 
 pub const WORKGROUP_SIZE: u32 = 256;
@@ -127,9 +126,6 @@ pub use wasm_front::TableIndex;
 
 #[derive(Debug, Copy, Clone)]
 pub struct Tuneables {
-    /// If set to true, the translator will output f64 instructions. If false,
-    /// a polyfill will be used
-    pub hardware_supports_f64: bool,
     /// If this is true, each parallel instance is executed in its own environment
     /// and cannot see the values stored in the memories of its peers. If this is
     /// false, all instances in a set share the same block of memory, and so atomics
@@ -137,19 +133,32 @@ pub struct Tuneables {
     /// proper memory manipulation.
     pub disjoint_memory: bool,
     /// Which extra things to do when performing floating point operations to ensure
-    /// alignment with the specification
+    /// adherance to the specification
     pub fp_options: FloatingPointOptions,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct FloatingPointOptions {
+    /// Most GPUs support very fast 32-bit floating point operations, but only for some subset of 'normal' floats.
+    /// WebAssembly requires SubNormals to be supported for an engine to be specification compliant. Only set this
+    /// to `false` if you are 100% absolutely sure that the GPU that your program is using supports SubNormals.
+    /// Setting to `false` on a GPU without SubNormal support will result in undefined/unspecified behaviour.
     pub emulate_subnormals: bool,
+    /// WebGPU (and Vulkan) only require correct division when the operands are below `2^126`, which is less than the
+    /// maximum 32-bit floating point value within WebAssembly. This flag emulates division when either of the operands
+    /// are above this limit. Only set this to `false` if you are 100% absolutely sure that the GPU that your program
+    /// is using supports division with any (non-subnormal, see `emulate_subnormals`) argument.
+    /// Setting to `false` on a GPU without full-range division support will result in undefined behaviour.
+    pub emulate_div_beyond_max: bool,
+    /// If set to true, the translator will output f64 instructions. If false, emulated floats will be used. Similarly
+    /// to other options, this should only be set to `false` if you are sure that your GPU supports 64 bit floats,
+    /// however incorrect setting of this flag will result in a crash, rather than undefined/unspecified behaviour.
+    pub emulate_f64: bool,
 }
 
 impl Default for Tuneables {
     fn default() -> Self {
         Self {
-            hardware_supports_f64: false,
             disjoint_memory: true,
             fp_options: FloatingPointOptions::default(),
         }
@@ -160,6 +169,8 @@ impl Default for FloatingPointOptions {
     fn default() -> Self {
         Self {
             emulate_subnormals: true,
+            emulate_div_beyond_max: true,
+            emulate_f64: true,
         }
     }
 }
