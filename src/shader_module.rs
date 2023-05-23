@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use elsa::FrozenMap;
+use elsa::sync::FrozenMap;
 use itertools::Itertools;
 use wasm_gpu_funcgen::{get_entry_name, AssembledModule, BINDING_TUPLES};
 use wasm_types::FuncRef;

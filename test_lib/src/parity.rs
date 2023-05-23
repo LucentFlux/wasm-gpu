@@ -6,65 +6,28 @@ use wasmtime::Trap;
 use wgpu_async::wrap_to_async;
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
-pub trait ParityType {
-    type WasmTimeTy: wasmtime::WasmResults + Clone + PartialEq + Debug;
-    type GpuTy: wasm_types::WasmTyVec + Clone + Debug;
-
-    fn from_gpu(val: Self::GpuTy) -> Self::WasmTimeTy;
-    fn are_equal(a: Result<Self::WasmTimeTy, Trap>, b: Result<Self::GpuTy, Trap>) -> bool {
-        a.eq(&b.map(Self::from_gpu))
-    }
+pub trait ParityInputType:
+    wasm_types::WasmTyVec + wasmtime::WasmParams + Clone + PartialEq + Debug
+{
+}
+impl<T: wasm_types::WasmTyVec + wasmtime::WasmParams + Clone + PartialEq + Debug> ParityInputType
+    for T
+{
 }
 
-impl ParityType for () {
-    type WasmTimeTy = ();
-    type GpuTy = ();
-
-    fn from_gpu(_val: Self::GpuTy) -> Self::WasmTimeTy {
-        ()
-    }
+pub trait ParityOutputType:
+    wasm_types::WasmTyVec + wasmtime::WasmResults + Clone + PartialEq + Debug
+{
+}
+impl<T: wasm_types::WasmTyVec + wasmtime::WasmResults + Clone + PartialEq + Debug> ParityOutputType
+    for T
+{
 }
 
-impl ParityType for i32 {
-    type WasmTimeTy = i32;
-    type GpuTy = i32;
-
-    fn from_gpu(val: Self::GpuTy) -> Self::WasmTimeTy {
-        val
-    }
-}
-
-impl ParityType for i64 {
-    type WasmTimeTy = i64;
-    type GpuTy = i64;
-
-    fn from_gpu(val: Self::GpuTy) -> Self::WasmTimeTy {
-        val
-    }
-}
-
-impl ParityType for f32 {
-    type WasmTimeTy = f32;
-    type GpuTy = f32;
-
-    fn from_gpu(val: Self::GpuTy) -> Self::WasmTimeTy {
-        val
-    }
-}
-
-impl ParityType for f64 {
-    type WasmTimeTy = f64;
-    type GpuTy = f64;
-
-    fn from_gpu(val: Self::GpuTy) -> Self::WasmTimeTy {
-        val
-    }
-}
-
-pub fn test_parity<Input: ParityType, Output: ParityType>(
+pub fn test_parity<Input: ParityInputType, Output: ParityOutputType>(
     wasm: &str,
     target_name: &str,
-    input: Input::GpuTy,
+    input: Input,
 ) {
     pollster::block_on(async {
         // Evaluate with wasmtime
@@ -73,10 +36,8 @@ pub fn test_parity<Input: ParityType, Output: ParityType>(
         let mut store = wasmtime::Store::new(&engine, ());
         let instance = wasmtime::Instance::new(&mut store, &module, &[]).unwrap();
         let target = instance.get_func(&mut store, target_name).unwrap();
-        let target = target
-            .typed::<Input::WasmTimeTy, Output::WasmTimeTy>(&store)
-            .unwrap();
-        let truth_result = target.call(&mut store, Input::from_gpu(input.clone()));
+        let target = target.typed::<Input, Output>(&store).unwrap();
+        let truth_result = target.call(&mut store, input.clone());
 
         // Evaluate with wasm_gpu
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -136,7 +97,7 @@ pub fn test_parity<Input: ParityType, Output: ParityType>(
         let target = instances
             .get_func(target_name)
             .unwrap()
-            .try_typed::<Input::GpuTy, Output::GpuTy>()
+            .try_typed::<Input, Output>()
             .unwrap();
 
         let store_source = store_builder
@@ -166,7 +127,7 @@ pub fn test_parity<Input: ParityType, Output: ParityType>(
             let got_result = got_result.map_err(|trap_code| wasmtime::Trap::from(trap_code));
 
             assert!(
-                Output::are_equal(truth_result.clone(), got_result.clone()),
+                truth_result.clone() == got_result.clone(),
                 "expected {:?} but got {:?}",
                 truth_result.clone(),
                 got_result

@@ -591,6 +591,45 @@ fn for_loop_break_to_outside() {
     )
 }
 
+#[test]
+fn for_loop_conditionally_dont_break_to_outside() {
+    test_parity::<(), i32>(
+        r#"
+        (module
+            (func $f (result i32)
+                (local $i i32)
+
+                ;; i = 1
+                i32.const 1
+                local.set $i
+
+                (block $OUTER
+                    (loop $LOOP
+                        ;; i = i + 3
+                        local.get $i
+                        i32.const 3
+                        i32.add
+                        local.set $i
+
+                        ;; i < 7
+                        local.get $i
+                        i32.const 7
+                        i32.lt_s     
+                        br_if $LOOP
+
+                        br $OUTER
+                    )
+                )
+                local.get $i
+            )
+            (export "foi" (func $f))
+        )
+        "#,
+        "foi",
+        (),
+    )
+}
+
 fn read_memory_back(address: i32) {
     test_parity::<i32, i32>(
         r#"

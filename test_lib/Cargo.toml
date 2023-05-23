@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wgpu = { version = "0.15", features = ["naga"] }
+wgpu = { version = "0.16", features = ["naga"] }
 wgpu-async = { path = "../../wgpu-async" }
 wgpu-lazybuffers = { path = "../../wgpu-lazybuffers" }
 wasm-types = { path = "../../wasm-types" }

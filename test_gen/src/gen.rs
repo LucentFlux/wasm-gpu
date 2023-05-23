@@ -22,28 +22,13 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
 
     let fn_name = f.sig.ident.clone();
 
+    let asyncness = f.sig.asyncness;
+
     let mut tests = Vec::new();
     let test_files = glob(path.to_str().expect("failed to make glob"))
         .expect("failed to read glob pattern")
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-
-    println!("cargo:rerun-if-env-changed=FULL_TESTS");
-    let test_all = env::var("FULL_TESTS") == Ok("true".to_owned());
-    let mut to_test = HashSet::new();
-    for entry in &test_files {
-        if let Some(file_name) = entry.file_name().and_then(OsStr::to_str) {
-            let file_name = file_name.to_owned();
-            let entry_name = file_name.split(".").next().unwrap().to_string();
-            let flag_name = format!("TEST_{}", entry_name);
-
-            println!("cargo:rerun-if-env-changed={}", flag_name);
-
-            if test_all || env::var(&flag_name) == Ok("true".to_owned()) {
-                to_test.insert(entry_name);
-            }
-        }
-    }
 
     for entry in test_files {
         let file_name = entry
@@ -53,12 +38,6 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
             .unwrap()
             .to_string();
         let entry_name = file_name.split(".").next().unwrap().to_string();
-
-        if to_test.len() != 0 && !to_test.contains(&entry_name) {
-            continue;
-        }
-
-        println!("cargo:rerun-if-changed={}", entry.display());
 
         let source = std::fs::read_to_string(entry.clone())
             .expect(&format!("could not read file {}", entry.to_str().unwrap()));
@@ -109,16 +88,25 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
                     let test_name = format_ident!("{}", test_name);
                     let test_path_literal = LitStr::new(entry.to_str().unwrap(), f.span());
                     let i = span.offset();
+
+                    let test_attr = if asyncness.is_some() {
+                        quote! { #[tokio::test] }
+                    } else {
+                        quote! { #[test] }
+                    };
+
+                    let test_call = if asyncness.is_some() {
+                        quote! { #fn_name(#test_path_literal, #i).await }
+                    } else {
+                        quote! { #fn_name(#test_path_literal, #i) }
+                    };
+
                     tests.push(quote! {
-                        #[test]
-                        pub fn #test_name() {
-                            #fn_name(#test_path_literal, #i)
+                        #test_attr
+                        pub #asyncness fn #test_name() {
+                            #test_call
                         }
                     });
-
-                    if to_test.len() == 0 {
-                        break;
-                    }
                 }
                 WastDirective::Wat(_)
                 | WastDirective::Register { .. }

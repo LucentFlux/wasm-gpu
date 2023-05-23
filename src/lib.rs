@@ -48,6 +48,7 @@ macro_rules! imports {
 pub use panic_on_any::PanicOnAny;
 
 // Configs
+pub use wasm_gpu_funcgen::FloatingPointOptions;
 pub use wasm_gpu_funcgen::Tuneables;
 pub use wasmparser::WasmFeatures;
 // Module
@@ -70,8 +71,13 @@ pub use typed::*;
 /// The limits required for evaluating wasm on the gpu.
 pub fn downlevel_wasm_defaults() -> wgpu::Limits {
     let limits = wgpu::Limits {
-        max_bindings_per_bind_group: 10,
-        max_storage_buffers_per_shader_stage: 10,
+        max_bindings_per_bind_group: 11,
+        max_storage_buffers_per_shader_stage: 11,
+        max_compute_workgroup_size_x: 256,
+        max_compute_workgroup_size_y: 1,
+        max_compute_workgroup_size_z: 1,
+        max_compute_workgroups_per_dimension: 256,
+        max_compute_invocations_per_workgroup: 1, // Higher is *way* better
         ..wgpu::Limits::downlevel_webgl2_defaults()
     };
 

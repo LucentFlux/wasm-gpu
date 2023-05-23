@@ -1,7 +1,7 @@
-use std::sync::Arc;
-
 use crate::instance::func::UntypedFuncPtr;
+use crate::store_set::StoreSet;
 use crate::DeviceStoreSet;
+use futures::future::join_all;
 use futures::{future::BoxFuture, FutureExt};
 use wasm_gpu_funcgen::{
     u32_to_trap, CONSTANTS_BINDING_INDEX, CONSTANTS_LEN_BYTES, FLAGS_LEN_BYTES,
@@ -126,12 +126,12 @@ impl<'a> Session<'a> {
     }
 
     async fn make_inputs(
-        &self,
+        args: &[Vec<Val>],
         device: &AsyncDevice,
         label: &str,
     ) -> Result<AsyncBuffer, OutOfMemoryError> {
         let mut data = Vec::new();
-        for input_set in &self.args {
+        for input_set in args {
             for input in input_set {
                 data.append(&mut Val::to_bytes(input));
 
@@ -178,14 +178,15 @@ impl<'a> Session<'a> {
         output_length.next_multiple_of(u64::from(IO_INVOCATION_ALIGNMENT_WORDS * 4))
     }
 
-    async fn make_output(
-        &self,
+    async fn make_output<'b>(
+        instances_count: usize,
+        output_tys: impl IntoIterator<Item = &'b ValType>,
         memory_system: &MemorySystem,
         label: &str,
     ) -> Result<UnmappedLazyBuffer, OutOfMemoryError> {
-        let output_length = Self::output_instance_len(self.entry_func.ty().results());
+        let output_length = Self::output_instance_len(output_tys);
         let output_length =
-            self.args.len() * usize::try_from(output_length).expect("that's a big type");
+            instances_count * usize::try_from(output_length).expect("that's a big type");
         let output_length = usize::max(output_length, 128);
 
         memory_system
@@ -201,11 +202,11 @@ impl<'a> Session<'a> {
     }
 
     async fn make_flags(
-        &self,
+        instances_count: usize,
         memory_system: &MemorySystem,
         label: &str,
     ) -> Result<UnmappedLazyBuffer, OutOfMemoryError> {
-        let flags_length = self.args.len()
+        let flags_length = instances_count
             * usize::try_from(FLAGS_LEN_BYTES).expect("that's a very big wasm module");
 
         memory_system
@@ -221,13 +222,10 @@ impl<'a> Session<'a> {
     }
 
     async fn make_stack(
-        &self,
+        stack_length: u64,
         device: &AsyncDevice,
         label: &str,
     ) -> Result<AsyncBuffer, OutOfMemoryError> {
-        let stack_length = u64::from(STACK_LEN_BYTES)
-            * u64::try_from(self.args.len()).expect("that's a too big wasm module");
-
         device
             .create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -239,7 +237,6 @@ impl<'a> Session<'a> {
     }
 
     async fn make_constants(
-        &self,
         device: &AsyncDevice,
         label: &str,
         count: u32,
@@ -268,15 +265,11 @@ impl<'a> Session<'a> {
     async fn extract_output(
         ret_ty: Vec<ValType>,
         len: usize,
-        flags: Arc<UnmappedLazyBuffer>,
-        output: Arc<UnmappedLazyBuffer>,
-        queue: AsyncQueue,
+        flags: UnmappedLazyBuffer,
+        output: UnmappedLazyBuffer,
+        queue: &AsyncQueue,
     ) -> OutputType {
         let mut results = Vec::new();
-
-        let flags = Arc::try_unwrap(flags)
-            .expect("once extraction is to be performed, all other references are done with");
-        let output = Arc::try_unwrap(output).expect("see above");
 
         let flags = flags.map_lazy();
         let output = output.map_lazy();
@@ -349,77 +342,147 @@ impl<'a> Session<'a> {
         memory_system: &MemorySystem,
         queue: &AsyncQueue,
     ) -> Result<BoxFuture<'a, OutputType>, OutOfMemoryError> {
-        let count = self.args.len();
+        let Self {
+            stores,
+            entry_func,
+            args,
+        } = self;
 
-        let input = self
-            .make_inputs(
-                queue.device(),
-                &format!("{}_input_buffer", self.stores.label),
-            )
-            .await?;
-        let output = Arc::new(
-            self.make_output(
-                memory_system,
-                &format!("{}_output_buffer", self.stores.label),
-            )
-            .await?,
-        );
-        let flags = Arc::new(
-            self.make_flags(
-                memory_system,
-                &format!("{}_flags_buffer", self.stores.label),
-            )
-            .await?,
-        );
-        let stack = self
-            .make_stack(
-                queue.device(),
-                &format!("{}_stack_buffer", self.stores.label),
-            )
-            .await?;
-        let constants = Arc::new(
-            self.make_constants(
-                queue.device(),
-                &format!("{}_constants_buffer", self.stores.label),
-                u32::try_from(count).map_err(|source| OutOfMemoryError {
-                    source: Box::new(source),
-                })?,
-            )
-            .await?,
-        );
+        let StoreSet {
+            label,
+            functions: _,
+            elements,
+            datas,
+            immutable_globals,
+            shader_module,
+            owned,
+            tuneables: _,
+        } = stores;
 
-        let bindings = Bindings {
-            data: self.stores.datas.buffer(),
-            element: self.stores.elements.buffer(),
-            immutable_globals: self.stores.immutable_globals.buffer(),
-            mutable_globals: self.stores.owned.mutable_globals.buffer(),
-            memory: self.stores.owned.memories.buffer(),
-            table: self.stores.owned.tables.buffer(),
-            flags: &flags,
-            input: &input,
-            output: &output,
-            stack: &stack,
-            constants: &constants,
-            empty_bindings: elsa::FrozenVec::new(),
-        };
+        let count = args.len();
 
-        let flags = Arc::clone(&flags);
-        let output = Arc::clone(&output);
+        let constants = Self::make_constants(
+            queue.device(),
+            &format!("{}_constants_buffer", label),
+            u32::try_from(count).map_err(|source| OutOfMemoryError {
+                source: Box::new(source),
+            })?,
+        )
+        .await?;
+
         let owned_queue = queue.clone();
-        let ret_ty = self
-            .entry_func
+        let ret_ty: Vec<_> = entry_func
             .ty()
             .results()
             .iter()
             .map(ValType::clone)
             .collect();
+
         // Dispatch and be ready to parse results
-        let future = self
-            .stores
-            .shader_module
-            .run_pipeline_for_fn(queue, self.entry_func.to_func_ref(), bindings, 1, 1, 1)
-            .then(move |_| Self::extract_output(ret_ty, count, flags, output, owned_queue))
-            .boxed();
+        let total_invocation_count =
+            f32::ceil(args.len() as f32 / wasm_gpu_funcgen::WORKGROUP_SIZE as f32) as u32;
+
+        let max_invocations = queue
+            .device()
+            .limits()
+            .max_compute_invocations_per_workgroup;
+        assert!(
+            max_invocations > 0,
+            "device must be able to invoke compute shaders"
+        );
+
+        let mut invocations = Vec::new();
+        for i_invocation in (0..total_invocation_count).step_by(max_invocations as usize) {
+            let dispatch_count = u32::min(total_invocation_count - i_invocation, max_invocations);
+
+            let args_start = i_invocation as usize * wasm_gpu_funcgen::WORKGROUP_SIZE as usize;
+            let args_count = dispatch_count as usize * wasm_gpu_funcgen::WORKGROUP_SIZE as usize;
+            let args = &args[args_start..args_start + args_count];
+
+            let input =
+                Self::make_inputs(args, queue.device(), &format!("{}_input_buffer", label)).await?;
+            let output = Self::make_output(
+                args_count,
+                entry_func.ty().results(),
+                memory_system,
+                &format!("{}_output_buffer", label),
+            )
+            .await?;
+            let flags = Self::make_flags(
+                args_count,
+                memory_system,
+                &format!("{}_flags_buffer", label),
+            )
+            .await?;
+
+            let stack = Self::make_stack(
+                STACK_LEN_BYTES.into(),
+                queue.device(),
+                &format!("{}_stack_buffer", label),
+            )
+            .await?;
+
+            invocations.push((input, flags, output, stack, dispatch_count));
+        }
+
+        let future = (async move {
+            // Since we've gone to the effort of creating state buffers for each invocation, we might as well run all invocations at once.
+            let mut futures = Vec::new();
+            for (input, flags, output, stack, dispatch_count) in invocations {
+                let bindings = Bindings {
+                    data: datas.buffer(),
+                    element: elements.buffer(),
+                    immutable_globals: immutable_globals.buffer(),
+                    mutable_globals: owned.mutable_globals.buffer(),
+                    memory: owned.memories.buffer(),
+                    table: owned.tables.buffer(),
+                    flags: &flags,
+                    input: &input,
+                    output: &output,
+                    stack: &stack,
+                    constants: &constants,
+                    empty_bindings: elsa::FrozenVec::new(),
+                };
+
+                let queue_ref = &owned_queue;
+                let ret_ty = ret_ty.clone();
+                let future = shader_module
+                    .run_pipeline_for_fn(
+                        &owned_queue,
+                        entry_func.to_func_ref(),
+                        bindings,
+                        dispatch_count,
+                        1,
+                        1,
+                    )
+                    .then(move |_| {
+                        Self::extract_output(
+                            ret_ty,
+                            dispatch_count as usize * wasm_gpu_funcgen::WORKGROUP_SIZE as usize,
+                            flags,
+                            output,
+                            queue_ref,
+                        )
+                    });
+
+                futures.push(future.boxed());
+            }
+
+            join_all(futures)
+                .await
+                .into_iter()
+                .fold(Ok(Vec::new()), |lhs, rhs| {
+                    // Join in results, preserving joint error state
+                    lhs.and_then(|mut res| match rhs {
+                        Err(e) => Err(e),
+                        Ok(mut vals) => {
+                            res.append(&mut vals);
+                            Ok(res)
+                        }
+                    })
+                })
+        })
+        .boxed();
 
         return Ok(future);
     }

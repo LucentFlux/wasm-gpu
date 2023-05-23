@@ -1,10 +1,9 @@
 #![feature(iter_array_chunks)]
 
 use itertools::Itertools;
+use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::runtime::Runtime;
 use wasm_gpu::NamedExtern;
 use wasm_gpu::{MappedStoreSetBuilder, ModuleInstanceReferences, Tuneables, WasmFeatures};
 use wasm_types::{Val, V128};
@@ -18,15 +17,14 @@ use wast::{
 use wgpu_async::{wrap_to_async, AsyncQueue};
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
-#[wasm_gpu_test_gen::wast("tests/testsuite/*.wast")]
-fn gen_check(path: &str, test_index: usize) {
-    Runtime::new().unwrap().block_on(check(path, test_index))
+//#[wasm_gpu_test_gen::wast("tests/testsuite/*.wast")]
+//#[wasm_gpu_test_gen::wast("tests/testsuite/i32.wast")]
+#[wasm_gpu_test_gen::wast("tests/testsuite/f32.wast")]
+async fn gen_check(path: &str, test_index: usize) {
+    check(path, test_index).await
 }
 
 pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
-    // Pause because egl doesn't like being spammed - Joe 13/04/2023
-    std::thread::sleep(Duration::from_millis(100));
-
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         dx12_shader_compiler: wgpu::Dx12Compiler::Fxc,
@@ -66,9 +64,27 @@ pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
     return (memory_system, queue);
 }
 
-struct WastState {
+struct WgpuState {
     memory_system: MemorySystem,
     queue: AsyncQueue,
+}
+
+static GPU_STATE: OnceCell<WgpuState> = OnceCell::new();
+fn gpu<'a>() -> &'a WgpuState {
+    GPU_STATE.get_or_init(WgpuState::new)
+}
+
+impl WgpuState {
+    fn new() -> Self {
+        let (memory_system, queue) = pollster::block_on(get_backend());
+        Self {
+            memory_system,
+            queue,
+        }
+    }
+}
+
+struct WastState {
     features: WasmFeatures,
     store_builder: Option<MappedStoreSetBuilder>, // Taken when invoking
     named_modules: HashMap<String, Arc<ModuleInstanceReferences>>,
@@ -80,11 +96,9 @@ const INSTANCE_COUNT: usize = 8;
 
 impl WastState {
     async fn new() -> Self {
-        let (memory_system, queue) = get_backend().await;
-
         Self {
             store_builder: Some(MappedStoreSetBuilder::new(
-                &memory_system,
+                &gpu().memory_system,
                 "testsuite_storeset",
                 Tuneables::default(),
             )),
@@ -111,8 +125,6 @@ impl WastState {
                 function_references: true,
                 memory_control: true,
             },
-            memory_system,
-            queue,
         }
     }
 
@@ -126,7 +138,7 @@ impl WastState {
             .store_builder
             .as_mut()
             .unwrap()
-            .instantiate_module(&self.queue, &module, self.imports.clone())
+            .instantiate_module(&gpu().queue, &module, self.imports.clone())
             .await
             .expect(&format!("could not instantiate module at {:?}", span));
 
@@ -199,11 +211,11 @@ impl WastState {
             .store_builder
             .take()
             .unwrap()
-            .complete(&self.queue)
+            .complete(&gpu().queue)
             .await
             .unwrap();
         let mut instances = completed
-            .build(&self.memory_system, &self.queue, INSTANCE_COUNT)
+            .build(&gpu().memory_system, &gpu().queue, INSTANCE_COUNT)
             .await
             .unwrap();
 
@@ -215,7 +227,7 @@ impl WastState {
             .collect();
         let args: Vec<Vec<Val>> = (0..INSTANCE_COUNT).map(|_| args.clone()).collect();
         let mut res_list: Vec<Result<Vec<Val>, wasmtime_environ::Trap>> = func
-            .call_all(&self.memory_system, &self.queue, &mut instances, args)
+            .call_all(&gpu().memory_system, &gpu().queue, &mut instances, args)
             .await
             .unwrap()
             .await
@@ -228,7 +240,7 @@ impl WastState {
                 .into_iter()
                 .all(|other_res: Result<Vec<Val>, wasmtime_environ::Trap>| {
                     match (&res, &other_res) {
-                        (Ok(v1), Ok(v2)) => v1.eq(v2),
+                        (Ok(v1), Ok(v2)) => v1.into_iter().zip(v2).all(|(a, b)| a.bitwise_eq(b)),
                         (Err(trap1), Err(trap2)) => trap1.eq(trap2),
                         _ => false,
                     }
@@ -239,7 +251,7 @@ impl WastState {
         // Unbuild
         self.store_builder = Some(
             instances
-                .snapshot(&self.memory_system, &self.queue, 0)
+                .snapshot(&gpu().memory_system, &gpu().queue, 0)
                 .await
                 .unwrap(),
         );
@@ -358,7 +370,7 @@ async fn test_assert_malformed_or_invalid(
     let res = state
         .store_builder
         .unwrap()
-        .instantiate_module(&state.queue, &module, state.imports.clone())
+        .instantiate_module(&gpu().queue, &module, state.imports.clone())
         .await;
 
     assert!(
@@ -474,7 +486,7 @@ async fn test_assert_return<'a>(
         if !test_match(result, expected) {
             panic!(
                 "failed assert return: expected {:?} but got {:?}",
-                results, ret
+                expected, result
             )
         }
     }

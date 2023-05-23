@@ -1,4 +1,5 @@
 use wasm_gpu::{imports, PanicOnAny, Tuneables};
+use wasm_gpu_funcgen::FloatingPointOptions;
 use wgpu_async::wrap_to_async;
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
@@ -43,40 +44,116 @@ async fn main() -> anyhow::Result<()> {
     .unwrap();
 
     // wasm setup
-    let wat = r#"
-        (module
-            (func $f (param i32) (result i32)
-                (local i32)
-                (block
-                    (block
-                        (block
-                            ;; x == 0
-                            local.get 0
-                            i32.eqz
-                            br_if 0
+    let wat = r#"(module
+    (func $f (param $x i32) (param $y i32) (param $size i32) (param $max_iterations i32) (result f32)
+        (local $a f32)
+        (local $b f32)
+        (local $x_0 f32)
+        (local $y_0 f32)
+        (local $iterations i32)
 
-                            ;; x == 1
-                            local.get 0
-                            i32.const 1
-                            i32.eq
-                            br_if 1
+        ;; a = 0.0
+        f32.const 0.0
+        local.set $a
+        ;; b = 0.0
+        f32.const 0.0
+        local.set $b
 
-                            ;; else
-                            i32.const 7
-                            local.set 1
-                            br 2
-                        )
-                        i32.const 42
-                        local.set 1
-                        br 1
-                    )
-                    i32.const 99
-                    local.set 1
-                )
-                local.get 1
-            )
-            (export "foi" (func $f))
+        ;; x_0 = (x / size) * 4.0 - 2.0
+        local.get $x
+        f32.convert_i32_s
+        local.get $size
+        f32.convert_i32_s
+        f32.div
+        f32.const 4.0
+        f32.mul
+        f32.const 2.0
+        f32.sub
+        local.set $x_0
+
+        ;; y_0 = (y / size) * 4.0 - 2.0
+        local.get $y
+        f32.convert_i32_s
+        local.get $size
+        f32.convert_i32_s
+        f32.div
+        f32.const 4.0
+        f32.mul
+        f32.const 2.0
+        f32.sub
+        local.set $y_0
+
+        ;; iterations = -1
+        i32.const -1
+        local.set $iterations
+
+        (loop $inner
+            ;; a_new = a * a - b * b + x0
+            local.get $a
+            local.get $a
+            f32.mul
+
+            local.get $b
+            local.get $b
+            f32.mul
+
+            f32.sub
+
+            local.get $x_0
+            f32.add
+
+            ;; b_new = 2.0 * a * b + y0
+            f32.const 2.0
+            local.get $a
+            f32.mul
+            local.get $b
+            f32.mul
+
+            local.get $y_0
+            f32.add
+
+            ;; a = a_new; b = b_new
+            local.set $b
+            local.set $a
+
+            ;; iterations += 1
+            local.get $iterations
+            i32.const 1
+            i32.add
+            local.set $iterations
+
+            ;; loop while iterations < max_iterations && a * a + b * b <= 4.0
+            local.get $iterations
+            local.get $max_iterations
+            i32.lt_s
+
+            local.get $a
+            local.get $a
+            f32.mul
+
+            local.get $b
+            local.get $b
+            f32.mul
+
+            f32.add
+
+            f32.const 4.0
+
+            f32.le
+
+            i32.and
+
+            br_if $inner
         )
+
+        local.get $iterations
+        f32.convert_i32_s
+        local.get $max_iterations
+        f32.convert_i32_s
+        f32.div
+    )
+    (export "foi" (func $f))
+)
         "#;
     let module = wasm_gpu::Module::new(
         &wasmparser::WasmFeatures::default(),
@@ -84,8 +161,18 @@ async fn main() -> anyhow::Result<()> {
         "main_module".to_owned(),
     )?;
 
-    let mut store_builder =
-        wasm_gpu::MappedStoreSetBuilder::new(&memory_system, "main_store", Tuneables::default());
+    let mut store_builder = wasm_gpu::MappedStoreSetBuilder::new(
+        &memory_system,
+        "main_store",
+        Tuneables {
+            disjoint_memory: true,
+            fp_options: FloatingPointOptions {
+                emulate_subnormals: true,
+                emulate_div_beyond_max: true,
+                emulate_f64: true,
+            },
+        },
+    );
 
     let instances = store_builder
         .instantiate_module(&queue, &module, imports! {})
@@ -93,7 +180,7 @@ async fn main() -> anyhow::Result<()> {
         .expect("could not instantiate all modules");
 
     let function = instances.get_func("foi").unwrap();
-    let function = function.try_typed::<i32, i32>().unwrap();
+    let function = function.try_typed::<(i32, i32, i32, i32), f32>().unwrap();
 
     let store_source = match store_builder.complete(&queue).await {
         Ok(v) => v,
@@ -110,7 +197,12 @@ async fn main() -> anyhow::Result<()> {
     println!("=====================HLSL SHADER END=====================");
 
     let results = function
-        .call_all(&memory_system, &queue, &mut stores, vec![0])
+        .call_all(
+            &memory_system,
+            &queue,
+            &mut stores,
+            vec![(100, 100, 200, 200)],
+        )
         .await
         .unwrap()
         .await
