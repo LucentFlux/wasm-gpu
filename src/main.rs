@@ -19,6 +19,7 @@ async fn main() -> anyhow::Result<()> {
         })
         .await
         .unwrap();
+    println!("using adapter: {:?}", adapter.get_info());
     let (device, queue) = adapter
         .request_device(
             &wgpu::DeviceDescriptor {
