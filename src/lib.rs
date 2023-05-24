@@ -282,36 +282,37 @@ impl<E: std::error::Error> Debug for ExternalValidationError<E> {
         let mut output_struct = f.debug_struct("failed to validate naga module");
         let output = output_struct.field("naga_error", &display_error_recursively(&self.source));
 
-        if cfg!(not(feature = "big_errors")) {
-            return output.finish_non_exhaustive();
-        }
-
-        // Add on lots'a debugging info
-        let mut validation_pass_broken = None;
-        for flag in [
-            naga::valid::ValidationFlags::BINDINGS,
-            naga::valid::ValidationFlags::BLOCKS,
-            naga::valid::ValidationFlags::CONSTANTS,
-            naga::valid::ValidationFlags::CONTROL_FLOW_UNIFORMITY,
-            naga::valid::ValidationFlags::EXPRESSIONS,
-            naga::valid::ValidationFlags::STRUCT_LAYOUTS,
-        ] {
-            let flags = flag;
-            if naga::valid::Validator::new(flags, self.capabilities)
-                .validate(&self.module)
-                .is_err()
-            {
-                validation_pass_broken = Some(flag);
-                break;
+        #[cfg(not(all(feature = "big_errors", debug_assertions)))]
+        return output.finish_non_exhaustive();
+        #[cfg(all(feature = "big_errors", debug_assertions))]
+        {
+            // Add on lots'a debugging info
+            let mut validation_pass_broken = None;
+            for flag in [
+                naga::valid::ValidationFlags::BINDINGS,
+                naga::valid::ValidationFlags::BLOCKS,
+                naga::valid::ValidationFlags::CONSTANTS,
+                naga::valid::ValidationFlags::CONTROL_FLOW_UNIFORMITY,
+                naga::valid::ValidationFlags::EXPRESSIONS,
+                naga::valid::ValidationFlags::STRUCT_LAYOUTS,
+            ] {
+                let flags = flag;
+                if naga::valid::Validator::new(flags, self.capabilities)
+                    .validate(&self.module)
+                    .is_err()
+                {
+                    validation_pass_broken = Some(flag);
+                    break;
+                }
             }
-        }
 
-        return output
-            .field("module", &self.module)
-            .field("functions", &self.functions)
-            .field("tuneables", &self.tuneables)
-            .field("validation_pass", &validation_pass_broken)
-            .finish();
+            return output
+                .field("module", &self.module)
+                .field("functions", &self.functions)
+                .field("tuneables", &self.tuneables)
+                .field("validation_pass", &validation_pass_broken)
+                .finish();
+        }
     }
 }
 
