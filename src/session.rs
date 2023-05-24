@@ -359,17 +359,6 @@ impl<'a> Session<'a> {
             tuneables: _,
         } = stores;
 
-        let count = args.len();
-
-        let constants = Self::make_constants(
-            queue.device(),
-            &format!("{}_constants_buffer", label),
-            u32::try_from(count).map_err(|source| OutOfMemoryError {
-                source: Box::new(source),
-            })?,
-        )
-        .await?;
-
         let owned_queue = queue.clone();
         let ret_ty: Vec<_> = entry_func
             .ty()
@@ -397,7 +386,10 @@ impl<'a> Session<'a> {
 
             let args_start = i_invocation as usize * wasm_gpu_funcgen::WORKGROUP_SIZE as usize;
             let args_count = dispatch_count as usize * wasm_gpu_funcgen::WORKGROUP_SIZE as usize;
-            let args = &args[args_start..args_start + args_count];
+            let args_end = args_start + args_count;
+            let args_end = usize::min(args_end, args.len());
+            let args_count = args_end - args_start;
+            let args = &args[args_start..args_end];
 
             let input =
                 Self::make_inputs(args, queue.device(), &format!("{}_input_buffer", label)).await?;
@@ -414,6 +406,14 @@ impl<'a> Session<'a> {
                 &format!("{}_flags_buffer", label),
             )
             .await?;
+            let constants = Self::make_constants(
+                queue.device(),
+                &format!("{}_constants_buffer", label),
+                u32::try_from(args_count).map_err(|source| OutOfMemoryError {
+                    source: Box::new(source),
+                })?,
+            )
+            .await?;
 
             let stack = Self::make_stack(
                 STACK_LEN_BYTES.into(),
@@ -422,13 +422,22 @@ impl<'a> Session<'a> {
             )
             .await?;
 
-            invocations.push((input, flags, output, stack, dispatch_count));
+            invocations.push((
+                input,
+                flags,
+                constants,
+                output,
+                stack,
+                dispatch_count,
+                args_count,
+            ));
         }
 
         let future = (async move {
             // Since we've gone to the effort of creating state buffers for each invocation, we might as well run all invocations at once.
             let mut futures = Vec::new();
-            for (input, flags, output, stack, dispatch_count) in invocations {
+            for (input, flags, constants, output, stack, dispatch_count, args_count) in invocations
+            {
                 let bindings = Bindings {
                     data: datas.buffer(),
                     element: elements.buffer(),
@@ -456,13 +465,7 @@ impl<'a> Session<'a> {
                         1,
                     )
                     .then(move |_| {
-                        Self::extract_output(
-                            ret_ty,
-                            dispatch_count as usize * wasm_gpu_funcgen::WORKGROUP_SIZE as usize,
-                            flags,
-                            output,
-                            queue_ref,
-                        )
+                        Self::extract_output(ret_ty, args_count, flags, output, queue_ref)
                     });
 
                 futures.push(future.boxed());
