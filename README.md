@@ -13,6 +13,7 @@
 - [ ] Implement i64 polyfill
 - [ ] Implement f64 polyfill
 - [ ] Implement recursion using brain function
+- [ ] Adjustable stack size
 - [x] Add support for suspending/recreating wasm modules
 - [ ] Fully integrate testsuite
 - [ ] Add fuzzer
