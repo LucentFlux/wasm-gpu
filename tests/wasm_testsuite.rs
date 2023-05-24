@@ -18,9 +18,9 @@ use wgpu_async::{wrap_to_async, AsyncQueue};
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
 //#[wasm_gpu_test_gen::wast("tests/testsuite/*.wast")]
-//#[wasm_gpu_test_gen::wast("tests/testsuite/i32.wast")]
-//#[wasm_gpu_test_gen::wast("tests/testsuite/f32.wast")]
-#[wasm_gpu_test_gen::wast("tests/testsuite/float_exprs.wast")]
+#[wasm_gpu_test_gen::wast("tests/testsuite/i32.wast")]
+#[wasm_gpu_test_gen::wast("tests/testsuite/f32.wast")]
+//#[wasm_gpu_test_gen::wast("tests/testsuite/float_exprs.wast")]
 async fn gen_check(path: &str, test_index: usize) {
     check(path, test_index).await
 }
