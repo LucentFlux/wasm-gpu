@@ -12,3 +12,4 @@ wasm-gpu = { path = ".." }
 wasmtime = { version = "7", features = ["wat"] }
 
 pollster = "0.3"
+once_cell = "1.17"

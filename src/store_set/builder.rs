@@ -451,7 +451,7 @@ mod tests {
 
     #[inline(never)]
     async fn test_data_buffer_populated_correctly(size: usize) {
-        let (memory_system, queue) = get_backend().await;
+        let (memory_system, queue) = get_backend();
 
         let (expected_data, data_str) = gen_test_memory_string(size, 84637322u32);
         let mut stores_builder =

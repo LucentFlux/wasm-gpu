@@ -1,20 +1,20 @@
 //! A collection of hand-written programs and tests that they evaluate to the expected result.
 //! Uses Wasmtime as a reference implementation
-use wasm_gpu_test_lib::test_parity;
+use wasm_gpu_test_lib::{test_parity, test_parity_set};
 
 macro_rules! do_test {
     ($test_name:ident( $($input:expr),* $(,)? )) => {
         paste::paste! {
-            #[test]
-            fn [< $test_name $(_ $input)* >]() {
-                $test_name($($input),*)
+            #[tokio::test]
+            async fn [< $test_name $(_ $input)* >]() {
+                $test_name($($input),*).await
             }
         }
     };
 }
 
-#[test]
-fn bare_return_i32() {
+#[tokio::test]
+async fn bare_return_i32() {
     test_parity::<(), i32>(
         r#"
         (module
@@ -27,10 +27,11 @@ fn bare_return_i32() {
         "life_universe_and_everything",
         (),
     )
+    .await
 }
 
-#[test]
-fn bare_return_i64() {
+#[tokio::test]
+async fn bare_return_i64() {
     // 2 ^ 63 - 2
     test_parity::<(), i64>(
         r#"
@@ -44,10 +45,11 @@ fn bare_return_i64() {
         "some_big_number",
         (),
     )
+    .await
 }
 
-#[test]
-fn bare_return_f32() {
+#[tokio::test]
+async fn bare_return_f32() {
     test_parity::<(), f32>(
         r#"
         (module
@@ -60,10 +62,11 @@ fn bare_return_f32() {
         "some_floaty_number",
         (),
     )
+    .await
 }
 
-#[test]
-fn bare_return_f64() {
+#[tokio::test]
+async fn bare_return_f64() {
     test_parity::<(), f64>(
         r#"
         (module
@@ -76,10 +79,11 @@ fn bare_return_f64() {
         "some_floatier_number",
         (),
     )
+    .await
 }
 
-#[test]
-fn pass_return_i32() {
+#[tokio::test]
+async fn pass_return_i32() {
     test_parity::<i32, i32>(
         r#"
         (module
@@ -92,10 +96,11 @@ fn pass_return_i32() {
         "pass_i32",
         -1084,
     )
+    .await
 }
 
-#[test]
-fn pass_return_i64() {
+#[tokio::test]
+async fn pass_return_i64() {
     test_parity::<i64, i64>(
         r#"
         (module
@@ -108,10 +113,11 @@ fn pass_return_i64() {
         "pass_i64",
         -9223372036854675804,
     )
+    .await
 }
 
-#[test]
-fn pass_return_f32() {
+#[tokio::test]
+async fn pass_return_f32() {
     test_parity::<f32, f32>(
         r#"
         (module
@@ -124,10 +130,11 @@ fn pass_return_f32() {
         "pass_f32",
         1.0000001f32,
     )
+    .await
 }
 
-#[test]
-fn pass_return_f64() {
+#[tokio::test]
+async fn pass_return_f64() {
     test_parity::<f64, f64>(
         r#"
         (module
@@ -140,10 +147,11 @@ fn pass_return_f64() {
         "pass_f64",
         1.000000000001f64,
     )
+    .await
 }
 
-#[test]
-fn pass_through_local_return_i32() {
+#[tokio::test]
+async fn pass_through_local_return_i32() {
     test_parity::<i32, i32>(
         r#"
         (module
@@ -158,10 +166,11 @@ fn pass_through_local_return_i32() {
         "pass_through_local_i32",
         -10840,
     )
+    .await
 }
 
-#[test]
-fn pass_through_local_return_i64() {
+#[tokio::test]
+async fn pass_through_local_return_i64() {
     test_parity::<i64, i64>(
         r#"
         (module
@@ -176,10 +185,11 @@ fn pass_through_local_return_i64() {
         "pass_through_local_i64",
         -9223372036854675604,
     )
+    .await
 }
 
-#[test]
-fn pass_through_local_return_f32() {
+#[tokio::test]
+async fn pass_through_local_return_f32() {
     test_parity::<f32, f32>(
         r#"
         (module
@@ -194,10 +204,11 @@ fn pass_through_local_return_f32() {
         "pass_through_local_f32",
         1.0001001f32,
     )
+    .await
 }
 
-#[test]
-fn pass_return_through_local_f64() {
+#[tokio::test]
+async fn pass_return_through_local_f64() {
     test_parity::<f64, f64>(
         r#"
         (module
@@ -212,11 +223,11 @@ fn pass_return_through_local_f64() {
         "pass_through_local_f64",
         1.000001000001f64,
     )
+    .await
 }
 
-/*
-#[test]
-fn unreachable_traps() {
+#[tokio::test]
+async fn unreachable_traps() {
     test_parity::<(), ()>(
         r#"
         (module
@@ -229,10 +240,11 @@ fn unreachable_traps() {
         "trap_unnreachable",
         (),
     )
-}*/
+    .await
+}
 
-#[test]
-fn get_i32_via_local() {
+#[tokio::test]
+async fn get_i32_via_local() {
     test_parity::<(), i32>(
         r#"
         (module
@@ -250,10 +262,11 @@ fn get_i32_via_local() {
         "foi",
         (),
     )
+    .await
 }
 
-#[test]
-fn add_5_i32() {
+#[tokio::test]
+async fn add_5_i32() {
     test_parity::<i32, i32>(
         r#"
         (module
@@ -268,10 +281,11 @@ fn add_5_i32() {
         "foi",
         8192,
     )
+    .await
 }
 
-#[test]
-fn add_5_i64() {
+#[tokio::test]
+async fn add_5_i64() {
     test_parity::<i64, i64>(
         r#"
         (module
@@ -286,10 +300,11 @@ fn add_5_i64() {
         "foi",
         -9223372036854675604,
     )
+    .await
 }
 
-#[test]
-fn add_5_f32() {
+#[tokio::test]
+async fn add_5_f32() {
     test_parity::<f32, f32>(
         r#"
         (module
@@ -304,10 +319,11 @@ fn add_5_f32() {
         "foi",
         1.0001001f32,
     )
+    .await
 }
 
-/*#[test]
-fn add_5_f64() {
+/*#[tokio::test]
+async fn add_5_f64() {
     test_parity::<f64, f64>(
         r#"
         (module
@@ -324,8 +340,8 @@ fn add_5_f64() {
     )
 }*/
 
-#[test]
-fn excess_return() {
+#[tokio::test]
+async fn excess_return() {
     test_parity::<f32, f32>(
         r#"
         (module
@@ -339,10 +355,11 @@ fn excess_return() {
         "foi",
         1.00021001f32,
     )
+    .await
 }
 
-#[test]
-fn early_return() {
+#[tokio::test]
+async fn early_return() {
     test_parity::<f32, f32>(
         r#"
         (module
@@ -358,10 +375,11 @@ fn early_return() {
         "foi",
         1.00031001f32,
     )
+    .await
 }
 
-#[test]
-fn bare_break() {
+#[tokio::test]
+async fn bare_break() {
     test_parity::<(), f32>(
         r#"
         (module
@@ -375,9 +393,10 @@ fn bare_break() {
         "foi",
         (),
     )
+    .await
 }
 
-fn br_if_taken(input: i32) {
+async fn br_if_taken(input: i32) {
     test_parity::<i32, f32>(
         r#"
         (module
@@ -394,13 +413,14 @@ fn br_if_taken(input: i32) {
         "foi",
         input,
     )
+    .await
 }
 
 do_test!(br_if_taken(0));
 do_test!(br_if_taken(1));
 do_test!(br_if_taken(2));
 
-fn nested_blocks_br_if(input: i32) {
+async fn nested_blocks_br_if(input: i32) {
     test_parity::<i32, i32>(
         r#"
         (module
@@ -440,6 +460,7 @@ fn nested_blocks_br_if(input: i32) {
         "foi",
         input,
     )
+    .await
 }
 
 do_test!(nested_blocks_br_if(0));
@@ -447,7 +468,7 @@ do_test!(nested_blocks_br_if(1));
 do_test!(nested_blocks_br_if(2));
 do_test!(nested_blocks_br_if(3));
 
-fn nested_if(input: i32) {
+async fn nested_if(input: i32) {
     test_parity::<i32, f32>(
         r#"
         (module
@@ -489,6 +510,7 @@ fn nested_if(input: i32) {
         "foi",
         input,
     )
+    .await
 }
 
 do_test!(nested_if(0));
@@ -496,7 +518,7 @@ do_test!(nested_if(1));
 do_test!(nested_if(2));
 do_test!(nested_if(3));
 
-fn nested_if_then(input: i32) {
+async fn nested_if_then(input: i32) {
     test_parity::<i32, f32>(
         r#"
         (module
@@ -530,6 +552,7 @@ fn nested_if_then(input: i32) {
         "foi",
         input,
     )
+    .await
 }
 
 do_test!(nested_if_then(0));
@@ -537,8 +560,8 @@ do_test!(nested_if_then(1));
 do_test!(nested_if_then(2));
 do_test!(nested_if_then(3));
 
-#[test]
-fn for_loop_break_from_inside() {
+#[tokio::test]
+async fn for_loop_break_from_inside() {
     test_parity::<(), i32>(
         r#"
         (module
@@ -561,10 +584,11 @@ fn for_loop_break_from_inside() {
         "foi",
         (),
     )
+    .await
 }
 
-#[test]
-fn for_loop_break_to_outside() {
+#[tokio::test]
+async fn for_loop_break_to_outside() {
     test_parity::<(), i32>(
         r#"
         (module
@@ -589,10 +613,11 @@ fn for_loop_break_to_outside() {
         "foi",
         (),
     )
+    .await
 }
 
-#[test]
-fn for_loop_conditionally_dont_break_to_outside() {
+#[tokio::test]
+async fn for_loop_conditionally_dont_break_to_outside() {
     test_parity::<(), i32>(
         r#"
         (module
@@ -628,9 +653,10 @@ fn for_loop_conditionally_dont_break_to_outside() {
         "foi",
         (),
     )
+    .await
 }
 
-fn read_memory_back(address: i32) {
+async fn read_memory_back(address: i32) {
     test_parity::<i32, i32>(
         r#"
             (module
@@ -645,6 +671,7 @@ fn read_memory_back(address: i32) {
         "foi",
         address,
     )
+    .await
 }
 
 do_test!(read_memory_back(0));
@@ -654,7 +681,7 @@ do_test!(read_memory_back(3));*/
 do_test!(read_memory_back(4));
 do_test!(read_memory_back(8));
 
-fn write_then_read_memory_back(address: i32) {
+async fn write_then_read_memory_back(address: i32) {
     test_parity::<i32, i32>(
         r#"
             (module
@@ -672,6 +699,7 @@ fn write_then_read_memory_back(address: i32) {
         "foi",
         address,
     )
+    .await
 }
 
 do_test!(write_then_read_memory_back(0));
@@ -681,8 +709,8 @@ do_test!(write_then_read_memory_back(3));*/
 do_test!(write_then_read_memory_back(4));
 do_test!(write_then_read_memory_back(8));
 
-#[test]
-fn trap_out_of_loop() {
+#[tokio::test]
+async fn trap_out_of_loop() {
     test_parity::<(), ()>(
         r#"
         (module
@@ -704,10 +732,11 @@ fn trap_out_of_loop() {
         "foi",
         (),
     )
+    .await
 }
 
-#[test]
-fn double_trap_only_gives_first() {
+#[tokio::test]
+async fn double_trap_only_gives_first() {
     test_parity::<(), ()>(
         r#"
         (module
@@ -723,4 +752,118 @@ fn double_trap_only_gives_first() {
         "foi",
         (),
     )
+    .await
+}
+
+async fn mandelbrot(locs: Vec<(f32, f32)>) {
+    test_parity_set::<_, f32>(
+        r#"
+            (module
+                (func $f (param $x_0 f32) (param $y_0 f32) (param $max_iterations i32) (result f32)
+                    (local $a f32)
+                    (local $b f32)
+                    (local $iterations i32)
+
+                    ;; a = 0.0
+                    f32.const 0.0
+                    local.set $a
+                    ;; b = 0.0
+                    f32.const 0.0
+                    local.set $b
+
+                    ;; iterations = -1
+                    i32.const -1
+                    local.set $iterations
+
+                    (loop $inner
+                        ;; a_new = a * a - b * b + x0
+                        local.get $a
+                        local.get $a
+                        f32.mul
+
+                        local.get $b
+                        local.get $b
+                        f32.mul
+
+                        f32.sub
+
+                        local.get $x_0
+                        f32.add
+
+                        ;; b_new = 2.0 * a * b + y0
+                        f32.const 2.0
+                        local.get $a
+                        f32.mul
+                        local.get $b
+                        f32.mul
+
+                        local.get $y_0
+                        f32.add
+
+                        ;; a = a_new; b = b_new
+                        local.set $b
+                        local.set $a
+
+                        ;; iterations += 1
+                        local.get $iterations
+                        i32.const 1
+                        i32.add
+                        local.set $iterations
+
+                        ;; loop while iterations < max_iterations && a * a + b * b <= 4.0
+                        local.get $iterations
+                        local.get $max_iterations
+                        i32.lt_s
+
+                        local.get $a
+                        local.get $a
+                        f32.mul
+
+                        local.get $b
+                        local.get $b
+                        f32.mul
+
+                        f32.add
+
+                        f32.const 4.0
+
+                        f32.le
+
+                        i32.and
+
+                        br_if $inner
+                    )
+
+                    local.get $iterations
+                    f32.convert_i32_s
+                    local.get $max_iterations
+                    f32.convert_i32_s
+                    f32.div
+                )
+                (export "foi" (func $f))
+            )
+            "#,
+        "foi",
+        locs.into_iter().map(|(x, y)| (x, y, 1024)).collect(),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn mandelbrot_grid() {
+    const SIZE: i32 = 1024;
+
+    let locs = (-SIZE..SIZE)
+        .flat_map(|x| {
+            let x = x as f32 / SIZE as f32;
+            let x = x / 2.0;
+            (-SIZE..SIZE).map(move |y| {
+                let y = y as f32 / SIZE as f32;
+                let y = y / 2.0;
+
+                (x, y)
+            })
+        })
+        .collect();
+    mandelbrot(locs).await
 }

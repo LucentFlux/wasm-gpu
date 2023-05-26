@@ -2,15 +2,13 @@
 
 use std::time::Duration;
 
+use once_cell::sync::OnceCell;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use wgpu_async::async_queue::AsyncQueue;
 use wgpu_lazybuffers::{BufferRingConfig, MemorySystem};
 
-pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
-    // Pause because egl doesn't like being spammed - Joe 13/04/2023
-    std::thread::sleep(Duration::from_millis(100));
-
+async fn new_backend() -> (MemorySystem, AsyncQueue) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         dx12_shader_compiler: wgpu::Dx12Compiler::Fxc,
@@ -47,6 +45,30 @@ pub async fn get_backend() -> (MemorySystem, AsyncQueue) {
     let memory_system = MemorySystem::new(&device, conf).unwrap();
 
     return (memory_system, queue);
+}
+
+struct WgpuState {
+    memory_system: MemorySystem,
+    queue: AsyncQueue,
+}
+
+static GPU_STATE: OnceCell<WgpuState> = OnceCell::new();
+fn gpu<'a>() -> &'a WgpuState {
+    GPU_STATE.get_or_init(WgpuState::new)
+}
+
+impl WgpuState {
+    fn new() -> Self {
+        let (memory_system, queue) = pollster::block_on(new_backend());
+        Self {
+            memory_system,
+            queue,
+        }
+    }
+}
+
+pub fn get_backend<'a>() -> (&'a MemorySystem, &'a AsyncQueue) {
+    (&gpu().memory_system, &gpu().queue)
 }
 
 #[macro_export]
