@@ -3,7 +3,6 @@ use std::sync::Arc;
 use crate::{
     build,
     std_objects::{std_objects_gen, wasm_tys::impl_native_bool_binexp},
-    FloatingPointOptions,
 };
 use naga_ext::{
     declare_function, naga_expr, BlockExt, ExpressionsExt, LocalsExt, ModuleExt, ShaderPart,
@@ -74,10 +73,10 @@ fn scale_down_float(
         let significand = value_u32 & U32(0x007FFFFF);
         if (exp <= U32(scale_amount as u32)) {
             // Manually build subnormal * 2^-x
-            if ((exp == U32(0)) & (significand == U32(0))) {
+            //if ((exp == U32(0)) & (significand == U32(0))) {
                 // If significand and exp are 0, value is 0
-                value
-            } else {
+            //    value
+            //} else {
                 // Shift significand into denormalised position, with first set bit to be brought in
                 let to_shift = U32(scale_amount as u32 + 1) - exp;
                 if (to_shift >= U32(32)) {
@@ -86,7 +85,7 @@ fn scale_down_float(
                     let norm_sgnf = (significand | U32(0x00800000)) >> to_shift;
                     bitcast<f32>(sign | norm_sgnf)
                 }
-            }
+            //}
         } else {
             // Not needed because we multiply by 1/2^n rather than dividing
             /*if (Bool((exp >= U32(253)) & (exp != U32(255))) {
@@ -328,12 +327,12 @@ fn subnormal_mult(
     let mut if_short_circuit = naga::Block::default();
     {
         let res = naga_expr!(module, function_handle, if_short_circuit => if (is_nan_or_inf) {
-            // Subnormal * value != 0.0 * value, so we need to make sub-normals something other than 0.0
-            let lhs_sgnf = lhs_u32 & U32(0x007FFFFF);
-            let rhs_sgnf = rhs_u32 & U32(0x007FFFFF);
-            let lhs = if (lhs_sgnf != U32(0)) {bitcast<f32>(lhs_u32 | U32(0x10000000))} else {lhs};
-            let rhs = if (rhs_sgnf != U32(0)) {bitcast<f32>(rhs_u32 | U32(0x10000000))} else {rhs};
-            lhs * rhs
+            if (is_zero) {
+                lhs * rhs
+            } else {
+                // Subnormal * value != 0.0 * value, so we need to make sub-normals something other than 0.0
+                bitcast<f32>(lhs_u32 | U32(0x10000000)) * bitcast<f32>(rhs_u32 | U32(0x10000000))
+            }
         } else {
             bitcast<f32>((lhs_u32 ^ rhs_u32) & U32(0x80000000))
         });
@@ -342,84 +341,67 @@ fn subnormal_mult(
 
     let mut if_not_short_circuit = naga::Block::default();
     {
-        // Manual multiplication impl
-        let res = naga_expr!(module, function_handle, if_not_short_circuit =>
-            let lhs_sgnf = lhs_u32 & U32(0x007FFFFF);
-            let rhs_sgnf = rhs_u32 & U32(0x007FFFFF);
-
-            // Used when normalising
-            let lhs_shift = countLeadingZeros(lhs_sgnf) - U32(8);
-            let rhs_shift = countLeadingZeros(rhs_sgnf) - U32(8);
-
-            // Caluclate fp with exponent set to 127 (* 2^0)
-            let lhs_shifted = if (lhs_exp == U32(0)) {
-                let lhs_sgnf = (lhs_sgnf << lhs_shift) & U32(0x007FFFFF);
-                let lhs_sign = lhs_u32 & U32(0x80000000);
-                lhs_sign | lhs_sgnf
-            } else {
-                // Mask out exponent
-                lhs_u32 & U32(0x807FFFFF)
-            };
-            let lhs_shifted = lhs_shifted | U32(0x3F800000);
-
-            let rhs_shifted = if (rhs_exp == U32(0)) {
-                let rhs_sgnf = (rhs_sgnf << rhs_shift) & U32(0x007FFFFF);
-                let rhs_sign = rhs_u32 & U32(0x80000000);
-                rhs_sign | rhs_sgnf
-            } else {
-                // Mask out exponent
-                rhs_u32 & U32(0x807FFFFF)
-            };
-            let rhs_shifted = rhs_shifted | U32(0x3F800000);
-
-            // Multiply, getting a result between -4.0 and 4.0
-            let res_shifted = bitcast<f32>(lhs_shifted) * bitcast<f32>(rhs_shifted);
-            let res_shifted = bitcast<u32>(res_shifted);
-
-            let res_shifted_exp = (res_shifted & U32(0x7F800000)) >> U32(23);
-
-            // Add back in exponents
-            let lhs_exp_change = if (lhs_exp == U32(0)) {
-                lhs_shift
-            } else {
-                U32(1)
-            };
-            let rhs_exp_change = if (rhs_exp == U32(0)) {
-                rhs_shift
-            } else {
-                U32(1)
-            };
-
-            let exp_pve = lhs_exp + rhs_exp + res_shifted_exp;
-            let exp_nve = lhs_exp_change + rhs_exp_change + U32(127 + 125);
-            let res_u32 = if (exp_pve <= exp_nve) {
-                let exp_rev = exp_nve - exp_pve;
-                if (exp_rev >= U32(32)) {
-                    // Result is zero
-                    (lhs_u32 ^ rhs_u32) & U32(0x80000000)
-                } else {
-                    // Result is subnormal
-                    let res_sign = res_shifted & U32(0x80000000);
-                    let res_sgnf = (res_shifted & U32(0x007FFFFF)) | U32(0x00800000);
-                    let res_sgnf = res_sgnf >> (exp_rev + U32(1));
-
-                    res_sign | res_sgnf
-                }
-            } else {
-                let res_exp = exp_pve - exp_nve;
-                if (res_exp >= U32(255)) {
-                    // Result is inf
-                    let res_sign = res_shifted & U32(0x80000000);
-                    res_sign | U32(0x7F800000)
-                } else {
-                    // Result is normal
-                    let res_shifted = res_shifted & U32(0x807FFFFF);
-                    res_shifted | (res_exp << U32(23))
-                }
-            };
-            bitcast<f32>(res_u32)
+        let can_just_mult = naga_expr!(module, function_handle, if_not_short_circuit =>
+            (lhs_exp != U32(0)) & (rhs_exp != U32(0)) & ((lhs_exp + rhs_exp) > U32(127))
         );
-        if_not_short_circuit.push_store(res_ptr, res);
+
+        let mut if_just_mult = naga::Block::default();
+        {
+            let res = naga_expr!(module, function_handle, if_just_mult => lhs * rhs);
+            if_just_mult.push_store(res_ptr, res);
+        }
+
+        let mut if_not_just_mult = naga::Block::default();
+        {
+            let is_lhs_smaller = naga_expr!(module, function_handle, if_not_short_circuit =>
+                lhs_exp <= rhs_exp
+            );
+
+            let mut if_lhs_smaller = naga::Block::default();
+            {
+                // Scale lhs up since it won't go to inf
+                let lhs_scaled = scale_up_float(
+                    &mut (&mut *module, function_handle, &mut if_lhs_smaller),
+                    lhs,
+                    32,
+                );
+
+                let scaled_new_res =
+                    naga_expr!(module, function_handle, if_lhs_smaller => lhs_scaled * rhs);
+
+                // Scale back down, possibly into subnormal range
+                let new_res = scale_down_float(
+                    &mut (&mut *module, function_handle, &mut if_lhs_smaller),
+                    scaled_new_res,
+                    32,
+                );
+
+                if_lhs_smaller.push_store(res_ptr, new_res);
+            }
+
+            let mut if_rhs_smaller = naga::Block::default();
+            {
+                // Scale rhs up since it won't go to inf
+                let rhs_scaled = scale_up_float(
+                    &mut (&mut *module, function_handle, &mut if_rhs_smaller),
+                    rhs,
+                    32,
+                );
+                let scaled_new_res =
+                    naga_expr!(module, function_handle, if_rhs_smaller => lhs * rhs_scaled);
+
+                // Scale back down, possibly into subnormal range
+                let new_res = scale_down_float(
+                    &mut (&mut *module, function_handle, &mut if_rhs_smaller),
+                    scaled_new_res,
+                    32,
+                );
+
+                if_rhs_smaller.push_store(res_ptr, new_res);
+            }
+            if_not_just_mult.push_if(is_lhs_smaller, if_lhs_smaller, if_rhs_smaller);
+        }
+        if_not_short_circuit.push_if(can_just_mult, if_just_mult, if_not_just_mult);
     }
 
     module.fn_mut(function_handle).body.push_if(
@@ -575,7 +557,7 @@ fn subnormal_sqrt(
         .append_local(res_var);
     module.fn_mut(function_handle).body.push_store(res_ptr, res);
 
-    let is_subnormal = naga_expr!(module, function_handle => (res <= F32(9.861e-32)) & ((bitcast<u32>(value) | U32(0x80000000)) != U32(0x80000000)));
+    let is_subnormal = naga_expr!(module, function_handle => (res == F32(0.0)) & ((bitcast<u32>(value) | U32(0x80000000)) != U32(0x80000000)));
 
     let mut if_subnormal = naga::Block::default();
     {
