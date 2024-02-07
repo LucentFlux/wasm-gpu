@@ -12,6 +12,8 @@ categories = ["compilers", "hardware-support", "wasm", "virtualization"]
 include = ["/Cargo.toml", "/LICENSE", "/README.md", "/src/**"]
 
 [dependencies]
+wasm-gpu-transpiler.workspace = true
+
 thiserror.workspace = true
 anyhow.workspace = true
 env_logger.workspace = true
@@ -38,11 +40,11 @@ wasmparser.workspace = true
 wasmtime-environ.workspace = true
 
 [dev-dependencies]
-wasm-gpu-test-gen.workspace = true
-wasm-gpu-test-lib.workspace = true
+test-gen.workspace = true
+test-lib.workspace = true
 rand.workspace = true
 
 [features]
-default = ["big_errors", "opt"] # , "opt"
-big_errors = ["wasm-gpu-funcgen/big_errors"]
-opt = ["wasm-gpu-funcgen/opt"]
+default = ["opt"]
+big-errors = ["wasm-gpu-transpiler/big-errors"]
+opt = ["wasm-gpu-transpiler/opt"]

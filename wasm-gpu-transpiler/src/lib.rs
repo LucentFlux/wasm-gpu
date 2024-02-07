@@ -282,9 +282,9 @@ impl<E: std::error::Error> Debug for ExternalValidationError<E> {
         let mut output_struct = f.debug_struct("failed to validate naga module");
         let output = output_struct.field("naga_error", &display_error_recursively(&self.source));
 
-        #[cfg(not(all(feature = "big_errors", debug_assertions)))]
+        #[cfg(not(all(feature = "big-errors", debug_assertions)))]
         return output.finish_non_exhaustive();
-        #[cfg(all(feature = "big_errors", debug_assertions))]
+        #[cfg(all(feature = "big-errors", debug_assertions))]
         {
             // Add on lots'a debugging info
             let mut validation_pass_broken = None;

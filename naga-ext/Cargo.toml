@@ -2,7 +2,8 @@
 name = "naga-ext"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
-naga = "0.12"
-cps = "0.2"
+naga.workspace = true
+cps.workspace = true

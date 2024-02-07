@@ -1,15 +1,14 @@
 [package]
-name = "wasm-gpu-test-lib"
+name = "test-lib"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
-wgpu = { version = "0.16", features = ["naga"] }
-wgpu-async = { path = "../../wgpu-async" }
-wgpu-lazybuffers = { path = "../../wgpu-lazybuffers" }
-wasm-types = { path = "../../wasm-types" }
-wasm-gpu = { path = ".." }
-wasmtime = { version = "7", features = ["wat"] }
+wgpu.workspace = true
+wgpu-async.workspace = true
+wasm-gpu.workspace = true
+wasmtime.workspace = true
 
-pollster = "0.3"
-once_cell = "1.17"
+pollster.workspace = true
+once_cell.workspace = true
