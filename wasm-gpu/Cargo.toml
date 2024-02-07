@@ -1,0 +1,48 @@
+[package]
+name = "wasm-gpu"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Runs WASM on the GPU, seamlessly"
+homepage = "https://github.com/LucentFlux/wasm-gpu"
+repository = "https://github.com/LucentFlux/wasm-gpu"
+readme = "README.md"
+keywords = ["wasm", "webassembly", "gpu"]
+categories = ["compilers", "hardware-support", "wasm", "virtualization"]
+include = ["/Cargo.toml", "/LICENSE", "/README.md", "/src/**"]
+
+[dependencies]
+thiserror.workspace = true
+anyhow.workspace = true
+env_logger.workspace = true
+cps.workspace = true
+itertools.workspace = true
+async-trait.workspace = true
+elsa.workspace = true
+futures.workspace = true
+paste.workspace = true
+fenwick.workspace = true
+ouroboros.workspace = true
+perfect-derive.workspace = true
+tokio.workspace = true
+naga.workspace = true
+once_cell.workspace = true
+pollster.workspace = true
+
+wgpu.workspace = true
+wgpu-async.workspace = true
+
+wat.workspace = true
+wast.workspace = true
+wasmparser.workspace = true
+wasmtime-environ.workspace = true
+
+[dev-dependencies]
+wasm-gpu-test-gen.workspace = true
+wasm-gpu-test-lib.workspace = true
+rand.workspace = true
+
+[features]
+default = ["big_errors", "opt"] # , "opt"
+big_errors = ["wasm-gpu-funcgen/big_errors"]
+opt = ["wasm-gpu-funcgen/opt"]

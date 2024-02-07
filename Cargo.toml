@@ -1,28 +1,23 @@
-[package]
-name = "wasm-gpu"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
-description = "Runs WASM on the GPU, seamlessly"
-homepage = "https://github.com/LucentFlux/wasm-gpu"
-repository = "https://github.com/LucentFlux/wasm-gpu"
-readme = "README.md"
-keywords = ["wasm", "webassembly", "gpu"]
-categories = ["compilers", "hardware-support", "wasm", "virtualization"]
-include = ["/Cargo.toml", "/LICENSE", "/README.md", "/src/**"]
+[workspace]
+resolver = "2"
 
-[dependencies]
-wgpu = { version = "0.16", features = ["naga"] }
-wgpu-async = { path = "../wgpu-async" }
-wgpu-lazybuffers = { path = "../wgpu-lazybuffers" }
-wgpu-lazybuffers-operations = { path = "../wgpu-lazybuffers-operations" }
-wgpu-lazybuffers-interleaving = { path = "../wgpu-lazybuffers-interleaving" }
-wgpu-lazybuffers-macros = { path = "../wgpu-lazybuffers-macros" }
-wasm-opcodes = { path = "../wasm-opcodes" }
-wasm-types = { path = "../wasm-types" }
-wasm-gpu-funcgen = { path = "../wasm-gpu-funcgen" }
-lf-gfx = { path = "../lf-gfx" }
+members = [
+    "naga-ext",
+    "naga-ext-macros",
 
+    "wasm-gpu",
+    "wasm-gpu-transpiler",
+
+    "wasm-gpu-test-gen",
+    "wasm-gpu-test-lib",
+]
+
+[workspace.dependencies]
+wasm-gpu-transpiler = { path = "../wasm-gpu-transpiler" }
+wasm-gpu-test-gen = { path = "../test-gen" }
+wasm-gpu-test-lib = { path = "../test-lib" }
+
+rand = "0.8"
 thiserror = "1.0"
 anyhow = "1.0"
 env_logger = "0.10"
@@ -40,17 +35,11 @@ naga = { version = "0.12", features = ["clone"] }
 once_cell = "1.17"
 pollster = "0.3"
 
-wat = { workspace = true }
-wast = { workspace = true }
-wasmparser = { workspace = true }
-wasmtime-environ = { workspace = true }
+wgpu = { version = "0.16", features = ["naga"] }
+wgpu-async = "^0.18.1"
 
-[dev-dependencies]
-wasm-gpu-test-gen = { path = "test_gen" }
-wasm-gpu-test-lib = { path = "test_lib" }
-rand = "0.8"
-
-[features]
-default = ["big_errors", "opt"] # , "opt"
-big_errors = ["wasm-gpu-funcgen/big_errors"]
-opt = ["wasm-gpu-funcgen/opt"]
+wat = "1.0"
+wast = "57"
+wasmtime-environ = "7"
+wasmparser = "^0.115.1"
+wasm-opcodes = "^0.115.1"
