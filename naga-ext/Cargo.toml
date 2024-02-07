@@ -1,0 +1,8 @@
+[package]
+name = "naga-ext"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+naga = "0.12"
+cps = "0.2"
