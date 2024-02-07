@@ -77,83 +77,80 @@ impl FunctionsExt for naga::Arena<naga::Function> {
 }
 
 pub trait ConstantsExt: self::sealed::ConstantsSealed {
-    fn append_anonymous(&mut self, v: naga::ConstantInner) -> naga::Handle<naga::Constant>;
-
-    fn append_i32(&mut self, v: i32) -> naga::Handle<naga::Constant>;
-    fn append_i64(&mut self, v: i64) -> naga::Handle<naga::Constant>;
-    fn append_u32(&mut self, v: u32) -> naga::Handle<naga::Constant>;
-    fn append_u64(&mut self, v: u64) -> naga::Handle<naga::Constant>;
-    fn append_f32(&mut self, v: f32) -> naga::Handle<naga::Constant>;
-    fn append_f64(&mut self, v: f64) -> naga::Handle<naga::Constant>;
-
-    fn append_bool(&mut self, v: bool) -> naga::Handle<naga::Constant>;
+    fn append_anonymous(
+        &mut self,
+        ty: naga::Handle<naga::Type>,
+        init: naga::Handle<naga::Expression>,
+    ) -> naga::Handle<naga::Constant>;
 }
 
 impl ConstantsExt for naga::Arena<naga::Constant> {
-    fn append_anonymous(&mut self, inner: naga::ConstantInner) -> naga::Handle<naga::Constant> {
+    fn append_anonymous(
+        &mut self,
+        ty: naga::Handle<naga::Type>,
+        init: naga::Handle<naga::Expression>,
+    ) -> naga::Handle<naga::Constant> {
         self.append(
             naga::Constant {
                 name: None,
-                specialization: None,
-                inner,
+                ty,
+                r#override: naga::Override::None,
+                init,
+            },
+            naga::Span::UNDEFINED,
+        )
+    }
+}
+
+pub trait TypesExt: self::sealed::TypesSealed {
+    fn insert_anonymous(&mut self, ty: naga::TypeInner) -> naga::Handle<naga::Type>;
+
+    fn insert_scalar(&mut self, scalar: naga::Scalar) -> naga::Handle<naga::Type>;
+
+    fn insert_i32(&mut self) -> naga::Handle<naga::Type>;
+    fn insert_i64(&mut self) -> naga::Handle<naga::Type>;
+    fn insert_u32(&mut self) -> naga::Handle<naga::Type>;
+    fn insert_f32(&mut self) -> naga::Handle<naga::Type>;
+    fn insert_f64(&mut self) -> naga::Handle<naga::Type>;
+
+    fn insert_bool(&mut self) -> naga::Handle<naga::Type>;
+}
+
+impl TypesExt for naga::UniqueArena<naga::Type> {
+    fn insert_anonymous(&mut self, ty: naga::TypeInner) -> naga::Handle<naga::Type> {
+        self.insert(
+            naga::Type {
+                name: None,
+                inner: ty,
             },
             naga::Span::UNDEFINED,
         )
     }
 
-    fn append_u32(&mut self, v: u32) -> naga::Handle<naga::Constant> {
-        self.append_anonymous(naga::ConstantInner::Scalar {
-            width: 4,
-            value: naga::ScalarValue::Uint(v as u64),
-        })
+    fn insert_scalar(&mut self, scalar: naga::Scalar) -> naga::Handle<naga::Type> {
+        self.insert_anonymous(naga::TypeInner::Scalar(scalar))
     }
 
-    fn append_u64(&mut self, v: u64) -> naga::Handle<naga::Constant> {
-        self.append_anonymous(naga::ConstantInner::Scalar {
-            width: 8,
-            value: naga::ScalarValue::Uint(v),
-        })
+    fn insert_i32(&mut self) -> naga::Handle<naga::Type> {
+        self.insert_scalar(naga::Scalar::I32)
+    }
+    fn insert_i64(&mut self) -> naga::Handle<naga::Type> {
+        self.insert_scalar(naga::Scalar::I64)
+    }
+    fn insert_u32(&mut self) -> naga::Handle<naga::Type> {
+        self.insert_scalar(naga::Scalar::U32)
+    }
+    fn insert_f32(&mut self) -> naga::Handle<naga::Type> {
+        self.insert_scalar(naga::Scalar::F32)
+    }
+    fn insert_f64(&mut self) -> naga::Handle<naga::Type> {
+        self.insert_scalar(naga::Scalar::F64)
     }
 
-    fn append_f32(&mut self, v: f32) -> naga::Handle<naga::Constant> {
-        self.append_anonymous(naga::ConstantInner::Scalar {
-            width: 4,
-            value: naga::ScalarValue::Float(v as f64),
-        })
-    }
-
-    fn append_f64(&mut self, v: f64) -> naga::Handle<naga::Constant> {
-        self.append_anonymous(naga::ConstantInner::Scalar {
-            width: 8,
-            value: naga::ScalarValue::Float(v),
-        })
-    }
-
-    fn append_i32(&mut self, v: i32) -> naga::Handle<naga::Constant> {
-        self.append_anonymous(naga::ConstantInner::Scalar {
-            width: 4,
-            value: naga::ScalarValue::Sint(v as i64),
-        })
-    }
-
-    fn append_i64(&mut self, v: i64) -> naga::Handle<naga::Constant> {
-        self.append_anonymous(naga::ConstantInner::Scalar {
-            width: 8,
-            value: naga::ScalarValue::Sint(v),
-        })
-    }
-
-    fn append_bool(&mut self, v: bool) -> naga::Handle<naga::Constant> {
-        self.append_anonymous(naga::ConstantInner::Scalar {
-            width: 1,
-            value: naga::ScalarValue::Bool(v),
-        })
+    fn insert_bool(&mut self) -> naga::Handle<naga::Type> {
+        self.insert_scalar(naga::Scalar::BOOL)
     }
 }
-
-pub trait TypesExt: self::sealed::TypesSealed {}
-
-impl TypesExt for naga::UniqueArena<naga::Type> {}
 
 pub trait FunctionExt: self::sealed::FunctionSealed {}
 
@@ -165,7 +162,7 @@ pub trait LocalsExt: self::sealed::LocalsSealed {
         &mut self,
         name: impl Into<String>,
         ty: naga::Handle<naga::Type>,
-        init: Option<naga::Handle<naga::Constant>>,
+        init: Option<naga::Handle<naga::Expression>>,
     ) -> naga::Handle<naga::LocalVariable>;
 }
 impl LocalsExt for naga::Arena<naga::LocalVariable> {
@@ -173,7 +170,7 @@ impl LocalsExt for naga::Arena<naga::LocalVariable> {
         &mut self,
         name: impl Into<String>,
         ty: naga::Handle<naga::Type>,
-        init: Option<naga::Handle<naga::Constant>>,
+        init: Option<naga::Handle<naga::Expression>>,
     ) -> naga::Handle<naga::LocalVariable> {
         self.append(
             naga::LocalVariable {
@@ -210,6 +207,14 @@ pub trait ExpressionsExt: self::sealed::ExpressionsSealed {
         &mut self,
         pointer: naga::Handle<naga::Expression>,
     ) -> naga::Handle<naga::Expression>;
+    fn append_literal(&mut self, literal: naga::Literal) -> naga::Handle<naga::Expression>;
+
+    fn append_u32(&mut self, value: u32) -> naga::Handle<naga::Expression>;
+    fn append_i32(&mut self, value: i32) -> naga::Handle<naga::Expression>;
+    fn append_i64(&mut self, value: i64) -> naga::Handle<naga::Expression>;
+    fn append_f32(&mut self, value: f32) -> naga::Handle<naga::Expression>;
+    fn append_f64(&mut self, value: f64) -> naga::Handle<naga::Expression>;
+    fn append_bool(&mut self, value: bool) -> naga::Handle<naga::Expression>;
 }
 impl ExpressionsExt for naga::Arena<naga::Expression> {
     fn append_global(
@@ -257,6 +262,28 @@ impl ExpressionsExt for naga::Arena<naga::Expression> {
         pointer: naga::Handle<naga::Expression>,
     ) -> naga::Handle<naga::Expression> {
         self.append(naga::Expression::Load { pointer }, naga::Span::UNDEFINED)
+    }
+
+    fn append_literal(&mut self, literal: naga::Literal) -> naga::Handle<naga::Expression> {
+        self.append(naga::Expression::Literal(literal), naga::Span::UNDEFINED)
+    }
+    fn append_u32(&mut self, value: u32) -> naga::Handle<naga::Expression> {
+        self.append_literal(naga::Literal::U32(value))
+    }
+    fn append_i32(&mut self, value: i32) -> naga::Handle<naga::Expression> {
+        self.append_literal(naga::Literal::I32(value))
+    }
+    fn append_i64(&mut self, value: i64) -> naga::Handle<naga::Expression> {
+        self.append_literal(naga::Literal::I64(value))
+    }
+    fn append_f32(&mut self, value: f32) -> naga::Handle<naga::Expression> {
+        self.append_literal(naga::Literal::F32(value))
+    }
+    fn append_f64(&mut self, value: f64) -> naga::Handle<naga::Expression> {
+        self.append_literal(naga::Literal::F64(value))
+    }
+    fn append_bool(&mut self, value: bool) -> naga::Handle<naga::Expression> {
+        self.append_literal(naga::Literal::Bool(value))
     }
 }
 
@@ -380,8 +407,14 @@ macro_rules! declare_function {
 
         let function = $module.functions.get_mut(function_handle.clone());
 
+        let mut i = 0;
         (function_handle, $(
-            function.expressions.append(naga::Expression::FunctionArgument(${ignore(arg_name)} ${index()}), naga::Span::UNDEFINED),
+            function.expressions.append(naga::Expression::FunctionArgument({
+                let _ = stringify!{$arg_name};
+                let v = i;
+                i += 1;
+                v
+            }), naga::Span::UNDEFINED),
         )*)
     }};
 }
@@ -629,7 +662,12 @@ macro_rules! naga_expr {
 
     (@inner $constants:expr, $expressions:expr, $block:expr => !$($value:tt)*) => {{
         let value = naga_expr!(@inner $constants, $expressions, $block => $($value)*);
-        let handle = $expressions.append(naga::Expression::Unary { op: naga::UnaryOperator::Not, expr: value }, naga::Span::UNDEFINED);
+        let handle = $expressions.append(naga::Expression::Unary { op: naga::UnaryOperator::LogicalNot, expr: value }, naga::Span::UNDEFINED);
+        naga_ext::naga_expr!(@emit $block => handle)
+    }};
+    (@inner $constants:expr, $expressions:expr, $block:expr => ~$($value:tt)*) => {{
+        let value = naga_expr!(@inner $constants, $expressions, $block => $($value)*);
+        let handle = $expressions.append(naga::Expression::Unary { op: naga::UnaryOperator::BitwiseNot, expr: value }, naga::Span::UNDEFINED);
         naga_ext::naga_expr!(@emit $block => handle)
     }};
     (@inner $constants:expr, $expressions:expr, $block:expr => -$($value:tt)*) => {{
@@ -674,10 +712,6 @@ macro_rules! naga_expr {
     }};
     (@inner $constants:expr, $expressions:expr, $block:expr => I64($term:expr) $($others:tt)*) => {{
         let const_handle = naga_ext::ConstantsExt::append_i64($constants, $term);
-        naga_expr!(@inner $constants, $expressions, $block => Constant(const_handle) $($others)*)
-    }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => U64($term:expr) $($others:tt)*) => {{
-        let const_handle = naga_ext::ConstantsExt::append_u64($constants, $term);
         naga_expr!(@inner $constants, $expressions, $block => Constant(const_handle) $($others)*)
     }};
     (@inner $constants:expr, $expressions:expr, $block:expr => F64($term:expr) $($others:tt)*) => {{

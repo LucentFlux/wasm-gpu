@@ -4,7 +4,7 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use wasm_types::FuncRef;
+use crate::typed::FuncRef;
 use wasmparser::{FuncType, ValType};
 
 use wasm_opcodes::OperatorByProposal;
@@ -63,11 +63,10 @@ pub struct FunctionModuleData {
 }
 
 /// All data for each function in the module, without imports
-#[derive(Debug, Clone)]
-pub struct FuncData {
+pub struct FuncData<'a> {
     pub ty: FuncType,
     pub locals: Vec<(u32, ValType)>,
-    pub operators: Vec<OperatorByProposal>,
+    pub operators: Vec<OperatorByProposal<'a>>,
     pub module_data: Arc<FunctionModuleData>,
 }
 
@@ -95,19 +94,17 @@ impl FuncAccessible {
 }
 
 /// All data for each function in the module, including all module objects that the function can access
-#[derive(Debug, Clone)]
-pub struct FuncUnit {
-    pub data: FuncData,
+pub struct FuncUnit<'a> {
+    pub data: FuncData<'a>,
     /// Pointers into the instantiated module set of all accessible objects
     pub accessible: Arc<FuncAccessible>,
 }
 
-#[derive(Debug, Clone)]
-pub struct FuncsInstance {
-    pub wasm_functions: Vec<FuncUnit>,
+pub struct FuncsInstance<'a> {
+    pub wasm_functions: Vec<FuncUnit<'a>>,
 }
 
-impl FuncsInstance {
+impl<'a> FuncsInstance<'a> {
     pub fn all_funcrefs(&self) -> Vec<FuncRef> {
         self.wasm_functions
             .iter()
@@ -121,7 +118,7 @@ impl FuncsInstance {
             .collect()
     }
 
-    pub fn all_items<'a>(&'a self) -> Vec<(FuncRef, &'a FuncUnit)> {
+    pub fn all_items<'b>(&'b self) -> Vec<(FuncRef, &'b FuncUnit)> {
         self.wasm_functions
             .iter()
             .enumerate()

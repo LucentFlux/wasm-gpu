@@ -18,9 +18,11 @@ elsa.workspace = true
 paste.workspace = true
 perfect-derive.workspace = true
 ouroboros.workspace = true
+nonmax.workspace = true
 
 wasmparser.workspace = true
 wasmtime-environ.workspace = true
+wast.workspace = true
 
 [features]
 default = ["opt"]

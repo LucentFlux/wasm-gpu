@@ -1,14 +1,14 @@
 use std::{iter::Peekable, sync::atomic::AtomicUsize};
 
 use itertools::Itertools;
-use naga_ext::{naga_expr, BlockExt, ConstantsExt, ExpressionsExt, LocalsExt, ShaderPart};
-use wasm_opcodes::{ControlFlowOperator, OperatorByProposal};
+use naga_ext::{naga_expr, BlockExt, ExpressionsExt, LocalsExt, ShaderPart};
+use wasm_opcodes::{proposals::ControlFlowOperator, OperatorByProposal};
 use wasmparser::ValType;
 use wasmtime_environ::Trap;
 
 use crate::{
-    build, std_objects::StdObjects, BuildError, ExceededComponent, FuncAccessible,
-    FunctionModuleData, MEMORY_STRIDE_WORDS, TOTAL_INVOCATIONS_CONSTANT_INDEX,
+    build, std_objects::StdObjects, typed::Val, BuildError, ExceededComponent, FuncAccessible,
+    FunctionModuleData, MEMORY_STRIDE_WORDS,
 };
 
 use super::{
@@ -88,7 +88,7 @@ impl BlockLabel {
                 local_variables,
                 expressions,
                 std_objects.naga_bool.ty,
-                Some(std_objects.naga_bool.const_false),
+                Some(expressions.append_constant(std_objects.naga_bool.const_false)),
             ),
         }
     }
@@ -151,7 +151,7 @@ impl<'a> BodyData<'a> {
         let trap_check_counter = local_variables.new_local(
             "trap_check_counter",
             std_objects.word,
-            Some(constants.append_u32(0)),
+            Some(expressions.append_u32(0)),
         );
         let trap_check_counter = expressions.append_local(trap_check_counter);
 
@@ -424,7 +424,9 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
     /// Webassembly allows breaks/returns/jumps mid-block, while naga doesn't. This is a sink method used
     /// after an unconditional branch when we need to discard everything left in a function. It eats up to,
     /// but not including, the next *balanced* end instruction
-    fn eat_to_end(instructions: &mut Peekable<impl Iterator<Item = OperatorByProposal>>) {
+    fn eat_to_end<'a: 'c, 'c>(
+        instructions: &mut Peekable<impl Iterator<Item = &'c OperatorByProposal<'a>>>,
+    ) {
         let mut depth = 0;
         while let Some(instruction) = instructions.peek() {
             match instruction {
@@ -517,10 +519,10 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         }
     }
 
-    fn do_block(
+    fn do_block<'a: 'c, 'c>(
         &mut self,
         blockty: wasmparser::BlockType,
-        instructions: &mut Peekable<impl Iterator<Item = OperatorByProposal>>,
+        instructions: &mut Peekable<impl Iterator<Item = &'c OperatorByProposal<'a>>>,
     ) -> build::Result<ControlFlowState> {
         let block_type = BlockType::from_parsed(blockty, &self.body_data.module_data.types);
 
@@ -559,10 +561,10 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         Ok(exit_state)
     }
 
-    fn do_if(
+    fn do_if<'a: 'c, 'c>(
         &mut self,
         blockty: wasmparser::BlockType,
-        instructions: &mut Peekable<impl Iterator<Item = OperatorByProposal>>,
+        instructions: &mut Peekable<impl Iterator<Item = &'c OperatorByProposal<'a>>>,
     ) -> build::Result<ControlFlowState> {
         let value = self.pop();
         let wasm_false = self.body_data.wasm_false_expression;
@@ -643,10 +645,10 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         ))
     }
 
-    fn do_loop(
+    fn do_loop<'a: 'c, 'c>(
         &mut self,
         blockty: wasmparser::BlockType,
-        instructions: &mut Peekable<impl Iterator<Item = OperatorByProposal>>,
+        instructions: &mut Peekable<impl Iterator<Item = &'c OperatorByProposal<'a>>>,
     ) -> build::Result<ControlFlowState> {
         let trap_state = self.body_data.std_objects.trap_state;
         let trap_state = naga_expr!(self => Global(trap_state));
@@ -717,9 +719,9 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
     }
 
     /// Populates a block using the callbacks provided
-    pub(crate) fn populate(
+    pub(crate) fn populate<'a: 'c, 'c>(
         mut self,
-        instructions: &mut Peekable<impl Iterator<Item = OperatorByProposal>>,
+        instructions: &mut Peekable<impl Iterator<Item = &'c OperatorByProposal<'a>>>,
         // What to do when we're branching with relative distance 0
         on_r0_branching: impl Fn(&mut ActiveBlock, &mut naga::Block),
         // What to do when we're branching with relative distance >0
@@ -735,16 +737,13 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                 ControlFlowOperator::Else => {
                     break EndInstruction::Else;
                 }
-                ControlFlowOperator::Br { relative_depth } => self.do_br(relative_depth),
-                ControlFlowOperator::BrIf { relative_depth } => self.do_br_if(relative_depth),
-                ControlFlowOperator::Block { blockty } => self.do_block(blockty, instructions)?,
-                ControlFlowOperator::If { blockty } => self.do_if(blockty, instructions)?,
-                ControlFlowOperator::Loop { blockty } => self.do_loop(blockty, instructions)?,
+                ControlFlowOperator::Br { relative_depth } => self.do_br(*relative_depth),
+                ControlFlowOperator::BrIf { relative_depth } => self.do_br_if(*relative_depth),
+                ControlFlowOperator::Block { blockty } => self.do_block(*blockty, instructions)?,
+                ControlFlowOperator::If { blockty } => self.do_if(*blockty, instructions)?,
+                ControlFlowOperator::Loop { blockty } => self.do_loop(*blockty, instructions)?,
                 ControlFlowOperator::Return => self.do_return(),
-                ControlFlowOperator::BrTable {
-                    targets,
-                    default_target,
-                } => unimplemented!(),
+                ControlFlowOperator::BrTable { targets } => unimplemented!(),
                 ControlFlowOperator::Call { function_index } => unimplemented!(),
                 ControlFlowOperator::CallIndirect {
                     type_index,
@@ -848,17 +847,17 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
     }
 
     /// Populates a non-looping (straight) block
-    pub(crate) fn populate_straight(
+    pub(crate) fn populate_straight<'a: 'c, 'c>(
         self,
-        instructions: &mut Peekable<impl Iterator<Item = OperatorByProposal>>,
+        instructions: &mut Peekable<impl Iterator<Item = &'c OperatorByProposal<'a>>>,
     ) -> build::Result<(Self, EndInstruction)> {
         self.populate(instructions, |_, _| {}, |_, _| {})
     }
 
     /// Populates a looping block
-    pub(crate) fn populate_looping(
+    pub(crate) fn populate_looping<'a: 'c, 'c>(
         self,
-        instructions: &mut Peekable<impl Iterator<Item = OperatorByProposal>>,
+        instructions: &mut Peekable<impl Iterator<Item = &'c OperatorByProposal<'a>>>,
     ) -> build::Result<(Self, EndInstruction)> {
         self.populate(
             instructions,
@@ -906,15 +905,15 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
     }
 
     /// Fills instructions until some control flow instruction
-    fn eat_basic_block(
+    fn eat_basic_block<'a: 'c, 'c>(
         &mut self,
-        instructions: &mut impl Iterator<Item = OperatorByProposal>,
-    ) -> build::Result<ControlFlowOperator> {
+        instructions: &mut impl Iterator<Item = &'c OperatorByProposal<'a>>,
+    ) -> build::Result<&'c ControlFlowOperator> {
         let mut last_op = None;
         while let Some(operation) = instructions.next() {
             match operation {
                 OperatorByProposal::ControlFlow(found_last_op) => {
-                    last_op = Some(found_last_op.clone());
+                    last_op = Some(found_last_op);
                     break;
                 }
                 OperatorByProposal::MVP(mvp_op) => mvp::eat_mvp_operator(self, mvp_op)?,
@@ -932,7 +931,8 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                 | OperatorByProposal::BulkMemory(_)
                 | OperatorByProposal::RelaxedSIMD(_)
                 | OperatorByProposal::FunctionReferences(_)
-                | OperatorByProposal::MemoryControl(_) => {
+                | OperatorByProposal::MemoryControl(_)
+                | OperatorByProposal::GC(_) => {
                     return Err(BuildError::UnsupportedInstructionError {
                         instruction_opcode: operation.opcode(),
                     })
@@ -1004,7 +1004,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         Ok(())
     }
 
-    fn push_const_val(&mut self, value: wasm_types::Val) -> build::Result<()> {
+    fn push_const_val(&mut self, value: Val) -> build::Result<()> {
         let constant = self
             .body_data
             .std_objects
@@ -1068,7 +1068,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
     /// Used when calling a memory function, by popping the address, adding the memory arg as constants and pushing a call to the memory function
     fn pop_one_push_call_mem_func(
         &mut self,
-        memarg: wasmparser::MemArg,
+        memarg: &wasmparser::MemArg,
         memory_function: naga::Handle<naga::Function>,
     ) -> Result<(), BuildError> {
         let wasmparser::MemArg {
@@ -1079,7 +1079,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
             max_align: _,
         } = memarg;
 
-        let offset = u32::try_from(offset)
+        let offset = u32::try_from(*offset)
             .map_err(|_| BuildError::BoundsExceeded(ExceededComponent::MemArgOffset))?;
 
         let memory = naga_expr!(self => U32(memory));
@@ -1099,7 +1099,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
     /// invocation ID to the memory operation, if `disjoint_memory` is enabled.
     fn pop_two_call_mem_func(
         &mut self,
-        memarg: wasmparser::MemArg,
+        memarg: &wasmparser::MemArg,
         memory_function: naga::Handle<naga::Function>,
     ) -> Result<(), BuildError> {
         let wasmparser::MemArg {
@@ -1110,7 +1110,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
             max_align: _,
         } = memarg;
 
-        let offset = u32::try_from(offset)
+        let offset = u32::try_from(*offset)
             .map_err(|_| BuildError::BoundsExceeded(ExceededComponent::MemArgOffset))?;
 
         let value = self.pop();

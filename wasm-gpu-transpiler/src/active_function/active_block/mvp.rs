@@ -1,20 +1,19 @@
 use super::{binary, mem_load, mem_store, unary, ActiveBlock};
-use crate::build;
-use wasm_opcodes::MVPOperator;
-use wasm_types::Val;
+use crate::{build, typed::Val};
+use wasm_opcodes::proposals::MVPOperator;
 use wasmtime_environ::Trap;
 
 pub(super) fn eat_mvp_operator(
     state: &mut ActiveBlock<'_, '_>,
-    operator: MVPOperator,
+    operator: &MVPOperator,
 ) -> build::Result<()> {
     match operator {
         MVPOperator::Nop => {
             /* Pass */
             Ok(())
         }
-        MVPOperator::I32Const { value } => state.push_const_val(Val::I32(value)),
-        MVPOperator::I64Const { value } => state.push_const_val(Val::I64(value)),
+        MVPOperator::I32Const { value } => state.push_const_val(Val::I32(*value)),
+        MVPOperator::I64Const { value } => state.push_const_val(Val::I64(*value)),
         MVPOperator::F32Const { value } => {
             state.push_const_val(Val::F32(f32::from_bits(value.bits())))
         }
@@ -27,12 +26,12 @@ pub(super) fn eat_mvp_operator(
             Ok(())
         }
         MVPOperator::LocalGet { local_index } => {
-            let local_ptr = state.local_ptr(local_index);
+            let local_ptr = state.local_ptr(*local_index);
             state.push(naga::Expression::Load { pointer: local_ptr });
             Ok(())
         }
         MVPOperator::LocalSet { local_index } => {
-            let local_ptr = state.local_ptr(local_index);
+            let local_ptr = state.local_ptr(*local_index);
             let value = state.pop();
             state.append(naga::Statement::Store {
                 pointer: local_ptr,
@@ -41,7 +40,7 @@ pub(super) fn eat_mvp_operator(
             Ok(())
         }
         MVPOperator::LocalTee { local_index } => {
-            let local_ptr = state.local_ptr(local_index);
+            let local_ptr = state.local_ptr(*local_index);
             let value = state.peek();
             state.append(naga::Statement::Store {
                 pointer: local_ptr,

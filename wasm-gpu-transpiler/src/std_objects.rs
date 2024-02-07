@@ -4,8 +4,8 @@ mod wasm_tys;
 
 use std::marker::PhantomData;
 
+use crate::typed::Val;
 use naga_ext::ConstantsExt;
-use wasm_types::Val;
 use wasmparser::ValType;
 
 use crate::{
@@ -567,7 +567,7 @@ impl StdObjects {
         }
     }
 
-    pub(crate) fn get_default_value(&self, val_ty: ValType) -> naga::Handle<naga::Constant> {
+    pub(crate) fn get_default_value(&self, val_ty: ValType) -> naga::Handle<naga::Expression> {
         extract_type_field!(self, val_ty => element.default)
     }
 

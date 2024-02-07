@@ -1,4 +1,4 @@
-use wasm_opcodes::SignExtensionOperator;
+use wasm_opcodes::proposals::SignExtensionOperator;
 
 use crate::build;
 
@@ -6,7 +6,7 @@ use super::{unary, ActiveBlock};
 
 pub(super) fn eat_sign_extension_operator(
     state: &mut ActiveBlock<'_, '_>,
-    operator: SignExtensionOperator,
+    operator: &SignExtensionOperator,
 ) -> build::Result<()> {
     match operator {
         SignExtensionOperator::I32Extend8S => unary!(state, i32::extend_8_s),

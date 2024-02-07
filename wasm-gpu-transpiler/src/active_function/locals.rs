@@ -55,7 +55,7 @@ impl FnLocal {
         local_variables: &mut naga::Arena<naga::LocalVariable>,
         expressions: &mut naga::Arena<naga::Expression>,
         ty: naga::Handle<naga::Type>,
-        init: Option<naga::Handle<naga::Constant>>,
+        init: Option<naga::Handle<naga::Expression>>,
     ) -> Self {
         let local = local_variables.new_local(name, ty, init);
         let expression = expressions.append_local(local);

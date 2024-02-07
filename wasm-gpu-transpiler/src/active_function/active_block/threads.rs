@@ -1,4 +1,4 @@
-use wasm_opcodes::ThreadsOperator;
+use wasm_opcodes::proposals::ThreadsOperator;
 
 use crate::{build, BuildError};
 
@@ -29,7 +29,7 @@ macro_rules! impl_op {
 
 pub(super) fn eat_threads_operator(
     state: &mut ActiveBlock<'_, '_>,
-    operator: ThreadsOperator,
+    operator: &ThreadsOperator,
 ) -> build::Result<()> {
     let err = Err(BuildError::UnsupportedInstructionError {
         instruction_opcode: operator.opcode(),

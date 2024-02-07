@@ -1,7 +1,7 @@
+use crate::typed::ValTypeByteCount;
 use crate::{active_function::ActiveFunction, build};
 use crate::{BuildError, ExceededComponent};
 use naga_ext::{naga_expr, BlockExt, ExpressionsExt};
-use wasm_types::ValTypeByteCount;
 use wasmparser::ValType;
 
 use crate::{std_objects::StdObjects, IO_ARGUMENT_ALIGNMENT_WORDS, IO_INVOCATION_ALIGNMENT_WORDS};

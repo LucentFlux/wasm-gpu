@@ -5,26 +5,16 @@ use crate::{
     std_objects::{std_objects_gen, wasm_tys::impl_native_bool_binexp},
 };
 use naga_ext::{
-    declare_function, naga_expr, BlockExt, ExpressionsExt, LocalsExt, ModuleExt, ShaderPart,
+    declare_function, naga_expr, BlockExt, ConstantsExt, ExpressionsExt, LocalsExt, ModuleExt,
+    ShaderPart, TypesExt,
 };
 
 use super::{f32_instance_gen, F32Gen};
 
-fn make_const_impl(
-    constants: &mut naga::Arena<naga::Constant>,
-    value: f32,
-) -> naga::Handle<naga::Constant> {
-    constants.append(
-        naga::Constant {
-            name: None,
-            specialization: None,
-            inner: naga::ConstantInner::Scalar {
-                width: 4,
-                value: naga::ScalarValue::Float(value.into()),
-            },
-        },
-        naga::Span::UNDEFINED,
-    )
+fn make_const_impl(module: &mut naga::Module, value: f32) -> naga::Handle<naga::Constant> {
+    let ty = module.types.insert_f32();
+    let expr = module.const_expressions.append_f32(value);
+    module.constants.append_anonymous(ty, expr)
 }
 
 /// Takes a float and produces one that has been multiplied by 2^x, respecting denormals
@@ -735,22 +725,14 @@ impl F32Gen for NativeF32 {
         module: &mut naga::Module,
         _others: super::f32_instance_gen::TyRequirements,
     ) -> build::Result<super::f32_instance_gen::Ty> {
-        let naga_ty = naga::Type {
-            name: None,
-            inner: naga::TypeInner::Scalar {
-                kind: naga::ScalarKind::Float,
-                width: 4,
-            },
-        };
-
-        Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
+        Ok(module.types.insert_u32())
     }
 
     fn gen_default(
         module: &mut naga::Module,
         _others: super::f32_instance_gen::DefaultRequirements,
     ) -> build::Result<super::f32_instance_gen::Default> {
-        Ok(make_const_impl(&mut module.constants, 0.0))
+        Ok(make_const_impl(module, 0.0))
     }
 
     fn gen_size_bytes(

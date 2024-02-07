@@ -67,7 +67,6 @@ pub const IO_ARGUMENT_ALIGNMENT_WORDS: u32 = 1;
 // Alignment between sets of WASM value arguments fro each invocation when doing I/O in 4-byte words
 pub const IO_INVOCATION_ALIGNMENT_WORDS: u32 = 1;
 
-const TARGET_ENV: spirv_tools::TargetEnv = spirv_tools::TargetEnv::Vulkan_1_0;
 const LANG_VERSION: (u8, u8) = (1, 0);
 const HLSL_OUT_OPTIONS: naga::back::hlsl::Options = naga::back::hlsl::Options {
     shader_model: naga::back::hlsl::ShaderModel::V6_0,
@@ -77,24 +76,6 @@ const HLSL_OUT_OPTIONS: naga::back::hlsl::Options = naga::back::hlsl::Options {
     push_constants_target: None,
     zero_initialize_workgroup_memory: false,
 };
-const SPV_OUT_OPTIONS: naga::back::spv::Options = naga::back::spv::Options {
-    lang_version: LANG_VERSION,
-    flags: naga::back::spv::WriterFlags::empty(),
-    binding_map: std::collections::BTreeMap::new(),
-    capabilities: None, // Some(capabilities),
-    bounds_check_policies: naga::proc::BoundsCheckPolicies {
-        index: naga::proc::index::BoundsCheckPolicy::Unchecked,
-        buffer: naga::proc::index::BoundsCheckPolicy::Unchecked,
-        image: naga::proc::index::BoundsCheckPolicy::Unchecked,
-        binding_array: naga::proc::index::BoundsCheckPolicy::Unchecked,
-    },
-    zero_initialize_workgroup_memory: naga::back::spv::ZeroInitializeWorkgroupMemoryMode::None,
-};
-const SPV_IN_OPTIONS: naga::front::spv::Options = naga::front::spv::Options {
-    adjust_coordinate_space: false,
-    strict_capabilities: false,
-    block_ctx_dump_prefix: None,
-};
 
 mod active_function;
 mod active_module;
@@ -103,6 +84,7 @@ mod brain_function;
 mod function_lookup;
 mod std_objects;
 mod traps;
+mod typed;
 mod wasm_front;
 
 use std::error::Error;

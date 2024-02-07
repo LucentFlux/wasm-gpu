@@ -1,10 +1,10 @@
-use wasm_opcodes::SIMDOperator;
+use wasm_opcodes::proposals::SIMDOperator;
 
 use crate::build;
 
 pub(crate) fn eat_simd_operator(
     state: &mut super::ActiveBlock,
-    simd_op: SIMDOperator,
+    simd_op: &SIMDOperator,
 ) -> build::Result<()> {
     match simd_op {
         SIMDOperator::V128Load { memarg } => unimplemented!(),

@@ -1,26 +1,16 @@
 use std::sync::Arc;
 
+use crate::typed::FuncRef;
 use crate::{build, std_objects::std_objects_gen};
 use naga_ext::{declare_function, naga_expr, BlockExt, ModuleExt};
-use wasm_types::FuncRef;
 
 use super::{func_ref_instance_gen, FuncRefGen};
 
-fn make_const_impl(
-    constants: &mut naga::Arena<naga::Constant>,
-    value: FuncRef,
-) -> naga::Handle<naga::Constant> {
-    constants.append(
-        naga::Constant {
-            name: None,
-            specialization: None,
-            inner: naga::ConstantInner::Scalar {
-                width: 4,
-                value: naga::ScalarValue::Uint(value.as_u32().unwrap_or(u32::MAX).into()),
-            },
-        },
-        naga::Span::UNDEFINED,
-    )
+fn make_const_impl(module: &mut naga::Module, value: FuncRef) -> naga::Handle<naga::Constant> {
+    let value = value.as_u32().unwrap_or(u32::MAX).into();
+    let ty = module.types.append_u32();
+    let expr = module.const_expressions.append_u32(value);
+    module.constants.append_anonymous(ty, expr)
 }
 
 /// An implementation of FuncRefs using the GPU's native u32 type
@@ -30,15 +20,7 @@ impl FuncRefGen for PolyfillFuncRef {
         module: &mut naga::Module,
         _others: super::func_ref_instance_gen::TyRequirements,
     ) -> build::Result<super::func_ref_instance_gen::Ty> {
-        let naga_ty = naga::Type {
-            name: Some("FuncRef".to_owned()),
-            inner: naga::TypeInner::Scalar {
-                kind: naga::ScalarKind::Uint,
-                width: 4,
-            },
-        };
-
-        Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
+        Ok(module.types.insert_u32())
     }
 
     fn gen_default(

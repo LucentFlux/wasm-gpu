@@ -1,9 +1,7 @@
 use glob::glob;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use std::collections::HashSet;
 use std::env;
-use std::ffi::OsStr;
 use std::path::Path;
 use syn::spanned::Spanned;
 use syn::{parse2, ItemFn, LitStr};
@@ -111,6 +109,7 @@ pub fn impl_tests(attr: TokenStream, f: ItemFn) -> TokenStream {
                 WastDirective::Wat(_)
                 | WastDirective::Register { .. }
                 | WastDirective::Invoke(_) => {}
+                WastDirective::Thread(_) | WastDirective::Wait { .. } => unimplemented!(),
             }
         }
     }

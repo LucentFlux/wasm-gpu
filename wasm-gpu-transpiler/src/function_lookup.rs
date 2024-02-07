@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use wasm_types::FuncRef;
+use crate::typed::FuncRef;
 
 use crate::{active_function::InactiveFunction, active_module::ActiveModule};
 

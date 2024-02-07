@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use wasm_types::{ExternRef, FuncRef, V128};
-
 use crate::build;
+use crate::typed::{ExternRef, FuncRef, V128};
 
 use super::{bindings::StdBindings, StdObjects, WasmBoolInstance};
 

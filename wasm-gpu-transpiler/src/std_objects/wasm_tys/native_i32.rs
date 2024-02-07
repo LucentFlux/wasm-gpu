@@ -1,26 +1,18 @@
 use std::sync::Arc;
 
 use crate::{build, std_objects::std_objects_gen};
-use naga_ext::{declare_function, naga_expr, BlockExt, ExpressionsExt, LocalsExt, ModuleExt};
+use naga_ext::{
+    declare_function, naga_expr, BlockExt, ConstantsExt, ExpressionsExt, LocalsExt, ModuleExt,
+    TypesExt,
+};
 use wasmtime_environ::Trap;
 
 use super::{i32_instance_gen, I32Gen};
 
-fn make_const_impl(
-    constants: &mut naga::Arena<naga::Constant>,
-    value: i32,
-) -> naga::Handle<naga::Constant> {
-    constants.append(
-        naga::Constant {
-            name: None,
-            specialization: None,
-            inner: naga::ConstantInner::Scalar {
-                width: 4,
-                value: naga::ScalarValue::Sint(value.into()),
-            },
-        },
-        naga::Span::UNDEFINED,
-    )
+fn make_const_impl(module: &mut naga::Module, value: i32) -> naga::Handle<naga::Constant> {
+    let ty = module.types.insert_i32();
+    let expr = module.const_expressions.append_i32(value);
+    module.constants.append_anonymous(ty, expr)
 }
 
 /// An implementation of i32s using the GPU's native i32 type
@@ -30,22 +22,14 @@ impl I32Gen for NativeI32 {
         module: &mut naga::Module,
         _others: super::i32_instance_gen::TyRequirements,
     ) -> build::Result<super::i32_instance_gen::Ty> {
-        let naga_ty = naga::Type {
-            name: None,
-            inner: naga::TypeInner::Scalar {
-                kind: naga::ScalarKind::Sint,
-                width: 4,
-            },
-        };
-
-        Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
+        Ok(module.types.insert_i32())
     }
 
     fn gen_default(
         module: &mut naga::Module,
         _others: super::i32_instance_gen::DefaultRequirements,
     ) -> build::Result<super::i32_instance_gen::Default> {
-        Ok(make_const_impl(&mut module.constants, 0))
+        Ok(make_const_impl(module, 0))
     }
 
     fn gen_size_bytes(

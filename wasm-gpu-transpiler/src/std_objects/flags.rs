@@ -1,4 +1,4 @@
-use naga_ext::{naga_expr, BlockExt, ShaderPart};
+use naga_ext::{naga_expr, BlockExt, ConstantsExt, ExpressionsExt, ShaderPart, TypesExt};
 use wasmtime_environ::Trap;
 
 use crate::trap_to_u32;
@@ -14,14 +14,14 @@ fn make_trap_constant(
         None => "UNSET".to_owned(),
     };
 
+    let ty = module.types.insert_u32();
+    let init = module.const_expressions.append_u32(trap_id);
     module.constants.append(
         naga::Constant {
             name: Some(format!("TRAP_{:?}", name)),
-            specialization: None,
-            inner: naga::ConstantInner::Scalar {
-                width: 4,
-                value: naga::ScalarValue::Uint(trap_id as u64),
-            },
+            r#override: naga::Override::None,
+            ty,
+            init,
         },
         naga::Span::UNDEFINED,
     )

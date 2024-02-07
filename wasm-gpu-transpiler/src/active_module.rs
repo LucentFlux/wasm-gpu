@@ -6,9 +6,9 @@ use crate::active_function::InternalFunction;
 use crate::brain_function::BrainFunction;
 use crate::build;
 use crate::std_objects::StdObjects;
+use crate::typed::FuncRef;
 use crate::FuncUnit;
 use crate::Tuneables;
-use wasm_types::FuncRef;
 
 /// A module that we're currently building. Essentially a wrapper around a &mut naga::Module, but
 /// that knows what functions it will be asked to populated, and which is opinionated about the

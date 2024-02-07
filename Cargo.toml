@@ -34,6 +34,7 @@ ouroboros = "0.18"
 perfect-derive = "0.1"
 petgraph = "0.6"
 once_cell = "1.17"
+nonmax = "0.5"
 
 pollster = "0.3"
 tokio = { version = "1.36", features = ["rt", "rt-multi-thread", "macros"] }

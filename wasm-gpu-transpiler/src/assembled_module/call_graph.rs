@@ -1,10 +1,14 @@
 use itertools::Itertools;
 use petgraph::{graph::NodeIndex, Graph};
 use std::collections::HashMap;
-use wasm_opcodes::{ControlFlowOperator, OperatorByProposal, TailCallOperator};
-use wasm_types::FuncRef;
+use wasm_opcodes::{
+    proposals::ControlFlowOperator, proposals::TailCallOperator, OperatorByProposal,
+};
 
-use crate::wasm_front::{FuncUnit, FuncsInstance};
+use crate::{
+    typed::FuncRef,
+    wasm_front::{FuncUnit, FuncsInstance},
+};
 
 pub(super) struct CallGraph {
     calls: Graph<FuncRef, ()>,

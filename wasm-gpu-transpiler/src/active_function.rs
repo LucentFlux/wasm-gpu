@@ -3,10 +3,10 @@ mod arguments;
 mod locals;
 mod results;
 
+use crate::typed::FuncRef;
 use naga::Handle;
 use naga_ext::{naga_expr, BlockExt, ExpressionsExt, ModuleExt, ShaderPart};
 use wasm_opcodes::OperatorByProposal;
-use wasm_types::FuncRef;
 
 use self::active_block::{ActiveBlock, BlockType, BodyData};
 use self::results::WasmFnResTy;
@@ -144,12 +144,7 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
         let base_block = ActiveBlock::new(&mut function.body, block_type, &mut body_data, vec![]);
 
         // Parse instructions
-        let mut instructions = func_data
-            .data
-            .operators
-            .iter()
-            .map(OperatorByProposal::clone)
-            .peekable();
+        let mut instructions = func_data.data.operators.iter().peekable();
 
         // Populate recursively
         let (base_block, end) = base_block.populate_straight(&mut instructions)?;

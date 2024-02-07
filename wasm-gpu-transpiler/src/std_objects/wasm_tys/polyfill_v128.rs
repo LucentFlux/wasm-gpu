@@ -1,49 +1,33 @@
 use std::sync::Arc;
 
+use crate::typed::V128;
 use crate::{build, std_objects::std_objects_gen};
-use naga_ext::{declare_function, naga_expr, BlockExt, ModuleExt};
-use wasm_types::V128;
+use naga_ext::{declare_function, naga_expr, BlockExt, ConstantsExt, ModuleExt, TypesExt};
 
 use super::{v128_instance_gen, V128Gen};
 
-fn make_const_impl(
-    constants: &mut naga::Arena<naga::Constant>,
-    ty: naga::Handle<naga::Type>,
-    value: V128,
-) -> naga::Handle<naga::Constant> {
+fn make_ty(types: &mut naga::UniqueArena<naga::Type>) -> naga::Handle<naga::Type> {
+    types.insert_anonymous(naga::TypeInner::Vector {
+        size: naga::VectorSize::Quad,
+        scalar: naga::Scalar::U32,
+    })
+}
+
+fn make_const_impl(module: &mut naga::Module, value: V128) -> naga::Handle<naga::Constant> {
+    let ty = make_ty(&mut module.types);
     let bytes = value.to_le_bytes();
-    let inner = naga::ConstantInner::Composite {
-        ty,
-        components: bytes
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|bytes| {
-                let word = u32::from_le_bytes(*bytes);
-                let word =
-                    u32::try_from(word & 0xFFFFFFFF).expect("truncated word always fits in u32");
-                constants.append(
-                    naga::Constant {
-                        name: None,
-                        specialization: None,
-                        inner: naga::ConstantInner::Scalar {
-                            width: 4,
-                            value: naga::ScalarValue::Uint(word.into()),
-                        },
-                    },
-                    naga::Span::UNDEFINED,
-                )
-            })
-            .collect(),
-    };
-    constants.append(
-        naga::Constant {
-            name: None,
-            specialization: None,
-            inner,
-        },
-        naga::Span::UNDEFINED,
-    )
+    let components = bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| {
+            let word = u32::from_le_bytes(*bytes);
+            let word = u32::try_from(word & 0xFFFFFFFF).expect("truncated word always fits in u32");
+            module.const_expressions.append_u32(word)
+        })
+        .collect();
+    let init = module.const_expressions.append_compose(ty, components);
+    module.constants.append_anonymous(ty, init)
 }
 
 /// An implementation of v128s using a 4-vector of u32s. Calling this a Polyfill is a slight stretch
@@ -54,27 +38,14 @@ impl V128Gen for PolyfillV128 {
         module: &mut naga::Module,
         _others: super::v128_instance_gen::TyRequirements,
     ) -> build::Result<super::v128_instance_gen::Ty> {
-        let naga_ty = naga::Type {
-            name: Some("v128".to_owned()),
-            inner: naga::TypeInner::Vector {
-                size: naga::VectorSize::Quad,
-                kind: naga::ScalarKind::Uint,
-                width: 4,
-            },
-        };
-
-        Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
+        Ok(make_ty(&mut module.types))
     }
 
     fn gen_default(
         module: &mut naga::Module,
         others: super::v128_instance_gen::DefaultRequirements,
     ) -> build::Result<super::v128_instance_gen::Default> {
-        Ok(make_const_impl(
-            &mut module.constants,
-            others.ty,
-            V128::from_bits(0),
-        ))
+        Ok(make_const_impl(module, V128::from_bits(0)))
     }
 
     fn gen_size_bytes(
@@ -89,7 +60,7 @@ impl V128Gen for PolyfillV128 {
         _others: super::v128_instance_gen::MakeConstRequirements,
     ) -> build::Result<super::v128_instance_gen::MakeConst> {
         Ok(Arc::new(Box::new(|module, std_objects, value| {
-            Ok(make_const_impl(module, std_objects.v128.ty, value))
+            Ok(make_const_impl(module, value))
         })))
     }
 
