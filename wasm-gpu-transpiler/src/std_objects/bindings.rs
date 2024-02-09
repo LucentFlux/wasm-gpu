@@ -1,6 +1,6 @@
 use crate::build;
 
-use super::std_objects_gen;
+use super::preamble_objects_gen;
 
 fn access(read_only: bool) -> naga::StorageAccess {
     if !read_only {
@@ -12,7 +12,7 @@ fn access(read_only: bool) -> naga::StorageAccess {
 
 fn make_word_binding(
     module: &mut naga::Module,
-    word_array_ty: std_objects_gen::WordArrayBufferTy,
+    word_array_ty: preamble_objects_gen::WordArrayBufferTy,
     name: &str,
     read_only: bool,
     binding: u32,
@@ -46,9 +46,9 @@ macro_rules! word_bindings {
             impl $gen_struct_name {
                 pub(super) fn gen(
                     module: &mut naga::Module,
-                    constants_ty: std_objects_gen::WordArrayBufferTy,
-                    word_array_ty: std_objects_gen::WordArrayBufferTy,
-                    flags_array_ty: std_objects_gen::FlagsArrayBufferTy,
+                    constants_ty: preamble_objects_gen::WordArrayBufferTy,
+                    word_array_ty: preamble_objects_gen::WordArrayBufferTy,
+                    flags_array_ty: preamble_objects_gen::FlagsArrayBufferTy,
                 ) -> crate::build::Result<Self> {
                     let flags = module.global_variables.append(
                         naga::GlobalVariable {

@@ -1,14 +1,17 @@
-use std::sync::Arc;
-
 use crate::typed::FuncRef;
-use crate::{build, std_objects::std_objects_gen};
-use naga_ext::{declare_function, naga_expr, BlockExt, ModuleExt};
+use crate::{build, std_objects::preamble_objects_gen};
+use naga_ext::{
+    declare_function, naga_expr, BlockExt, ConstantsExt, ExpressionsExt, ModuleExt, TypesExt,
+};
 
 use super::{func_ref_instance_gen, FuncRefGen};
 
-fn make_const_impl(module: &mut naga::Module, value: FuncRef) -> naga::Handle<naga::Constant> {
+fn make_const_impl(
+    module: &mut naga::Module,
+    ty: naga::Handle<naga::Type>,
+    value: FuncRef,
+) -> naga::Handle<naga::Constant> {
     let value = value.as_u32().unwrap_or(u32::MAX).into();
-    let ty = module.types.append_u32();
     let expr = module.const_expressions.append_u32(value);
     module.constants.append_anonymous(ty, expr)
 }
@@ -25,9 +28,9 @@ impl FuncRefGen for PolyfillFuncRef {
 
     fn gen_default(
         module: &mut naga::Module,
-        _others: super::func_ref_instance_gen::DefaultRequirements,
+        others: super::func_ref_instance_gen::DefaultRequirements,
     ) -> build::Result<super::func_ref_instance_gen::Default> {
-        Ok(make_const_impl(&mut module.constants, FuncRef::none()))
+        Ok(make_const_impl(module, *others.ty, FuncRef::none()))
     }
 
     fn gen_size_bytes(
@@ -39,11 +42,12 @@ impl FuncRefGen for PolyfillFuncRef {
 
     fn gen_make_const(
         _module: &mut naga::Module,
-        _others: super::func_ref_instance_gen::MakeConstRequirements,
+        others: super::func_ref_instance_gen::MakeConstRequirements,
     ) -> build::Result<super::func_ref_instance_gen::MakeConst> {
-        Ok(Arc::new(Box::new(|module, _, value| {
-            Ok(make_const_impl(module, value))
-        })))
+        let ty = *others.ty;
+        Ok(Box::new(move |module, value| {
+            Ok(make_const_impl(module, ty, value))
+        }))
     }
 
     fn gen_read_input(
@@ -52,9 +56,9 @@ impl FuncRefGen for PolyfillFuncRef {
     ) -> build::Result<super::func_ref_instance_gen::ReadInput> {
         gen_read(
             module,
-            others.word,
-            others.ty,
-            others.bindings.input,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.input,
             "input",
         )
     }
@@ -65,9 +69,9 @@ impl FuncRefGen for PolyfillFuncRef {
     ) -> build::Result<super::func_ref_instance_gen::WriteOutput> {
         gen_write(
             module,
-            others.word,
-            others.ty,
-            others.bindings.output,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.output,
             "output",
         )
     }
@@ -78,9 +82,9 @@ impl FuncRefGen for PolyfillFuncRef {
     ) -> build::Result<super::func_ref_instance_gen::ReadMemory> {
         gen_read(
             module,
-            others.word,
-            others.ty,
-            others.bindings.memory,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.memory,
             "memory",
         )
     }
@@ -91,9 +95,9 @@ impl FuncRefGen for PolyfillFuncRef {
     ) -> build::Result<super::func_ref_instance_gen::WriteMemory> {
         gen_write(
             module,
-            others.word,
-            others.ty,
-            others.bindings.memory,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.memory,
             "memory",
         )
     }
@@ -102,7 +106,7 @@ impl FuncRefGen for PolyfillFuncRef {
 // fn<buffer>(word_address: u32) -> func_ref
 fn gen_read(
     module: &mut naga::Module,
-    address_ty: std_objects_gen::Word,
+    address_ty: preamble_objects_gen::WordTy,
     func_ref_ty: func_ref_instance_gen::Ty,
     buffer: naga::Handle<naga::GlobalVariable>,
     buffer_name: &str,
@@ -121,7 +125,7 @@ fn gen_read(
 // fn<buffer>(word_address: u32, value: func_ref)
 fn gen_write(
     module: &mut naga::Module,
-    address_ty: std_objects_gen::Word,
+    address_ty: preamble_objects_gen::WordTy,
     func_ref_ty: func_ref_instance_gen::Ty,
     buffer: naga::Handle<naga::GlobalVariable>,
     buffer_name: &str,

@@ -6,4 +6,6 @@ publish = false
 
 [dependencies]
 naga.workspace = true
-cps.workspace = true
+
+glam.workspace = true
+sealed.workspace = true

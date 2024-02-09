@@ -1,10 +1,10 @@
-use std::sync::Arc;
-
 use crate::{
     build,
-    std_objects::{std_objects_gen, WasmBoolInstance},
+    std_objects::{preamble_objects_gen, WasmBoolInstance},
 };
-use naga_ext::{declare_function, naga_expr, BlockExt, ExpressionsExt, LocalsExt, ModuleExt};
+use naga_ext::{
+    declare_function, naga_expr, BlockExt, ExpressionsExt, LocalsExt, ModuleExt, TypesExt,
+};
 
 use super::{i64_instance_gen, I64Gen};
 
@@ -82,16 +82,12 @@ impl I64Gen for PolyfillI64 {
         module: &mut naga::Module,
         _others: super::i64_instance_gen::TyRequirements,
     ) -> build::Result<super::i64_instance_gen::Ty> {
-        let naga_ty = naga::Type {
-            name: Some("i64".to_owned()),
-            inner: naga::TypeInner::Vector {
-                size: naga::VectorSize::Bi,
-                kind: naga::ScalarKind::Uint,
-                width: 4,
-            },
-        };
+        let ty = module.types.insert_anonymous(naga::TypeInner::Vector {
+            size: naga::VectorSize::Bi,
+            scalar: naga::Scalar::U32,
+        });
 
-        Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED))
+        Ok(ty)
     }
 
     fn gen_default(
@@ -99,7 +95,8 @@ impl I64Gen for PolyfillI64 {
         others: super::i64_instance_gen::DefaultRequirements,
     ) -> build::Result<super::i64_instance_gen::Default> {
         Ok(super::make_64_bit_const_from_2vec32(
-            others.ty,
+            *others.ty,
+            &mut module.const_expressions,
             &mut module.constants,
             0,
         ))
@@ -114,15 +111,17 @@ impl I64Gen for PolyfillI64 {
 
     fn gen_make_const(
         _module: &mut naga::Module,
-        _others: super::i64_instance_gen::MakeConstRequirements,
+        others: super::i64_instance_gen::MakeConstRequirements,
     ) -> build::Result<super::i64_instance_gen::MakeConst> {
-        Ok(Arc::new(Box::new(|module, std_objects, value| {
+        let ty = *others.ty;
+        Ok(Box::new(move |module, value| {
             Ok(super::make_64_bit_const_from_2vec32(
-                std_objects.i64.ty,
-                module,
+                ty,
+                &mut module.const_expressions,
+                &mut module.constants,
                 value,
             ))
-        })))
+        }))
     }
 
     fn gen_read_input(
@@ -131,9 +130,9 @@ impl I64Gen for PolyfillI64 {
     ) -> build::Result<super::i64_instance_gen::ReadInput> {
         gen_read(
             module,
-            others.word,
-            others.ty,
-            others.bindings.input,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.input,
             "input",
         )
     }
@@ -144,9 +143,9 @@ impl I64Gen for PolyfillI64 {
     ) -> build::Result<super::i64_instance_gen::WriteOutput> {
         gen_write(
             module,
-            others.word,
-            others.ty,
-            others.bindings.output,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.output,
             "output",
         )
     }
@@ -157,9 +156,9 @@ impl I64Gen for PolyfillI64 {
     ) -> build::Result<super::i64_instance_gen::ReadMemory> {
         gen_read(
             module,
-            others.word,
-            others.ty,
-            others.bindings.memory,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.memory,
             "memory",
         )
     }
@@ -170,9 +169,9 @@ impl I64Gen for PolyfillI64 {
     ) -> build::Result<super::i64_instance_gen::WriteMemory> {
         gen_write(
             module,
-            others.word,
-            others.ty,
-            others.bindings.memory,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.memory,
             "memory",
         )
     }
@@ -181,7 +180,7 @@ impl I64Gen for PolyfillI64 {
         module: &mut naga::Module,
         others: super::i64_instance_gen::AddRequirements,
     ) -> build::Result<super::i64_instance_gen::Add> {
-        let i64_ty = others.ty;
+        let i64_ty = *others.ty;
         let (function_handle, lhs, rhs) = declare_function! {
             module => fn i64_add(lhs: i64_ty, rhs: i64_ty) -> i64_ty
         };
@@ -190,7 +189,7 @@ impl I64Gen for PolyfillI64 {
         let lhs_low = naga_expr!(module, function_handle => lhs[const 1]);
         let rhs_high = naga_expr!(module, function_handle => rhs[const 0]);
         let rhs_low = naga_expr!(module, function_handle => rhs[const 1]);
-        let carry_bit = naga_expr!(module, function_handle => if (lhs_low > (Constant(others.word_max) - rhs_low)) {U32(1)} else {U32(0)});
+        let carry_bit = naga_expr!(module, function_handle => if (lhs_low > (Constant(others.preamble.word_max) - rhs_low)) {U32(1)} else {U32(0)});
         let res_low = naga_expr!(module, function_handle => lhs_low + rhs_low);
         let res_high = naga_expr!(module, function_handle => lhs_high + rhs_high + carry_bit);
         let res = naga_expr!(module, function_handle => i64_ty(res_high, res_low));
@@ -203,7 +202,7 @@ impl I64Gen for PolyfillI64 {
         module: &mut naga::Module,
         others: super::i64_instance_gen::SubRequirements,
     ) -> build::Result<super::i64_instance_gen::Sub> {
-        let i64_ty = others.ty;
+        let i64_ty = *others.ty;
         let (function_handle, lhs, rhs) = declare_function! {
             module => fn i64_sub(lhs: i64_ty, rhs: i64_ty) -> i64_ty
         };
@@ -214,7 +213,7 @@ impl I64Gen for PolyfillI64 {
         let rhs_low = naga_expr!(module, function_handle => rhs[const 1]);
         let carry_condition = naga_expr!(module, function_handle => lhs_low < rhs_low);
         let res_low = naga_expr!(module, function_handle => if (carry_condition) {
-            (Constant(others.word_max) - rhs_low) + lhs_low + U32(1)
+            (Constant(others.preamble.word_max) - rhs_low) + lhs_low + U32(1)
         } else {
             lhs_low - rhs_low
         });
@@ -229,7 +228,7 @@ impl I64Gen for PolyfillI64 {
         module: &mut naga::Module,
         others: super::i64_instance_gen::MulRequirements,
     ) -> build::Result<super::i64_instance_gen::Mul> {
-        let i64_ty = others.ty;
+        let i64_ty = *others.ty;
         let (function_handle, lhs, rhs) = declare_function! {
             module => fn i64_mul(lhs: i64_ty, rhs: i64_ty) -> i64_ty
         };
@@ -249,8 +248,8 @@ impl I64Gen for PolyfillI64 {
     ) -> build::Result<i64_instance_gen::Eqz> {
         gen_boolean_mono(
             module,
-            others.ty,
-            others.wasm_bool,
+            *others.ty,
+            others.preamble.wasm_bool,
             "eqz",
             |module, handle, high, low| {
                 naga_expr!(module, handle =>
@@ -266,8 +265,8 @@ impl I64Gen for PolyfillI64 {
     ) -> build::Result<i64_instance_gen::LtS> {
         gen_boolean_binary(
             module,
-            others.ty,
-            others.wasm_bool,
+            *others.ty,
+            others.preamble.wasm_bool,
             "lt_s",
             |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(module, handle =>
@@ -283,8 +282,8 @@ impl I64Gen for PolyfillI64 {
     ) -> build::Result<i64_instance_gen::LeS> {
         gen_boolean_binary(
             module,
-            others.ty,
-            others.wasm_bool,
+            *others.ty,
+            others.preamble.wasm_bool,
             "le_s",
             |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(module, handle =>
@@ -300,8 +299,8 @@ impl I64Gen for PolyfillI64 {
     ) -> build::Result<i64_instance_gen::GtS> {
         gen_boolean_binary(
             module,
-            others.ty,
-            others.wasm_bool,
+            *others.ty,
+            others.preamble.wasm_bool,
             "gt_s",
             |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(module, handle =>
@@ -317,8 +316,8 @@ impl I64Gen for PolyfillI64 {
     ) -> build::Result<i64_instance_gen::GeS> {
         gen_boolean_binary(
             module,
-            others.ty,
-            others.wasm_bool,
+            *others.ty,
+            others.preamble.wasm_bool,
             "ge_s",
             |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(module, handle =>
@@ -334,8 +333,8 @@ impl I64Gen for PolyfillI64 {
     ) -> build::Result<i64_instance_gen::LtU> {
         gen_boolean_binary(
             module,
-            others.ty,
-            others.wasm_bool,
+            *others.ty,
+            others.preamble.wasm_bool,
             "lt_u",
             |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(module, handle =>
@@ -351,8 +350,8 @@ impl I64Gen for PolyfillI64 {
     ) -> build::Result<i64_instance_gen::LeU> {
         gen_boolean_binary(
             module,
-            others.ty,
-            others.wasm_bool,
+            *others.ty,
+            others.preamble.wasm_bool,
             "le_u",
             |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(module, handle =>
@@ -368,8 +367,8 @@ impl I64Gen for PolyfillI64 {
     ) -> build::Result<i64_instance_gen::GtU> {
         gen_boolean_binary(
             module,
-            others.ty,
-            others.wasm_bool,
+            *others.ty,
+            others.preamble.wasm_bool,
             "gt_u",
             |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(module, handle =>
@@ -385,8 +384,8 @@ impl I64Gen for PolyfillI64 {
     ) -> build::Result<i64_instance_gen::GeU> {
         gen_boolean_binary(
             module,
-            others.ty,
-            others.wasm_bool,
+            *others.ty,
+            others.preamble.wasm_bool,
             "ge_u",
             |module, handle, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(module, handle =>
@@ -437,13 +436,13 @@ impl I64Gen for PolyfillI64 {
         others: i64_instance_gen::Extend8SRequirements,
     ) -> build::Result<i64_instance_gen::Extend8S> {
         let (function_handle, value) = declare_function! {
-            module => fn i64_extend_8_s(value: others.ty) -> others.ty
+            module => fn i64_extend_8_s(value: *others.ty) -> *others.ty
         };
 
         let low = naga_expr!(module, function_handle => value[const 1] as Sint);
         let high = naga_expr!(module, function_handle => (low << U32(31)) >> U32(31));
         let low = naga_expr!(module, function_handle => (low << U32(24)) >> U32(24));
-        let res = naga_expr!(module, function_handle => (others.ty)(high as Uint, low as Uint));
+        let res = naga_expr!(module, function_handle => (*others.ty)(high as Uint, low as Uint));
         module.fn_mut(function_handle).body.push_return(res);
 
         Ok(function_handle)
@@ -454,13 +453,13 @@ impl I64Gen for PolyfillI64 {
         others: i64_instance_gen::Extend16SRequirements,
     ) -> build::Result<i64_instance_gen::Extend16S> {
         let (function_handle, value) = declare_function! {
-            module => fn i64_extend_16_s(value: others.ty) -> others.ty
+            module => fn i64_extend_16_s(value: *others.ty) -> *others.ty
         };
 
         let low = naga_expr!(module, function_handle => value[const 1] as Sint);
         let high = naga_expr!(module, function_handle => (low << U32(31)) >> U32(31));
         let low = naga_expr!(module, function_handle => (low << U32(16)) >> U32(16));
-        let res = naga_expr!(module, function_handle => (others.ty)(high as Uint, low as Uint));
+        let res = naga_expr!(module, function_handle => (*others.ty)(high as Uint, low as Uint));
         module.fn_mut(function_handle).body.push_return(res);
 
         Ok(function_handle)
@@ -471,12 +470,12 @@ impl I64Gen for PolyfillI64 {
         others: i64_instance_gen::Extend32SRequirements,
     ) -> build::Result<i64_instance_gen::Extend32S> {
         let (function_handle, value) = declare_function! {
-            module => fn i64_extend_16_s(value: others.ty) -> others.ty
+            module => fn i64_extend_16_s(value: *others.ty) -> *others.ty
         };
 
         let low = naga_expr!(module, function_handle => value[const 1]);
         let high = naga_expr!(module, function_handle => ((low as Sint) << U32(31)) >> U32(31));
-        let res = naga_expr!(module, function_handle => (others.ty)(high as Uint, low));
+        let res = naga_expr!(module, function_handle => (*others.ty)(high as Uint, low));
         module.fn_mut(function_handle).body.push_return(res);
 
         Ok(function_handle)
@@ -486,7 +485,7 @@ impl I64Gen for PolyfillI64 {
 // fn<buffer>(word_address: u32) -> i64
 fn gen_read(
     module: &mut naga::Module,
-    address_ty: std_objects_gen::Word,
+    address_ty: preamble_objects_gen::WordTy,
     i64_ty: i64_instance_gen::Ty,
     buffer: naga::Handle<naga::GlobalVariable>,
     buffer_name: &str,
@@ -510,7 +509,7 @@ fn gen_read(
 // fn<buffer>(word_address: u32, value: i64)
 fn gen_write(
     module: &mut naga::Module,
-    address_ty: std_objects_gen::Word,
+    address_ty: preamble_objects_gen::WordTy,
     i64_ty: i64_instance_gen::Ty,
     buffer: naga::Handle<naga::GlobalVariable>,
     buffer_name: &str,

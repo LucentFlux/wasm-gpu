@@ -1,26 +1,12 @@
-#![feature(macro_metavar_expr)]
-
 //! Provide a collection of shorthand and opinionated methods extending base naga objects.
-mod sealed {
-    pub trait ModuleSealed {}
-    impl ModuleSealed for naga::Module {}
-    pub trait FunctionsSealed {}
-    impl FunctionsSealed for naga::Arena<naga::Function> {}
-    pub trait ConstantsSealed {}
-    impl ConstantsSealed for naga::Arena<naga::Constant> {}
-    pub trait TypesSealed {}
-    impl TypesSealed for naga::UniqueArena<naga::Type> {}
-    pub trait LocalsSealed {}
-    impl LocalsSealed for naga::Arena<naga::LocalVariable> {}
-    pub trait ExpressionsSealed {}
-    impl ExpressionsSealed for naga::Arena<naga::Expression> {}
-    pub trait FunctionSealed {}
-    impl FunctionSealed for naga::Function {}
-    pub trait BlockSealed {}
-    impl BlockSealed for naga::Block {}
-}
+pub mod block_context;
+pub mod into_literal;
+pub use block_context::BlockContext;
 
-pub trait ModuleExt: self::sealed::ModuleSealed {
+use sealed::sealed;
+
+#[sealed]
+pub trait ModuleExt {
     /// Shorthand for `module.functions.new_empty_function(name)`
     fn new_empty_function(&mut self, name: String) -> naga::Handle<naga::Function>;
     /// Shorthand for `module.functions.new_function(definition)`
@@ -29,6 +15,7 @@ pub trait ModuleExt: self::sealed::ModuleSealed {
     fn fn_mut(&mut self, handle: naga::Handle<naga::Function>) -> &mut naga::Function;
 }
 
+#[sealed]
 impl ModuleExt for naga::Module {
     fn new_empty_function(&mut self, name: String) -> naga::Handle<naga::Function> {
         self.functions.new_empty_function(name)
@@ -41,11 +28,13 @@ impl ModuleExt for naga::Module {
     }
 }
 
-pub trait FunctionsExt: self::sealed::FunctionsSealed {
+#[sealed]
+pub trait FunctionsExt {
     fn new_empty_function(&mut self, name: String) -> naga::Handle<naga::Function>;
     fn new_function(&mut self, definition: FunctionSignature) -> naga::Handle<naga::Function>;
 }
 
+#[sealed]
 impl FunctionsExt for naga::Arena<naga::Function> {
     fn new_empty_function(&mut self, name: String) -> naga::Handle<naga::Function> {
         let mut new_function = naga::Function::default();
@@ -76,7 +65,8 @@ impl FunctionsExt for naga::Arena<naga::Function> {
     }
 }
 
-pub trait ConstantsExt: self::sealed::ConstantsSealed {
+#[sealed]
+pub trait ConstantsExt {
     fn append_anonymous(
         &mut self,
         ty: naga::Handle<naga::Type>,
@@ -84,6 +74,7 @@ pub trait ConstantsExt: self::sealed::ConstantsSealed {
     ) -> naga::Handle<naga::Constant>;
 }
 
+#[sealed]
 impl ConstantsExt for naga::Arena<naga::Constant> {
     fn append_anonymous(
         &mut self,
@@ -102,7 +93,8 @@ impl ConstantsExt for naga::Arena<naga::Constant> {
     }
 }
 
-pub trait TypesExt: self::sealed::TypesSealed {
+#[sealed]
+pub trait TypesExt {
     fn insert_anonymous(&mut self, ty: naga::TypeInner) -> naga::Handle<naga::Type>;
 
     fn insert_scalar(&mut self, scalar: naga::Scalar) -> naga::Handle<naga::Type>;
@@ -116,6 +108,7 @@ pub trait TypesExt: self::sealed::TypesSealed {
     fn insert_bool(&mut self) -> naga::Handle<naga::Type>;
 }
 
+#[sealed]
 impl TypesExt for naga::UniqueArena<naga::Type> {
     fn insert_anonymous(&mut self, ty: naga::TypeInner) -> naga::Handle<naga::Type> {
         self.insert(
@@ -152,11 +145,14 @@ impl TypesExt for naga::UniqueArena<naga::Type> {
     }
 }
 
-pub trait FunctionExt: self::sealed::FunctionSealed {}
+#[sealed]
+pub trait FunctionExt {}
 
+#[sealed]
 impl FunctionExt for naga::Function {}
 
-pub trait LocalsExt: self::sealed::LocalsSealed {
+#[sealed]
+pub trait LocalsExt {
     // Shorthand handle generation
     fn new_local(
         &mut self,
@@ -165,6 +161,8 @@ pub trait LocalsExt: self::sealed::LocalsSealed {
         init: Option<naga::Handle<naga::Expression>>,
     ) -> naga::Handle<naga::LocalVariable>;
 }
+
+#[sealed]
 impl LocalsExt for naga::Arena<naga::LocalVariable> {
     fn new_local(
         &mut self,
@@ -183,7 +181,8 @@ impl LocalsExt for naga::Arena<naga::LocalVariable> {
     }
 }
 
-pub trait ExpressionsExt: self::sealed::ExpressionsSealed {
+#[sealed]
+pub trait ExpressionsExt {
     // Shorthand expression generation
     fn append_global(
         &mut self,
@@ -216,6 +215,8 @@ pub trait ExpressionsExt: self::sealed::ExpressionsSealed {
     fn append_f64(&mut self, value: f64) -> naga::Handle<naga::Expression>;
     fn append_bool(&mut self, value: bool) -> naga::Handle<naga::Expression>;
 }
+
+#[sealed]
 impl ExpressionsExt for naga::Arena<naga::Expression> {
     fn append_global(
         &mut self,
@@ -287,7 +288,8 @@ impl ExpressionsExt for naga::Arena<naga::Expression> {
     }
 }
 
-pub trait BlockExt: self::sealed::BlockSealed {
+#[sealed]
+pub trait BlockExt {
     // Shorthand statement addition
     fn push_emit(&mut self, expression: naga::Handle<naga::Expression>);
     fn push_return(&mut self, expression: naga::Handle<naga::Expression>);
@@ -306,6 +308,7 @@ pub trait BlockExt: self::sealed::BlockSealed {
     fn push_kill(&mut self);
 }
 
+#[sealed]
 impl BlockExt for naga::Block {
     fn push_emit(&mut self, expression: naga::Handle<naga::Expression>) {
         self.push(
@@ -388,13 +391,13 @@ macro_rules! declare_function {
     ($module:expr => fn $fn_name:tt ( $($arg_name:ident : $arg_ty:expr),* $(,)? ) $(-> $ret_ty:expr)?) => {{
         #[allow(unused_mut)]
         #[allow(unused_assignments)]
-        let mut result = None;
+        let mut result: Option<naga::Handle<naga::Type>> = None;
         $(
             result = Some($ret_ty);
         )?
 
-        let function_signature = naga_ext::FunctionSignature {
-            name: naga_ext::declare_function!(@match_fn_name $fn_name),
+        let function_signature = $crate::FunctionSignature {
+            name: $crate::declare_function!(@match_fn_name $fn_name),
             args: vec![
                 $(
                     (stringify!{$arg_name}.to_owned(), $arg_ty),
@@ -403,7 +406,7 @@ macro_rules! declare_function {
             result,
         };
 
-        let function_handle = naga_ext::ModuleExt::new_function($module, function_signature);
+        let function_handle = $crate::ModuleExt::new_function($module, function_signature);
 
         let function = $module.functions.get_mut(function_handle.clone());
 
@@ -419,450 +422,359 @@ macro_rules! declare_function {
     }};
 }
 
-/// Something into which an expression/statement can be built
-pub trait ShaderPart {
-    fn parts(
-        &mut self,
-    ) -> (
-        &mut naga::Arena<naga::Constant>,
-        &mut naga::Arena<naga::Expression>,
-        &mut naga::Block,
-    );
-}
-
-impl ShaderPart
-    for (
-        &mut naga::Arena<naga::Constant>,
-        &mut naga::Arena<naga::Expression>,
-        &mut naga::Block,
-    )
-{
-    fn parts(
-        &mut self,
-    ) -> (
-        &mut naga::Arena<naga::Constant>,
-        &mut naga::Arena<naga::Expression>,
-        &mut naga::Block,
-    ) {
-        (self.0, self.1, self.2)
-    }
-}
-
-impl<'a> ShaderPart for (&'a mut naga::Module, naga::Handle<naga::Function>) {
-    fn parts(
-        &mut self,
-    ) -> (
-        &mut naga::Arena<naga::Constant>,
-        &mut naga::Arena<naga::Expression>,
-        &mut naga::Block,
-    ) {
-        let function: &mut naga::Function = self.0.functions.get_mut(self.1);
-        (
-            &mut self.0.constants,
-            &mut function.expressions,
-            &mut function.body,
-        )
-    }
-}
-
-impl ShaderPart
-    for (
-        &mut naga::Module,
-        naga::Handle<naga::Function>,
-        &mut naga::Block,
-    )
-{
-    fn parts(
-        &mut self,
-    ) -> (
-        &mut naga::Arena<naga::Constant>,
-        &mut naga::Arena<naga::Expression>,
-        &mut naga::Block,
-    ) {
-        let function: &mut naga::Function = self.0.functions.get_mut(self.1);
-        (
-            &mut self.0.constants,
-            &mut function.expressions,
-            &mut self.2,
-        )
-    }
-}
-
 #[macro_export]
 macro_rules! naga_expr {
-    ($shader_part:expr => $($expression:tt)*) => {{
+    ($a:expr => $($expression:tt)*) => {{
         #[allow(unused)]
-        let (mut constants, mut expressions, mut block) = naga_ext::ShaderPart::parts($shader_part);
-        naga_ext::naga_expr!(@inner constants, expressions, block => $($expression)*)
+        let mut ctx = $crate::BlockContext::from($a);
+        $crate::naga_expr!(@inner ctx => $($expression)*)
     }};
 
     ($a:expr, $b:expr => $($expression:tt)*) => {{
-        // Force reborrow -- this is a hack
-        let mut pair = (&mut *$a, $b);
-        naga_ext::naga_expr!(&mut pair => $($expression)*)
-    }};
-
-    ($a:expr, $b:expr, $c:expr => $($expression:tt)*) => {{
-        // Force reborrow -- this is a hack
-        let mut pair = (&mut *$a, $b, &mut $c);
-        naga_ext::naga_expr!(&mut pair => $($expression)*)
-    }};
-
-    (@emit $block:expr => $handle:ident) => {{
-        $block
-            .push(naga::Statement::Emit(naga::Range::new_from_bounds(
-                $handle, $handle,
-            )), naga::Span::UNDEFINED);
-        $handle
+        #[allow(unused)]
+        let mut ctx = $crate::BlockContext::from(($a, $b));
+        $crate::naga_expr!(@inner ctx => $($expression)*)
     }};
 
     // Inner expressions (let bindings)
-    (@inner_eat_to_semi $constants:expr, $expressions:expr, $block:expr => let $var:ident = {$($eaten:tt)*} ; $($others:tt)*) => {{
-        let $var = naga_expr!(@inner $constants, $expressions, $block => $($eaten)*);
-        naga_expr!(@inner $constants, $expressions, $block => $($others)*)
+    (@inner_eat_to_semi $ctx:expr => let $var:ident = {$($eaten:tt)*} ; $($others:tt)*) => {{
+        let $var = $crate::naga_expr!(@inner $ctx => $($eaten)*);
+        $crate::naga_expr!(@inner $ctx => $($others)*)
     }};
-    (@inner_eat_to_semi $constants:expr, $expressions:expr, $block:expr => let $var:ident = {$($eaten:tt)*} $next:tt $($others:tt)*) => {
-        naga_expr!(@inner_eat_to_semi $constants, $expressions, $block => let $var = {$($eaten)* $next} $($others)*)
+    (@inner_eat_to_semi $ctx:expr => let $var:ident = {$($eaten:tt)*} $next:tt $($others:tt)*) => {
+        $crate::naga_expr!(@inner_eat_to_semi $ctx => let $var = {$($eaten)* $next} $($others)*)
     };
-    (@inner $constants:expr, $expressions:expr, $block:expr => let $var:ident = $($others:tt)*) => {
-        naga_expr!(@inner_eat_to_semi $constants, $expressions, $block => let $var = {} $($others)*)
+    (@inner $ctx:expr => let $var:ident = $($others:tt)*) => {
+        $crate::naga_expr!(@inner_eat_to_semi $ctx => let $var = {} $($others)*)
     };
 
     // Resizing
-    (@inner $constants:expr, $expressions:expr, $block:expr => bitcast<u32>($($value:tt)*) $($others:tt)*) => {{
-        naga_expr!(@inner $constants, $expressions, $block => ($($value)*) as Uint $($others)*)
+    (@inner $ctx:expr => bitcast<u32>($($value:tt)*) $($others:tt)*) => {{
+        $crate::naga_expr!(@inner $ctx => ($($value)*) as Uint $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => bitcast<i32>($($value:tt)*) $($others:tt)*) => {{
-        naga_expr!(@inner $constants, $expressions, $block => ($($value)*) as Sint $($others)*)
+    (@inner $ctx:expr => bitcast<i32>($($value:tt)*) $($others:tt)*) => {{
+        $crate::naga_expr!(@inner $ctx => ($($value)*) as Sint $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => bitcast<f32>($($value:tt)*) $($others:tt)*) => {{
-        naga_expr!(@inner $constants, $expressions, $block => ($($value)*) as Float $($others)*)
+    (@inner $ctx:expr => bitcast<f32>($($value:tt)*) $($others:tt)*) => {{
+        $crate::naga_expr!(@inner $ctx => ($($value)*) as Float $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => u32($($value:tt)*) $($others:tt)*) => {{
-        naga_expr!(@inner $constants, $expressions, $block => ($($value)*) as Uint (4) $($others)*)
+    (@inner $ctx:expr => u32($($value:tt)*) $($others:tt)*) => {{
+        $crate::naga_expr!(@inner $ctx => ($($value)*) as Uint (4) $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => i32($($value:tt)*) $($others:tt)*) => {{
-        naga_expr!(@inner $constants, $expressions, $block => ($($value)*) as Sint (4) $($others)*)
+    (@inner $ctx:expr => i32($($value:tt)*) $($others:tt)*) => {{
+        $crate::naga_expr!(@inner $ctx => ($($value)*) as Sint (4) $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => f32($($value:tt)*) $($others:tt)*) => {{
-        naga_expr!(@inner $constants, $expressions, $block => ($($value)*) as Float (4) $($others)*)
+    (@inner $ctx:expr => f32($($value:tt)*) $($others:tt)*) => {{
+        $crate::naga_expr!(@inner $ctx => ($($value)*) as Float (4) $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt as $kind:tt ($bitcount:expr) $($others:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let handle = $expressions.append(naga::Expression::As { expr: left, kind: naga::ScalarKind::$kind, convert: Some($bitcount) }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => $lhs:tt as $kind:tt ($bitcount:expr) $($others:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let handle = $ctx.append_expression(naga::Expression::As { expr: left, kind: naga::ScalarKind::$kind, convert: Some($bitcount) });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 
     // Casting
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt as $kind:tt $($others:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let handle = $expressions.append(naga::Expression::As { expr: left, kind: naga::ScalarKind::$kind, convert: None }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => $lhs:tt as $kind:tt $($others:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let handle = $ctx.append_expression(naga::Expression::As { expr: left, kind: naga::ScalarKind::$kind, convert: None });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 
     // Bin Ops
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt + $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Add, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt + $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Add, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt - $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Subtract, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt - $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Subtract, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt * $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Multiply, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt * $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Multiply, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt / $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Divide, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt / $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Divide, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt % $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Modulo, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt % $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Modulo, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt >> $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::ShiftRight, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt >> $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::ShiftRight, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt << $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::ShiftLeft, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt << $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::ShiftLeft, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt | $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::InclusiveOr, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt | $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::InclusiveOr, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt ^ $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::ExclusiveOr, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt ^ $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::ExclusiveOr, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt & $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::And, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt & $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::And, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt > $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Greater, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt > $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Greater, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt >= $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::GreaterEqual, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt >= $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::GreaterEqual, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt < $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Less, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt < $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Less, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt <= $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::LessEqual, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt <= $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::LessEqual, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt == $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::Equal, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt == $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Equal, left, right });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $lhs:tt != $($rhs:tt)*) => {{
-        let left = naga_expr!(@inner $constants, $expressions, $block => $lhs);
-        let right = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Binary { op: naga::BinaryOperator::NotEqual, left, right }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => $lhs:tt != $($rhs:tt)*) => {{
+        let left = $crate::naga_expr!(@inner $ctx => $lhs);
+        let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::NotEqual, left, right });
+        $ctx.emit(handle)
     }};
 
-    (@inner $constants:expr, $expressions:expr, $block:expr => !$($value:tt)*) => {{
-        let value = naga_expr!(@inner $constants, $expressions, $block => $($value)*);
-        let handle = $expressions.append(naga::Expression::Unary { op: naga::UnaryOperator::LogicalNot, expr: value }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => !$($value:tt)*) => {{
+        let value = $crate::naga_expr!(@inner $ctx => $($value)*);
+        let handle = $ctx.append_expression(naga::Expression::Unary { op: naga::UnaryOperator::LogicalNot, expr: value });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => ~$($value:tt)*) => {{
-        let value = naga_expr!(@inner $constants, $expressions, $block => $($value)*);
-        let handle = $expressions.append(naga::Expression::Unary { op: naga::UnaryOperator::BitwiseNot, expr: value }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => ~$($value:tt)*) => {{
+        let value = $crate::naga_expr!(@inner $ctx => $($value)*);
+        let handle = $ctx.append_expression(naga::Expression::Unary { op: naga::UnaryOperator::BitwiseNot, expr: value });
+        $ctx.emit(handle)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => -$($value:tt)*) => {{
-        let value = naga_expr!(@inner $constants, $expressions, $block => $($value)*);
-        let handle = $expressions.append(naga::Expression::Unary { op: naga::UnaryOperator::Negate, expr: value }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => -$($value:tt)*) => {{
+        let value = $crate::naga_expr!(@inner $ctx => $($value)*);
+        let handle = $ctx.append_expression(naga::Expression::Unary { op: naga::UnaryOperator::Negate, expr: value });
+        $ctx.emit(handle)
     }};
 
     // Struct Ops
-    (@inner $constants:expr, $expressions:expr, $block:expr => $base:tt [const $index:expr ] $($others:tt)*) => {{
-        let base = naga_expr!(@inner $constants, $expressions, $block => $base);
-        let handle = $expressions.append(naga::Expression::AccessIndex{ base, index: $index }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => $base:tt [const $index:expr ] $($others:tt)*) => {{
+        let base = $crate::naga_expr!(@inner $ctx => $base);
+        let handle = $ctx.append_expression(naga::Expression::AccessIndex{ base, index: $index });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 
     // Array Ops
-    (@inner $constants:expr, $expressions:expr, $block:expr => $base:tt [ $($index:tt)* ] $($others:tt)*) => {{
-        let base = naga_expr!(@inner $constants, $expressions, $block => $base);
-        let index = naga_expr!(@inner $constants, $expressions, $block => $($index)*);
-        let handle = $expressions.append(naga::Expression::Access { base, index }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => $base:tt [ $($index:tt)* ] $($others:tt)*) => {{
+        let base = $crate::naga_expr!(@inner $ctx => $base);
+        let index = $crate::naga_expr!(@inner $ctx => $($index)*);
+        let handle = $ctx.append_expression(naga::Expression::Access { base, index });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 
     // Constants
-    (@inner $constants:expr, $expressions:expr, $block:expr => Bool($term:expr) $($others:tt)*) => {{
-        let const_handle = naga_ext::ConstantsExt::append_bool($constants, $term);
-        naga_expr!(@inner $constants, $expressions, $block => Constant(const_handle) $($others)*)
+    (@inner $ctx:expr => Bool($term:expr) $($others:tt)*) => {{
+        $crate::naga_expr!(@inner $ctx => Literal(naga::Literal::Bool($term)) $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => I32($term:expr) $($others:tt)*) => {{
-        let const_handle = naga_ext::ConstantsExt::append_i32($constants, $term);
-        naga_expr!(@inner $constants, $expressions, $block => Constant(const_handle) $($others)*)
+    (@inner $ctx:expr => I32($term:expr) $($others:tt)*) => {{
+        $crate::naga_expr!(@inner $ctx => Literal(naga::Literal::I32($term)) $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => U32($term:expr) $($others:tt)*) => {{
-        let const_handle = naga_ext::ConstantsExt::append_u32($constants, $term);
-        naga_expr!(@inner $constants, $expressions, $block => Constant(const_handle) $($others)*)
+    (@inner $ctx:expr => U32($term:expr) $($others:tt)*) => {{
+        $crate::naga_expr!(@inner $ctx => Literal(naga::Literal::U32($term)) $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => F32($term:expr) $($others:tt)*) => {{
-        let const_handle = naga_ext::ConstantsExt::append_f32($constants, $term);
-        naga_expr!(@inner $constants, $expressions, $block => Constant(const_handle) $($others)*)
+    (@inner $ctx:expr => F32($term:expr) $($others:tt)*) => {{
+        $crate::naga_expr!(@inner $ctx => Literal(naga::Literal::F32($term)) $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => I64($term:expr) $($others:tt)*) => {{
-        let const_handle = naga_ext::ConstantsExt::append_i64($constants, $term);
-        naga_expr!(@inner $constants, $expressions, $block => Constant(const_handle) $($others)*)
-    }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => F64($term:expr) $($others:tt)*) => {{
-        let const_handle = naga_ext::ConstantsExt::append_f64($constants, $term);
-        naga_expr!(@inner $constants, $expressions, $block => Constant(const_handle) $($others)*)
+    (@inner $ctx:expr => F64($term:expr) $($others:tt)*) => {{
+        $crate::naga_expr!(@inner $ctx => Literal(naga::Literal::F64($term)) $($others)*)
     }};
 
     // Getting references to things
-    (@inner $constants:expr, $expressions:expr, $block:expr => Local($term:expr) $($others:tt)*) => {{
-        let handle = naga_ext::ExpressionsExt::append_local($expressions, $term);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => Local($term:expr) $($others:tt)*) => {{
+        let handle = $ctx.local_expr($term);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => Constant($term:expr) $($others:tt)*) => {{
-        let handle = naga_ext::ExpressionsExt::append_constant($expressions, $term);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => Constant($term:expr) $($others:tt)*) => {{
+        let handle = $ctx.constant_expr($term);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => Global($term:expr) $($others:tt)*) => {{
-        let handle = naga_ext::ExpressionsExt::append_global($expressions, $term);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => Literal($term:expr) $($others:tt)*) => {{
+        let handle = $ctx.literal_expr($term);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
+    }};
+    (@inner $ctx:expr => Global($term:expr) $($others:tt)*) => {{
+        let handle = $ctx.global_expr($term);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 
     // Deref
-    (@inner $constants:expr, $expressions:expr, $block:expr => Load($($pointer:tt)*) $($others:tt)*) => {{
-        let pointer = naga_expr!(@inner $constants, $expressions, $block => $($pointer)*);
-        let handle = $expressions.append(naga::Expression::Load { pointer }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => Load($($pointer:tt)*) $($others:tt)*) => {{
+        let pointer = $crate::naga_expr!(@inner $ctx => $($pointer)*);
+        let handle = $ctx.append_expression(naga::Expression::Load { pointer });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 
     // Maths
-    (@inner $constants:expr, $expressions:expr, $block:expr => countLeadingZeros($($arg:tt)*) $($others:tt)*) => {{
-        let arg = naga_expr!(@inner $constants, $expressions, $block => $($arg)*);
-        let handle = $expressions.append(naga::Expression::Math { fun: naga::MathFunction::CountLeadingZeros, arg, arg1: None, arg2: None, arg3: None }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => countLeadingZeros($($arg:tt)*) $($others:tt)*) => {{
+        let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
+        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::CountLeadingZeros, arg, arg1: None, arg2: None, arg3: None });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => exp2($($arg:tt)*) $($others:tt)*) => {{
-        let arg = naga_expr!(@inner $constants, $expressions, $block => $($arg)*);
-        let handle = $expressions.append(naga::Expression::Math { fun: naga::MathFunction::Exp2, arg, arg1: None, arg2: None, arg3: None }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => exp2($($arg:tt)*) $($others:tt)*) => {{
+        let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
+        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Exp2, arg, arg1: None, arg2: None, arg3: None });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => abs($($arg:tt)*) $($others:tt)*) => {{
-        let arg = naga_expr!(@inner $constants, $expressions, $block => $($arg)*);
-        let handle = $expressions.append(naga::Expression::Math { fun: naga::MathFunction::Abs, arg, arg1: None, arg2: None, arg3: None }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => abs($($arg:tt)*) $($others:tt)*) => {{
+        let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
+        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Abs, arg, arg1: None, arg2: None, arg3: None });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => ceil($($arg:tt)*) $($others:tt)*) => {{
-        let arg = naga_expr!(@inner $constants, $expressions, $block => $($arg)*);
-        let handle = $expressions.append(naga::Expression::Math { fun: naga::MathFunction::Ceil, arg, arg1: None, arg2: None, arg3: None }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => ceil($($arg:tt)*) $($others:tt)*) => {{
+        let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
+        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Ceil, arg, arg1: None, arg2: None, arg3: None });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => floor($($arg:tt)*) $($others:tt)*) => {{
-        let arg = naga_expr!(@inner $constants, $expressions, $block => $($arg)*);
-        let handle = $expressions.append(naga::Expression::Math { fun: naga::MathFunction::Floor, arg, arg1: None, arg2: None, arg3: None }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => floor($($arg:tt)*) $($others:tt)*) => {{
+        let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
+        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Floor, arg, arg1: None, arg2: None, arg3: None });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => trunc($($arg:tt)*) $($others:tt)*) => {{
-        let arg = naga_expr!(@inner $constants, $expressions, $block => $($arg)*);
-        let handle = $expressions.append(naga::Expression::Math { fun: naga::MathFunction::Trunc, arg, arg1: None, arg2: None, arg3: None }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => trunc($($arg:tt)*) $($others:tt)*) => {{
+        let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
+        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Trunc, arg, arg1: None, arg2: None, arg3: None });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => round($($arg:tt)*) $($others:tt)*) => {{
-        let arg = naga_expr!(@inner $constants, $expressions, $block => $($arg)*);
-        let handle = $expressions.append(naga::Expression::Math { fun: naga::MathFunction::Round, arg, arg1: None, arg2: None, arg3: None }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => round($($arg:tt)*) $($others:tt)*) => {{
+        let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
+        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Round, arg, arg1: None, arg2: None, arg3: None });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => sqrt($($arg:tt)*) $($others:tt)*) => {{
-        let arg = naga_expr!(@inner $constants, $expressions, $block => $($arg)*);
-        let handle = $expressions.append(naga::Expression::Math { fun: naga::MathFunction::Sqrt, arg, arg1: None, arg2: None, arg3: None }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => sqrt($($arg:tt)*) $($others:tt)*) => {{
+        let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
+        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Sqrt, arg, arg1: None, arg2: None, arg3: None });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => sign($($arg:tt)*) $($others:tt)*) => {{
-        let arg = naga_expr!(@inner $constants, $expressions, $block => $($arg)*);
-        let handle = $expressions.append(naga::Expression::Math { fun: naga::MathFunction::Sign, arg, arg1: None, arg2: None, arg3: None }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+    (@inner $ctx:expr => sign($($arg:tt)*) $($others:tt)*) => {{
+        let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
+        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Sign, arg, arg1: None, arg2: None, arg3: None });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => min($($args:tt)*) $($others:tt)*) => {{
+    (@inner $ctx:expr => min($($args:tt)*) $($others:tt)*) => {{
         let mut components = Vec::new();
-        naga_expr!{@innerconstructor $constants, $expressions, $block, components => $($args)* }
+        $crate::naga_expr!{@innerconstructor $ctx, components => $($args)* }
         let arg = components[0];
         let arg1 = components[1];
-        let handle = $expressions.append(naga::Expression::Math { fun: naga::MathFunction::Min, arg, arg1: Some(arg1), arg2: None, arg3: None }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Min, arg, arg1: Some(arg1), arg2: None, arg3: None });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => max($($args:tt)*) $($others:tt)*) => {{
+    (@inner $ctx:expr => max($($args:tt)*) $($others:tt)*) => {{
         let mut components = Vec::new();
-        naga_expr!{@innerconstructor $constants, $expressions, $block, components => $($args)* }
+        $crate::naga_expr!{@innerconstructor $ctx, components => $($args)* }
         let arg = components[0];
         let arg1 = components[1];
-        let handle = $expressions.append(naga::Expression::Math { fun: naga::MathFunction::Max, arg, arg1: Some(arg1), arg2: None, arg3: None }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Max, arg, arg1: Some(arg1), arg2: None, arg3: None });
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 
     // Inline if
-    (@inner $constants:expr, $expressions:expr, $block:expr => if ( $($condition:tt)* ) { $($lhs:tt)* } else { $($rhs:tt)* } ) => {{
-        let condition = naga_expr!(@inner $constants, $expressions, $block => $($condition)* );
-        let accept = naga_expr!(@inner $constants, $expressions, $block => $($lhs)*);
-        let reject = naga_expr!(@inner $constants, $expressions, $block => $($rhs)*);
-        let handle = $expressions.append(naga::Expression::Select { condition, accept, reject }, naga::Span::UNDEFINED);
-        naga_ext::naga_expr!(@emit $block => handle)
+    (@inner $ctx:expr => if ( $($condition:tt)* ) { $($lhs:tt)* } else { $($rhs:tt)* } ) => {{
+        let condition = $crate::naga_expr!(@inner $ctx => $($condition)* );
+        let accept = $crate::naga_expr!(@inner $ctx => $($lhs)*);
+        let reject = $crate::naga_expr!(@inner $ctx => $($rhs)*);
+        let handle = $ctx.append_expression(naga::Expression::Select { condition, accept, reject });
+        $ctx.emit(handle)
     }};
 
     // Constructors
-    (@innerconstructor $constants:expr, $expressions:expr, $block:expr, $components:expr => $e1:tt $(, $($others:tt)*)?) => {{
-        $components.push(naga_expr!(@inner $constants, $expressions, $block => $e1));
-        $(naga_expr!(@innerconstructor $constants, $expressions, $block, $components => $($others)*);)*
+    (@innerconstructor $ctx:expr, $components:expr => $e1:tt $(, $($others:tt)*)?) => {{
+        $components.push(naga_expr!(@inner $ctx => $e1));
+        $(naga_expr!(@innerconstructor $ctx, $components => $($others)*);)*
     }};
-    (@innerconstructor $constants:expr, $expressions:expr, $block:expr, $components:expr => $e1:tt $e2:tt $(, $($others:tt)*)?) => {{
-        $components.push(naga_expr!(@inner $constants, $expressions, $block => $e1 $e2));
-        $(naga_expr!(@innerconstructor $constants, $expressions, $block, $components => $($others)*);)*
+    (@innerconstructor $ctx:expr, $components:expr => $e1:tt $e2:tt $(, $($others:tt)*)?) => {{
+        $components.push(naga_expr!(@inner $ctx => $e1 $e2));
+        $(naga_expr!(@innerconstructor $ctx, $components => $($others)*);)*
     }};
-    (@innerconstructor $constants:expr, $expressions:expr, $block:expr, $components:expr => $e1:tt $e2:tt $e3:tt $(, $($others:tt)*)?) => {{
-        $components.push(naga_expr!(@inner $constants, $expressions, $block => $e1 $e2 $e3));
-        $(naga_expr!(@innerconstructor $constants, $expressions, $block, $components => $($others)*);)*
+    (@innerconstructor $ctx:expr, $components:expr => $e1:tt $e2:tt $e3:tt $(, $($others:tt)*)?) => {{
+        $components.push(naga_expr!(@inner $ctx => $e1 $e2 $e3));
+        $(naga_expr!(@innerconstructor $ctx, $components => $($others)*);)*
     }};
-    (@innerconstructor $constants:expr, $expressions:expr, $block:expr, $components:expr => $e1:tt $e2:tt $e3:tt $e4:tt $(, $($others:tt)*)?) => {{
-        $components.push(naga_expr!(@inner $constants, $expressions, $block => $e1 $e2 $e3 $e4));
-        $(naga_expr!(@innerconstructor $constants, $expressions, $block, $components => $($others)*);)*
+    (@innerconstructor $ctx:expr, $components:expr => $e1:tt $e2:tt $e3:tt $e4:tt $(, $($others:tt)*)?) => {{
+        $components.push(naga_expr!(@inner $ctx => $e1 $e2 $e3 $e4));
+        $(naga_expr!(@innerconstructor $ctx, $components => $($others)*);)*
     }};
-    (@innerconstructor $constants:expr, $expressions:expr, $block:expr, $components:expr => $e1:tt $e2:tt $e3:tt $e4:tt $e5:tt $(, $($others:tt)*)?) => {{
-        $components.push(naga_expr!(@inner $constants, $expressions, $block => $e1 $e2 $e3 $e4 $e5));
-        $(naga_expr!(@innerconstructor $constants, $expressions, $block, $components => $($others)*);)*
+    (@innerconstructor $ctx:expr, $components:expr => $e1:tt $e2:tt $e3:tt $e4:tt $e5:tt $(, $($others:tt)*)?) => {{
+        $components.push(naga_expr!(@inner $ctx => $e1 $e2 $e3 $e4 $e5));
+        $(naga_expr!(@innerconstructor $ctx, $components => $($others)*);)*
     }};
-    (@inner $constants:expr, $expressions:expr, $block:expr => $ty:tt ( $($args:tt)* ) $($others:tt)*) => {{
+    (@inner $ctx:expr => $ty:tt ( $($args:tt)* ) $($others:tt)*) => {{
         let mut components = Vec::new();
-        naga_expr!{@innerconstructor $constants, $expressions, $block, components => $($args)* }
-        let handle = $expressions.append(
-            naga::Expression::Compose {ty: $ty, components},
-            naga::Span::UNDEFINED,
-        );
-        naga_ext::naga_expr!(@emit $block => handle);
-        naga_expr!(@inner $constants, $expressions, $block => handle $($others)*)
+        $crate::naga_expr!{@innerconstructor $ctx, components => $($args)* }
+        let handle = $ctx.append_expression(naga::Expression::Compose {ty: $ty, components});
+        $ctx.emit(handle);
+        $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 
     // Step braces
-    (@inner $constants:expr, $expressions:expr, $block:expr => ($($expression:tt)*) $($others:tt)*) => {{
-        let lhs = naga_ext::naga_expr!(@inner $constants, $expressions, $block => $($expression)*);
-        naga_expr!(@inner $constants, $expressions, $block => lhs $($others)*)
+    (@inner $ctx:expr => ($($expression:tt)*) $($others:tt)*) => {{
+        let lhs = $crate::naga_expr!(@inner $ctx => $($expression)*);
+        $crate::naga_expr!(@inner $ctx => lhs $($others)*)
     }};
 
     // Arbitrary embeddings
-    (@inner $constants:expr, $expressions:expr, $block:expr => {$term:expr}) => { $term };
-    (@inner $constants:expr, $expressions:expr, $block:expr => $term:expr) => { $term };
+    (@inner $ctx:expr => {$term:expr}) => { $term };
+    (@inner $ctx:expr => $term:expr) => { $term };
 }

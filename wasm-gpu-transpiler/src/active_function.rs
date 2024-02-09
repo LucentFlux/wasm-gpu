@@ -5,8 +5,7 @@ mod results;
 
 use crate::typed::FuncRef;
 use naga::Handle;
-use naga_ext::{naga_expr, BlockExt, ExpressionsExt, ModuleExt, ShaderPart};
-use wasm_opcodes::OperatorByProposal;
+use naga_ext::{naga_expr, BlockContext, BlockExt, ExpressionsExt, ModuleExt};
 
 use self::active_block::{ActiveBlock, BlockType, BodyData};
 use self::results::WasmFnResTy;
@@ -30,7 +29,7 @@ pub(crate) trait InactiveFunction {
 }
 
 /// Any function, entry or not, that can be modified.
-pub(crate) trait ActiveFunction<'f, 'm: 'f>: ShaderPart {
+pub(crate) trait ActiveFunction<'f, 'm: 'f> {
     fn fn_mut<'b>(&'b mut self) -> &'b mut naga::Function
     where
         'f: 'b;
@@ -126,6 +125,8 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
             std_objects,
             ..
         } = working_module;
+        let types = &mut module.types;
+        let const_expressions = &mut module.const_expressions;
         let constants = &mut module.constants;
         let function = module.functions.get_mut(data.handle);
         let mut body_data = BodyData::new(
@@ -134,6 +135,8 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
             return_type,
             &data.locals,
             constants,
+            types,
+            const_expressions,
             &mut function.expressions,
             &mut function.local_variables,
             &std_objects,
@@ -170,17 +173,18 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
     }
 }
 
-impl<'f, 'm: 'f> ShaderPart for ActiveInternalFunction<'f, 'm> {
-    fn parts(
-        &mut self,
-    ) -> (
-        &mut naga::Arena<naga::Constant>,
-        &mut naga::Arena<naga::Expression>,
-        &mut naga::Block,
-    ) {
-        let ActiveModule { module, .. } = self.working_module;
-        let func = module.functions.get_mut(self.data.handle);
-        (&mut module.constants, &mut func.expressions, &mut func.body)
+impl<'a, 'f, 'm: 'f> From<&'a mut ActiveInternalFunction<'f, 'm>> for BlockContext<'a> {
+    fn from(value: &'a mut ActiveInternalFunction<'f, 'm>) -> Self {
+        let ActiveModule { module, .. } = value.working_module;
+        let func = module.functions.get_mut(value.data.handle);
+
+        BlockContext {
+            types: &mut module.types,
+            constants: &mut module.constants,
+            const_expressions: &mut module.const_expressions,
+            expressions: &mut func.expressions,
+            block: &mut func.body,
+        }
     }
 }
 
@@ -361,26 +365,23 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
     }
 }
 
-impl<'f, 'm: 'f> ShaderPart for ActiveEntryFunction<'f, 'm> {
-    fn parts<'b>(
-        &mut self,
-    ) -> (
-        &mut naga::Arena<naga::Constant>,
-        &mut naga::Arena<naga::Expression>,
-        &mut naga::Block,
-    ) {
-        let func = &mut self
+impl<'a, 'f, 'm: 'f> From<&'a mut ActiveEntryFunction<'f, 'm>> for BlockContext<'a> {
+    fn from(value: &'a mut ActiveEntryFunction<'f, 'm>) -> Self {
+        let func = &mut value
             .working_module
             .module
             .entry_points
-            .get_mut(self.data.index)
+            .get_mut(value.data.index)
             .expect("entry points cannot be removed")
             .function;
-        (
-            &mut self.working_module.module.constants,
-            &mut func.expressions,
-            &mut func.body,
-        )
+
+        BlockContext {
+            types: &mut value.working_module.module.types,
+            constants: &mut value.working_module.module.constants,
+            const_expressions: &mut value.working_module.module.const_expressions,
+            expressions: &mut func.expressions,
+            block: &mut func.body,
+        }
     }
 }
 

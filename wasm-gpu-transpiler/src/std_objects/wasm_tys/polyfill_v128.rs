@@ -1,20 +1,17 @@
-use std::sync::Arc;
-
+use crate::build;
+use crate::std_objects::preamble_objects_gen;
 use crate::typed::V128;
-use crate::{build, std_objects::std_objects_gen};
-use naga_ext::{declare_function, naga_expr, BlockExt, ConstantsExt, ModuleExt, TypesExt};
+use naga_ext::{
+    declare_function, naga_expr, BlockExt, ConstantsExt, ExpressionsExt, ModuleExt, TypesExt,
+};
 
 use super::{v128_instance_gen, V128Gen};
 
-fn make_ty(types: &mut naga::UniqueArena<naga::Type>) -> naga::Handle<naga::Type> {
-    types.insert_anonymous(naga::TypeInner::Vector {
-        size: naga::VectorSize::Quad,
-        scalar: naga::Scalar::U32,
-    })
-}
-
-fn make_const_impl(module: &mut naga::Module, value: V128) -> naga::Handle<naga::Constant> {
-    let ty = make_ty(&mut module.types);
+fn make_const_impl(
+    module: &mut naga::Module,
+    ty: naga::Handle<naga::Type>,
+    value: V128,
+) -> naga::Handle<naga::Constant> {
     let bytes = value.to_le_bytes();
     let components = bytes
         .as_chunks::<4>()
@@ -38,14 +35,19 @@ impl V128Gen for PolyfillV128 {
         module: &mut naga::Module,
         _others: super::v128_instance_gen::TyRequirements,
     ) -> build::Result<super::v128_instance_gen::Ty> {
-        Ok(make_ty(&mut module.types))
+        let ty = module.types.insert_anonymous(naga::TypeInner::Vector {
+            size: naga::VectorSize::Quad,
+            scalar: naga::Scalar::U32,
+        });
+
+        Ok(ty)
     }
 
     fn gen_default(
         module: &mut naga::Module,
         others: super::v128_instance_gen::DefaultRequirements,
     ) -> build::Result<super::v128_instance_gen::Default> {
-        Ok(make_const_impl(module, V128::from_bits(0)))
+        Ok(make_const_impl(module, *others.ty, V128::from_bits(0)))
     }
 
     fn gen_size_bytes(
@@ -57,11 +59,12 @@ impl V128Gen for PolyfillV128 {
 
     fn gen_make_const(
         _module: &mut naga::Module,
-        _others: super::v128_instance_gen::MakeConstRequirements,
+        others: super::v128_instance_gen::MakeConstRequirements,
     ) -> build::Result<super::v128_instance_gen::MakeConst> {
-        Ok(Arc::new(Box::new(|module, std_objects, value| {
-            Ok(make_const_impl(module, value))
-        })))
+        let ty = *others.ty;
+        Ok(Box::new(move |module, value| {
+            Ok(make_const_impl(module, ty, value))
+        }))
     }
 
     fn gen_read_input(
@@ -70,9 +73,9 @@ impl V128Gen for PolyfillV128 {
     ) -> build::Result<super::v128_instance_gen::ReadInput> {
         gen_read(
             module,
-            others.word,
-            others.ty,
-            others.bindings.input,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.input,
             "input",
         )
     }
@@ -83,9 +86,9 @@ impl V128Gen for PolyfillV128 {
     ) -> build::Result<super::v128_instance_gen::WriteOutput> {
         gen_write(
             module,
-            others.word,
-            others.ty,
-            others.bindings.output,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.output,
             "output",
         )
     }
@@ -96,9 +99,9 @@ impl V128Gen for PolyfillV128 {
     ) -> build::Result<super::v128_instance_gen::ReadMemory> {
         gen_read(
             module,
-            others.word,
-            others.ty,
-            others.bindings.memory,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.memory,
             "memory",
         )
     }
@@ -109,9 +112,9 @@ impl V128Gen for PolyfillV128 {
     ) -> build::Result<super::v128_instance_gen::WriteMemory> {
         gen_write(
             module,
-            others.word,
-            others.ty,
-            others.bindings.memory,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.memory,
             "memory",
         )
     }
@@ -120,7 +123,7 @@ impl V128Gen for PolyfillV128 {
 // fn<buffer>(word_address: u32) -> v128
 fn gen_read(
     module: &mut naga::Module,
-    address_ty: std_objects_gen::Word,
+    address_ty: preamble_objects_gen::WordTy,
     v128_ty: v128_instance_gen::Ty,
     buffer: naga::Handle<naga::GlobalVariable>,
     buffer_name: &str,
@@ -150,7 +153,7 @@ fn gen_read(
 // fn<buffer>(word_address: u32, value: v128)
 fn gen_write(
     module: &mut naga::Module,
-    address_ty: std_objects_gen::Word,
+    address_ty: preamble_objects_gen::WordTy,
     v128_ty: v128_instance_gen::Ty,
     buffer: naga::Handle<naga::GlobalVariable>,
     buffer_name: &str,

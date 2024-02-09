@@ -1,7 +1,7 @@
 use std::{iter::Peekable, sync::atomic::AtomicUsize};
 
 use itertools::Itertools;
-use naga_ext::{naga_expr, BlockExt, ExpressionsExt, LocalsExt, ShaderPart};
+use naga_ext::{naga_expr, BlockContext, BlockExt, ExpressionsExt, LocalsExt};
 use wasm_opcodes::{proposals::ControlFlowOperator, OperatorByProposal};
 use wasmparser::ValType;
 use wasmtime_environ::Trap;
@@ -103,6 +103,8 @@ pub(crate) struct BodyData<'a> {
     locals: &'a FnLocals,
 
     // Pulled from the module and function
+    types: &'a mut naga::UniqueArena<naga::Type>,
+    const_expressions: &'a mut naga::Arena<naga::Expression>,
     constants: &'a mut naga::Arena<naga::Constant>,
     expressions: &'a mut naga::Arena<naga::Expression>,
     local_variables: &'a mut naga::Arena<naga::LocalVariable>,
@@ -137,6 +139,8 @@ impl<'a> BodyData<'a> {
         module_data: &'a FunctionModuleData,
         return_type: &'a Option<WasmFnResTy>,
         locals: &'a FnLocals,
+        types: &'a mut naga::UniqueArena<naga::Type>,
+        const_expressions: &'a mut naga::Arena<naga::Expression>,
         constants: &'a mut naga::Arena<naga::Constant>,
         expressions: &'a mut naga::Arena<naga::Expression>,
         local_variables: &'a mut naga::Arena<naga::LocalVariable>,
@@ -160,6 +164,8 @@ impl<'a> BodyData<'a> {
             module_data,
             return_type,
             locals,
+            types,
+            const_expressions,
             constants,
             expressions,
             local_variables,
@@ -1144,18 +1150,14 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
     }
 }
 
-impl<'b, 'd> ShaderPart for ActiveBlock<'b, 'd> {
-    fn parts(
-        &mut self,
-    ) -> (
-        &mut naga::Arena<naga::Constant>,
-        &mut naga::Arena<naga::Expression>,
-        &mut naga::Block,
-    ) {
-        (
-            self.body_data.constants,
-            self.body_data.expressions,
-            self.block,
-        )
+impl<'a, 'b, 'd> From<&'a mut ActiveBlock<'b, 'd>> for BlockContext<'a> {
+    fn from(value: &'a mut ActiveBlock<'b, 'd>) -> Self {
+        BlockContext {
+            types: &mut value.body_data.types,
+            constants: &mut value.body_data.constants,
+            const_expressions: &mut value.body_data.const_expressions,
+            expressions: &mut value.body_data.expressions,
+            block: &mut value.block,
+        }
     }
 }

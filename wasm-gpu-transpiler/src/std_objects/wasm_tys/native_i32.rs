@@ -1,6 +1,4 @@
-use std::sync::Arc;
-
-use crate::{build, std_objects::std_objects_gen};
+use crate::{build, std_objects::preamble_objects_gen};
 use naga_ext::{
     declare_function, naga_expr, BlockExt, ConstantsExt, ExpressionsExt, LocalsExt, ModuleExt,
     TypesExt,
@@ -9,8 +7,11 @@ use wasmtime_environ::Trap;
 
 use super::{i32_instance_gen, I32Gen};
 
-fn make_const_impl(module: &mut naga::Module, value: i32) -> naga::Handle<naga::Constant> {
-    let ty = module.types.insert_i32();
+fn make_const_impl(
+    module: &mut naga::Module,
+    ty: naga::Handle<naga::Type>,
+    value: i32,
+) -> naga::Handle<naga::Constant> {
     let expr = module.const_expressions.append_i32(value);
     module.constants.append_anonymous(ty, expr)
 }
@@ -27,9 +28,9 @@ impl I32Gen for NativeI32 {
 
     fn gen_default(
         module: &mut naga::Module,
-        _others: super::i32_instance_gen::DefaultRequirements,
+        others: super::i32_instance_gen::DefaultRequirements,
     ) -> build::Result<super::i32_instance_gen::Default> {
-        Ok(make_const_impl(module, 0))
+        Ok(make_const_impl(module, *others.ty, 0))
     }
 
     fn gen_size_bytes(
@@ -41,11 +42,12 @@ impl I32Gen for NativeI32 {
 
     fn gen_make_const(
         _module: &mut naga::Module,
-        _others: super::i32_instance_gen::MakeConstRequirements,
+        others: super::i32_instance_gen::MakeConstRequirements,
     ) -> build::Result<super::i32_instance_gen::MakeConst> {
-        Ok(Arc::new(Box::new(|module, _, value| {
-            Ok(make_const_impl(module, value))
-        })))
+        let ty = *others.ty;
+        Ok(Box::new(move |module, value| {
+            Ok(make_const_impl(module, ty, value))
+        }))
     }
 
     fn gen_read_input(
@@ -54,9 +56,9 @@ impl I32Gen for NativeI32 {
     ) -> build::Result<super::i32_instance_gen::ReadInput> {
         gen_read(
             module,
-            others.word,
-            others.ty,
-            others.bindings.input,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.input,
             "input",
         )
     }
@@ -67,9 +69,9 @@ impl I32Gen for NativeI32 {
     ) -> build::Result<super::i32_instance_gen::WriteOutput> {
         gen_write(
             module,
-            others.word,
-            others.ty,
-            others.bindings.output,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.output,
             "output",
         )
     }
@@ -80,9 +82,9 @@ impl I32Gen for NativeI32 {
     ) -> build::Result<super::i32_instance_gen::ReadMemory> {
         gen_read(
             module,
-            others.word,
-            others.ty,
-            others.bindings.memory,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.memory,
             "memory",
         )
     }
@@ -93,9 +95,9 @@ impl I32Gen for NativeI32 {
     ) -> build::Result<super::i32_instance_gen::WriteMemory> {
         gen_write(
             module,
-            others.word,
-            others.ty,
-            others.bindings.memory,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.memory,
             "memory",
         )
     }
@@ -107,11 +109,13 @@ impl I32Gen for NativeI32 {
         others: i32_instance_gen::EqzRequirements,
     ) -> build::Result<i32_instance_gen::Eqz> {
         let (function_handle, value) = declare_function! {
-            module => fn i32_eqz(value: others.ty) -> others.wasm_bool.ty
+            module => fn i32_eqz(value: *others.ty) -> others.preamble.wasm_bool.ty
         };
 
-        let t = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_true));
-        let f = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_false));
+        let t =
+            naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_true));
+        let f =
+            naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_false));
         let res = naga_expr!(module, function_handle => if (value == I32(0)) {t} else {f});
         module.fn_mut(function_handle).body.push_return(res);
 
@@ -139,7 +143,7 @@ impl I32Gen for NativeI32 {
         others: i32_instance_gen::ClzRequirements,
     ) -> build::Result<i32_instance_gen::Clz> {
         let (function_handle, value) = declare_function! {
-          module => fn i32_clz(value:others.ty) -> others.ty
+          module => fn i32_clz(value: *others.ty) -> *others.ty
         };
         let res = module.fn_mut(function_handle).expressions.append(
             naga::Expression::Math {
@@ -164,7 +168,7 @@ impl I32Gen for NativeI32 {
         others: i32_instance_gen::CtzRequirements,
     ) -> build::Result<i32_instance_gen::Ctz> {
         let (function_handle, value) = declare_function! {
-          module => fn i32_ctz(value:others.ty) -> others.ty
+          module => fn i32_ctz(value: *others.ty) -> *others.ty
         };
         let res = module.fn_mut(function_handle).expressions.append(
             naga::Expression::Math {
@@ -189,15 +193,15 @@ impl I32Gen for NativeI32 {
         others: i32_instance_gen::DivSRequirements,
     ) -> build::Result<i32_instance_gen::DivS> {
         let (function_handle, lhs, rhs) = declare_function! {
-          module => fn i32_div_s(lhs:others.ty,rhs:others.ty)->others.ty
+          module => fn i32_div_s(lhs: *others.ty, rhs: *others.ty) -> *others.ty
         };
 
         // Div by 0 test
         let is_0 = naga_expr!(module, function_handle => rhs == I32(0));
         let mut if_0 = naga::Block::default();
-        others.trap_values.emit_set_trap(
+        others.preamble.trap_values.emit_set_trap(
             Trap::IntegerDivisionByZero,
-            others.trap_state,
+            others.preamble.trap_state,
             &mut (&mut *module, function_handle, &mut if_0),
         );
         module
@@ -209,9 +213,9 @@ impl I32Gen for NativeI32 {
         let is_overflowing =
             naga_expr!(module, function_handle => (lhs == I32(-2147483648)) & (rhs == I32(-1)));
         let mut if_overflowing = naga::Block::default();
-        others.trap_values.emit_set_trap(
+        others.preamble.trap_values.emit_set_trap(
             Trap::IntegerOverflow,
-            others.trap_state,
+            others.preamble.trap_state,
             &mut (&mut *module, function_handle, &mut if_overflowing),
         );
         module.fn_mut(function_handle).body.push_if(
@@ -230,15 +234,15 @@ impl I32Gen for NativeI32 {
         others: i32_instance_gen::DivURequirements,
     ) -> build::Result<i32_instance_gen::DivU> {
         let (function_handle, lhs, rhs) = declare_function! {
-          module => fn i32_div_u(lhs:others.ty,rhs:others.ty)->others.ty
+          module => fn i32_div_u(lhs: *others.ty, rhs: *others.ty) -> *others.ty
         };
 
         // Div by 0 test
         let is_0 = naga_expr!(module, function_handle => rhs == I32(0));
         let mut if_0 = naga::Block::default();
-        others.trap_values.emit_set_trap(
+        others.preamble.trap_values.emit_set_trap(
             Trap::IntegerDivisionByZero,
-            others.trap_state,
+            others.preamble.trap_state,
             &mut (&mut *module, function_handle, &mut if_0),
         );
         module
@@ -256,15 +260,15 @@ impl I32Gen for NativeI32 {
         others: i32_instance_gen::RemSRequirements,
     ) -> build::Result<i32_instance_gen::RemS> {
         let (function_handle, lhs, rhs) = declare_function! {
-          module => fn i32_rem_s(lhs:others.ty,rhs:others.ty)->others.ty
+          module => fn i32_rem_s(lhs: *others.ty, rhs: *others.ty) -> *others.ty
         };
 
         // Div by 0 test
         let is_0 = naga_expr!(module, function_handle => rhs == I32(0));
         let mut if_0 = naga::Block::default();
-        others.trap_values.emit_set_trap(
+        others.preamble.trap_values.emit_set_trap(
             Trap::IntegerDivisionByZero,
-            others.trap_state,
+            others.preamble.trap_state,
             &mut (&mut *module, function_handle, &mut if_0),
         );
         module
@@ -282,14 +286,15 @@ impl I32Gen for NativeI32 {
         others: i32_instance_gen::RemURequirements,
     ) -> build::Result<i32_instance_gen::RemU> {
         let (function_handle, lhs, rhs) = declare_function! {
-          module => fn i32_rem_u(lhs:others.ty,rhs:others.ty)->others.ty
+          module => fn i32_rem_u(lhs: *others.ty, rhs: *others.ty) -> *others.ty
         };
 
-        let trap_location = naga_expr!(module, function_handle => Global(others.trap_state));
+        let trap_location =
+            naga_expr!(module, function_handle => Global(others.preamble.trap_state));
 
         // Div by 0 test
         let is_0 = naga_expr!(module, function_handle => rhs == I32(0));
-        let trap_code = others.trap_values.get(Trap::IntegerDivisionByZero);
+        let trap_code = others.preamble.trap_values.get(Trap::IntegerDivisionByZero);
         let trap_code = naga_expr!(module, function_handle => Constant(trap_code));
         let mut if_0 = naga::Block::default();
         if_0.push_store(trap_location, trap_code);
@@ -308,7 +313,7 @@ impl I32Gen for NativeI32 {
         others: i32_instance_gen::RotlRequirements,
     ) -> build::Result<i32_instance_gen::Rotl> {
         let (function_handle, lhs, rhs) = declare_function! {
-            module => fn i32_rotl(lhs: others.ty, rhs: others.ty) -> others.ty
+            module => fn i32_rotl(lhs: *others.ty, rhs: *others.ty) -> *others.ty
         };
 
         let lhs = naga_expr!(module, function_handle => lhs as Uint);
@@ -327,7 +332,7 @@ impl I32Gen for NativeI32 {
         others: i32_instance_gen::RotrRequirements,
     ) -> build::Result<i32_instance_gen::Rotr> {
         let (function_handle, lhs, rhs) = declare_function! {
-            module => fn i32_rotr(lhs: others.ty, rhs: others.ty) -> others.ty
+            module => fn i32_rotr(lhs: *others.ty, rhs: *others.ty) -> *others.ty
         };
 
         let lhs = naga_expr!(module, function_handle => lhs as Uint);
@@ -354,7 +359,7 @@ impl I32Gen for NativeI32 {
         others: i32_instance_gen::Extend8SRequirements,
     ) -> build::Result<i32_instance_gen::Extend8S> {
         let (function_handle, value) = declare_function! {
-            module => fn i32_extend_8_s(value: others.ty) -> others.ty
+            module => fn i32_extend_8_s(value: *others.ty) -> *others.ty
         };
 
         let res = naga_expr!(module, function_handle => (value << U32(24)) >> U32(24));
@@ -368,7 +373,7 @@ impl I32Gen for NativeI32 {
         others: i32_instance_gen::Extend16SRequirements,
     ) -> build::Result<i32_instance_gen::Extend16S> {
         let (function_handle, value) = declare_function! {
-            module => fn i32_extend_16_s(value: others.ty) -> others.ty
+            module => fn i32_extend_16_s(value: *others.ty) -> *others.ty
         };
 
         let res = naga_expr!(module, function_handle => (value << U32(16)) >> U32(16));
@@ -381,7 +386,7 @@ impl I32Gen for NativeI32 {
 // fn<buffer>(word_address: u32) -> i32
 fn gen_read(
     module: &mut naga::Module,
-    address_ty: std_objects_gen::Word,
+    address_ty: preamble_objects_gen::WordTy,
     i32_ty: i32_instance_gen::Ty,
     buffer: naga::Handle<naga::GlobalVariable>,
     buffer_name: &str,
@@ -401,7 +406,7 @@ fn gen_read(
 // fn<buffer>(word_address: u32, value: i32)
 fn gen_write(
     module: &mut naga::Module,
-    address_ty: std_objects_gen::Word,
+    address_ty: preamble_objects_gen::WordTy,
     i32_ty: i32_instance_gen::Ty,
     buffer: naga::Handle<naga::GlobalVariable>,
     buffer_name: &str,

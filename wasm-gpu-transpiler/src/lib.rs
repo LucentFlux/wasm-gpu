@@ -124,17 +124,17 @@ pub struct FloatingPointOptions {
     /// Most GPUs support very fast 32-bit floating point operations, but only for some subset of 'normal' floats.
     /// WebAssembly requires SubNormals to be supported for an engine to be specification compliant. Only set this
     /// to `false` if you are 100% absolutely sure that the GPU that your program is using supports SubNormals.
-    /// Setting to `false` on a GPU without SubNormal support will result in undefined/unspecified behaviour.
+    /// Setting to `false` on a GPU without SubNormal support will result in incorrect behaviour.
     pub emulate_subnormals: bool,
     /// WebGPU (and Vulkan) only require correct division when the operands are below `2^126`, which is less than the
     /// maximum 32-bit floating point value within WebAssembly. This flag emulates division when either of the operands
     /// are above this limit. Only set this to `false` if you are 100% absolutely sure that the GPU that your program
     /// is using supports division with any (non-subnormal, see `emulate_subnormals`) argument.
-    /// Setting to `false` on a GPU without full-range division support will result in undefined behaviour.
+    /// Setting to `false` on a GPU without full-range division support will result in incorrect behaviour.
     pub emulate_div_beyond_max: bool,
     /// If set to true, the translator will output f64 instructions. If false, emulated floats will be used. Similarly
     /// to other options, this should only be set to `false` if you are sure that your GPU supports 64 bit floats,
-    /// however incorrect setting of this flag will result in a crash, rather than undefined/unspecified behaviour.
+    /// however incorrect setting of this flag will result in a crash, rather than incorrect behaviour.
     pub emulate_f64: bool,
 }
 
@@ -148,7 +148,7 @@ impl Default for Tuneables {
 }
 
 impl FloatingPointOptions {
-    /// Use with caution; not emulating any FP operations typically results in undefined behavior on most GPUs.
+    /// Use with caution; not emulating any FP operations typically results in incorrect rounding or subnormal behaviour on most GPUs.
     pub unsafe fn no_emulation() -> Self {
         Self {
             emulate_subnormals: false,
@@ -168,7 +168,7 @@ impl Default for FloatingPointOptions {
     }
 }
 
-pub fn get_entry_name(funcref: wasm_types::FuncRef) -> String {
+pub fn get_entry_name(funcref: crate::typed::FuncRef) -> String {
     format!(
         "__wasm_entry_function_{}",
         funcref.as_u32().unwrap_or(u32::MAX)
@@ -185,10 +185,6 @@ pub enum BuildError {
     UnsupportedTypeError { wasm_type: wasmparser::ValType },
     #[error("wasm had {0:?} larger than i32::MAX, and so was not addressable on the GPU's 32-bit architecture")]
     BoundsExceeded(ExceededComponent),
-    #[error("naga failed to emit spir-v {0:?}")]
-    NagaSpvBackError(naga::back::spv::Error),
-    #[error("naga failed to receive spir-v {0:?}")]
-    NagaSpvFrontError(naga::front::spv::Error),
     #[error("one of our validation checks didn't hold. This is a bug in the wasm-gpu-funcgen crate: {0:?}")]
     ValidationError(ValidationError),
 }
@@ -197,8 +193,6 @@ pub enum BuildError {
 pub enum ValidationError {
     #[error("naga validation failed {0:?}")]
     NagaValidationError(ExternalValidationError<naga::valid::ValidationError>),
-    #[error("spirv-tools validation failed {0:?}")]
-    SpvToolsValidationError(ExternalValidationError<spirv_tools::Error>),
     #[error("the module contained no shader entry points")]
     NoEntryPoints,
     #[error("the module's binding at index {binding_index:?} for the {buffer_label:?} buffer was incompatible: got type {observed_buffer_type:?} but required type {required_buffer_type:?}")]
@@ -230,7 +224,7 @@ impl<E> ExternalValidationError<E> {
         source: E,
         module: &naga::Module,
         tuneables: &Tuneables,
-        functions: &FuncsInstance,
+        functions: FuncsInstance,
         capabilities: naga::valid::Capabilities,
     ) -> Self {
         Self {
@@ -240,7 +234,7 @@ impl<E> ExternalValidationError<E> {
             #[cfg(debug_assertions)]
             tuneables: tuneables.clone(),
             #[cfg(debug_assertions)]
-            functions: functions.clone(),
+            functions,
             #[cfg(debug_assertions)]
             capabilities,
         }

@@ -146,9 +146,7 @@ impl AssembledModule {
 
         let assembled = if cfg!(feature = "opt") {
             assembled
-                .perform_spirv_tools_opt_passes(false, false, true)?
-                .perform_our_opt_passes()?
-                .perform_spirv_tools_opt_passes(false, false, true)?
+                .perform_opt_passes()?
         } else {
             assembled
         };
@@ -156,75 +154,10 @@ impl AssembledModule {
         Ok(assembled)
     }
 
-    fn perform_spirv_tools_opt_passes(
-        self,
-        legalization: bool,
-        size: bool,
-        performance: bool,
-    ) -> build::Result<Self> {
-        use spirv_tools::opt::Optimizer;
-
-        // First convert to spir-v
-        let words = self
-            .generate_spv_source()
-            .map_err(BuildError::NagaSpvBackError)?;
-
-        // Then optimise the spir-v
-        let mut opt = spirv_tools::opt::create(Some(crate::TARGET_ENV));
-        if legalization {
-            opt.register_hlsl_legalization_passes();
-        }
-        if size {
-            opt.register_size_passes();
-        }
-        if performance {
-            opt.register_performance_passes();
-        }
-        let optimised = opt
-            .optimize(
-                words,
-                &mut |message| println!("spirv-opt message: {:?}", message),
-                Some(spirv_tools::opt::Options {
-                    validator_options: Some(spirv_tools::val::ValidatorOptions {
-                        before_legalization: legalization,
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                }),
-            )
-            .map_err(|e| {
-                BuildError::ValidationError(ValidationError::SpvToolsValidationError(
-                    ExternalValidationError::new(
-                        e,
-                        &self.module,
-                        &self.tuneables,
-                        &self.functions,
-                        self.capabilities,
-                    ),
-                ))
-            })?;
-
-        // Then re-parse
-        let module = naga::front::spv::parse_u8_slice(optimised.as_bytes(), &crate::SPV_IN_OPTIONS)
-            .map_err(BuildError::NagaSpvFrontError)?;
-
-        // And re-validate
-        let tuneables = self.tuneables.clone();
-        let functions = self.functions.clone();
-        Ok(Self {
-            module_info: Self::validate(&module, &tuneables, &functions, self.capabilities, false)
-                .map_err(BuildError::ValidationError)?,
-            capabilities: self.capabilities,
-            module,
-            tuneables,
-            functions,
-        })
-    }
-
     /// The spirv-tools library isn't built for generated spirv, it's built for hand-coded shaders. This means
     /// that it fails to optimise some of the wierder things that we do. To get over this, we implement some of our
     /// own optimisations
-    fn perform_our_opt_passes(self) -> build::Result<Self> {
+    fn perform_opt_passes(self) -> build::Result<Self> {
         let Self {
             module,
             module_info: _, // Throw away old derived info
@@ -254,7 +187,7 @@ impl AssembledModule {
     /// Converts our internal representation to HLSL and passes it back as a string of source code.
     ///
     /// This method is intended for debugging; the outputted source is intended to be as close as possible
-    /// to the shader module that will be run, but no guarantee is made that compiling this souce will give
+    /// to the shader module that will be run, but no guarantee is made that compiling this source will give
     /// the same shader module as will be executed.
     pub fn generate_hlsl_source(&self) -> String {
         let mut output_shader = String::new();
@@ -264,18 +197,5 @@ impl AssembledModule {
         writer.write(&self.module, &self.module_info).unwrap();
 
         return output_shader;
-    }
-
-    /// Converts our internal representation to SPIR-V and passes it back as an array of bytes.
-    ///
-    /// This method is used when then generating modules, and so the module produced by this method
-    /// comes with guarantees of parity that `generate_hlsl_source` does not.
-    pub fn generate_spv_source(&self) -> Result<Vec<u32>, naga::back::spv::Error> {
-        let mut writer = naga::back::spv::Writer::new(&crate::SPV_OUT_OPTIONS)?;
-
-        let mut words = Vec::new();
-        writer.write(&self.module, &self.module_info, None, &mut words)?;
-
-        Ok(words)
     }
 }

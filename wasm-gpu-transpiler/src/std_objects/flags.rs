@@ -1,4 +1,4 @@
-use naga_ext::{naga_expr, BlockExt, ConstantsExt, ExpressionsExt, ShaderPart, TypesExt};
+use naga_ext::{naga_expr, BlockContext, BlockExt, ConstantsExt, ExpressionsExt, TypesExt};
 use wasmtime_environ::Trap;
 
 use crate::trap_to_u32;
@@ -108,7 +108,7 @@ impl TrapValuesInstance {
         &self,
         trap: Trap,
         trap_global: naga::Handle<naga::GlobalVariable>,
-        active: &mut impl ShaderPart,
+        active: &mut BlockContext<'_>,
     ) {
         let new_trap_code = self.get(trap);
         let new_trap_code = naga_expr!(active => Constant(new_trap_code));
@@ -121,9 +121,6 @@ impl TrapValuesInstance {
 
         let unset = naga_expr!(active => Constant(self.no_trap));
         let is_unset = naga_expr!(active => trap_code_current_value == unset);
-        active
-            .parts()
-            .2
-            .push_if(is_unset, if_unset, naga::Block::default());
+        active.push_if(is_unset, if_unset, naga::Block::default());
     }
 }

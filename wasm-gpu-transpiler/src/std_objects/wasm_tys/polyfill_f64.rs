@@ -1,18 +1,21 @@
-use std::sync::Arc;
-
 use super::{f64_instance_gen, F64Gen};
-use crate::{build, std_objects::std_objects_gen};
+use crate::{build, std_objects::preamble_objects_gen};
 use naga_ext::{
-    declare_function, naga_expr, BlockExt, ConstantsExt, ExpressionsExt, LocalsExt, ModuleExt,
+    declare_function, naga_expr, BlockExt, ExpressionsExt, LocalsExt, ModuleExt, TypesExt,
 };
 
 fn make_const_impl(
-    constants: &mut naga::Arena<naga::Constant>,
+    module: &mut naga::Module,
     ty: naga::Handle<naga::Type>,
     value: f64,
-) -> build::Result<naga::Handle<naga::Constant>> {
+) -> naga::Handle<naga::Constant> {
     let value = i64::from_le_bytes(value.to_le_bytes());
-    return Ok(super::make_64_bit_const_from_2vec32(ty, constants, value));
+    return super::make_64_bit_const_from_2vec32(
+        ty,
+        &mut module.const_expressions,
+        &mut module.constants,
+        value,
+    );
 }
 
 #[derive(Clone)]
@@ -187,11 +190,7 @@ impl FrexpParts {
         module: &mut naga::Module,
         function_handle: naga::Handle<naga::Function>,
     ) -> naga::Handle<naga::Expression> {
-        let tmp = module.constants.append_i32(0); // TODO: This
-        module
-            .fn_mut(function_handle)
-            .expressions
-            .append_constant(tmp)
+        module.fn_mut(function_handle).expressions.append_u32(0) // TODO: This
     }
 
     fn gen_le(
@@ -200,11 +199,7 @@ impl FrexpParts {
         module: &mut naga::Module,
         function_handle: naga::Handle<naga::Function>,
     ) -> naga::Handle<naga::Expression> {
-        let tmp = module.constants.append_i32(0); // TODO: This
-        module
-            .fn_mut(function_handle)
-            .expressions
-            .append_constant(tmp)
+        module.fn_mut(function_handle).expressions.append_u32(0) // TODO: This
     }
 
     fn gen_gt(
@@ -213,11 +208,7 @@ impl FrexpParts {
         module: &mut naga::Module,
         function_handle: naga::Handle<naga::Function>,
     ) -> naga::Handle<naga::Expression> {
-        let tmp = module.constants.append_i32(0); // TODO: This
-        module
-            .fn_mut(function_handle)
-            .expressions
-            .append_constant(tmp)
+        module.fn_mut(function_handle).expressions.append_u32(0) // TODO: This
     }
 
     fn gen_ge(
@@ -226,11 +217,7 @@ impl FrexpParts {
         module: &mut naga::Module,
         function_handle: naga::Handle<naga::Function>,
     ) -> naga::Handle<naga::Expression> {
-        let tmp = module.constants.append_i32(0); // TODO: This
-        module
-            .fn_mut(function_handle)
-            .expressions
-            .append_constant(tmp)
+        module.fn_mut(function_handle).expressions.append_u32(0) // TODO: This
     }
 
     /// Combines all of the component expressions into a 64 bit float, possibly losing subnormals and handling inf/nans badly
@@ -273,7 +260,7 @@ macro_rules! impl_mono_using_frexp {
                 module: &mut naga::Module,
                 others: $instance_gen::[< $fn:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $fn:camel >]> {
-                let f64_ty = others.ty;
+                let f64_ty = *others.ty;
                 let (function_handle, value) = declare_function! {
                     module => fn [< f64_ $fn >](value: f64_ty) -> f64_ty
                 };
@@ -298,7 +285,7 @@ macro_rules! impl_binary_using_frexp {
                 module: &mut naga::Module,
                 others: $instance_gen::[< $fn:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $fn:camel >]> {
-                let f64_ty = others.ty;
+                let f64_ty = *others.ty;
                 let (function_handle, lhs, rhs) = declare_function! {
                     module => fn [< f64_ $fn >](lhs: f64_ty, rhs: f64_ty) -> f64_ty
                 };
@@ -324,9 +311,9 @@ macro_rules! impl_bool_binary_using_frexp {
                 module: &mut naga::Module,
                 others: $instance_gen::[< $fn:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $fn:camel >]> {
-                let f64_ty = others.ty;
+                let f64_ty = *others.ty;
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< f64_ $fn >](lhs: f64_ty, rhs: f64_ty) -> others.wasm_bool.ty
+                    module => fn [< f64_ $fn >](lhs: f64_ty, rhs: f64_ty) -> others.preamble.wasm_bool.ty
                 };
 
                 let lhs_frexp = FrexpParts::from_uvec2(module, function_handle, lhs);
@@ -349,23 +336,19 @@ impl F64Gen for PolyfillF64 {
         module: &mut naga::Module,
         _others: f64_instance_gen::TyRequirements,
     ) -> build::Result<f64_instance_gen::Ty> {
-        let naga_ty = naga::Type {
-            name: Some("f64".to_owned()),
-            inner: naga::TypeInner::Vector {
-                size: naga::VectorSize::Bi,
-                kind: naga::ScalarKind::Uint,
-                width: 4,
-            },
-        };
+        let ty = module.types.insert_anonymous(naga::TypeInner::Vector {
+            size: naga::VectorSize::Bi,
+            scalar: naga::Scalar::U32,
+        });
 
-        return Ok(module.types.insert(naga_ty, naga::Span::UNDEFINED));
+        Ok(ty)
     }
 
     fn gen_default(
         module: &mut naga::Module,
         others: f64_instance_gen::DefaultRequirements,
     ) -> build::Result<f64_instance_gen::Default> {
-        make_const_impl(&mut module.constants, others.ty, 0.0)
+        Ok(make_const_impl(module, *others.ty, 0.0))
     }
 
     fn gen_size_bytes(
@@ -377,11 +360,12 @@ impl F64Gen for PolyfillF64 {
 
     fn gen_make_const(
         _module: &mut naga::Module,
-        _others: f64_instance_gen::MakeConstRequirements,
+        others: f64_instance_gen::MakeConstRequirements,
     ) -> build::Result<f64_instance_gen::MakeConst> {
-        Ok(Arc::new(Box::new(|module, std_objects, value| {
-            make_const_impl(module, std_objects.f64.ty, value)
-        })))
+        let ty = *others.ty;
+        Ok(Box::new(move |module, value| {
+            Ok(make_const_impl(module, ty, value))
+        }))
     }
 
     fn gen_read_input(
@@ -390,9 +374,9 @@ impl F64Gen for PolyfillF64 {
     ) -> build::Result<f64_instance_gen::ReadInput> {
         gen_read(
             module,
-            others.word,
-            others.ty,
-            others.bindings.input,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.input,
             "input",
         )
     }
@@ -403,9 +387,9 @@ impl F64Gen for PolyfillF64 {
     ) -> build::Result<f64_instance_gen::WriteOutput> {
         gen_write(
             module,
-            others.word,
-            others.ty,
-            others.bindings.output,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.output,
             "output",
         )
     }
@@ -416,9 +400,9 @@ impl F64Gen for PolyfillF64 {
     ) -> build::Result<f64_instance_gen::ReadMemory> {
         gen_read(
             module,
-            others.word,
-            others.ty,
-            others.bindings.memory,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.memory,
             "memory",
         )
     }
@@ -429,9 +413,9 @@ impl F64Gen for PolyfillF64 {
     ) -> build::Result<f64_instance_gen::WriteMemory> {
         gen_write(
             module,
-            others.word,
-            others.ty,
-            others.bindings.memory,
+            others.preamble.word_ty,
+            *others.ty,
+            others.preamble.bindings.memory,
             "memory",
         )
     }
@@ -465,7 +449,7 @@ impl F64Gen for PolyfillF64 {
 // fn<buffer>(word_address: u32) -> f64
 fn gen_read(
     module: &mut naga::Module,
-    address_ty: std_objects_gen::Word,
+    address_ty: preamble_objects_gen::WordTy,
     f64_ty: f64_instance_gen::Ty,
     buffer: naga::Handle<naga::GlobalVariable>,
     buffer_name: &str,
@@ -489,7 +473,7 @@ fn gen_read(
 // fn<buffer>(word_address: u32, value: f64)
 fn gen_write(
     module: &mut naga::Module,
-    address_ty: std_objects_gen::Word,
+    address_ty: preamble_objects_gen::WordTy,
     f64_ty: f64_instance_gen::Ty,
     buffer: naga::Handle<naga::GlobalVariable>,
     buffer_name: &str,

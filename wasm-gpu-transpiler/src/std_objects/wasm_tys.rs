@@ -13,15 +13,8 @@ pub(crate) mod polyfill_f64;
 pub(crate) mod polyfill_i64;
 pub(crate) mod polyfill_v128;
 
-type MakeConstFn<Ty> = Arc<
-    Box<
-        dyn Fn(
-            &mut naga::Arena<naga::Constant>,
-            &StdObjects,
-            Ty,
-        ) -> build::Result<naga::Handle<naga::Constant>>,
-    >,
->;
+type MakeConstFn<Ty> =
+    Box<dyn Fn(&mut naga::Module, Ty) -> build::Result<naga::Handle<naga::Constant>>>;
 
 macro_rules! wasm_ty_generator {
     (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [$($parts:tt)*]) => {
@@ -30,13 +23,7 @@ macro_rules! wasm_ty_generator {
     (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; []; {$($impl:tt)*}; ($($extra_params:tt)*)) => {
         super::generator_struct! {
             pub(crate) struct $struct_name (
-                word: naga::Handle<naga::Type>,
-                bindings: StdBindings,
-                word_max: naga::Handle<naga::Constant>,
-                wasm_bool: WasmBoolInstance,
-                invocation_global: naga::Handle<naga::GlobalVariable>,
-                trap_values: crate::std_objects::flags::TrapValuesInstance,
-                trap_state: naga::Handle<naga::GlobalVariable>,
+                preamble: crate::std_objects::PreambleObjects,
                 fp_options: crate::FloatingPointOptions,
                 $($extra_params)*
             )
@@ -46,12 +33,12 @@ macro_rules! wasm_ty_generator {
                 default: |ty| naga::Handle<naga::Constant>,
 
                 size_bytes: u32,
-                make_const: MakeConstFn<$wasm_ty>,
+                make_const: |ty| MakeConstFn<$wasm_ty>,
 
-                read_input: |word, ty, bindings| naga::Handle<naga::Function>,
-                write_output: |word, ty, bindings| naga::Handle<naga::Function>,
-                read_memory: |word, ty, bindings| naga::Handle<naga::Function>,
-                write_memory: |word, ty, bindings| naga::Handle<naga::Function>,
+                read_input: |ty| naga::Handle<naga::Function>,
+                write_output: |ty| naga::Handle<naga::Function>,
+                read_memory: |ty| naga::Handle<naga::Function>,
+                write_memory: |ty| naga::Handle<naga::Function>,
 
                 $($impl)*
             } with pub(crate) trait $trait_name;
@@ -63,15 +50,15 @@ macro_rules! wasm_ty_generator {
         wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts),*]; {
             $($impl)*
 
-            load:  |ty, word, read_memory|  naga::Handle<naga::Function>,
-            store: |ty, word, trap_state, write_memory| naga::Handle<naga::Function>,
+            load:  |ty, read_memory|  naga::Handle<naga::Function>,
+            store: |ty, write_memory| naga::Handle<naga::Function>,
 
-            add: |ty, word_max, fp_options| naga::Handle<naga::Function>,
-            sub: |ty, word_max, fp_options| naga::Handle<naga::Function>,
-            mul: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+            add: |ty| naga::Handle<naga::Function>,
+            sub: |ty| naga::Handle<naga::Function>,
+            mul: |ty| naga::Handle<naga::Function>,
 
-            eq: |ty, wasm_bool| naga::Handle<naga::Function>,
-            ne: |ty, wasm_bool| naga::Handle<naga::Function>,
+            eq: |ty| naga::Handle<naga::Function>,
+            ne: |ty| naga::Handle<naga::Function>,
         }; ($($extra_params)*)}
     };
     // The implementation required for integers (i32, i64)
@@ -80,42 +67,42 @@ macro_rules! wasm_ty_generator {
             $($impl)*
 
             // Memory
-            load_8_u:  |ty, default, word, read_memory|  naga::Handle<naga::Function>,
-            load_8_s:  |ty, default, word, read_memory|  naga::Handle<naga::Function>,
-            load_16_u: |ty, default, word, read_memory|  naga::Handle<naga::Function>,
-            load_16_s: |ty, default, word, read_memory|  naga::Handle<naga::Function>,
-            store_8:   |ty, default, word, write_memory| naga::Handle<naga::Function>,
-            store_16:  |ty, default, word, write_memory| naga::Handle<naga::Function>,
+            load_8_u:  |ty, default, read_memory|  naga::Handle<naga::Function>,
+            load_8_s:  |ty, default, read_memory|  naga::Handle<naga::Function>,
+            load_16_u: |ty, default, read_memory|  naga::Handle<naga::Function>,
+            load_16_s: |ty, default, read_memory|  naga::Handle<naga::Function>,
+            store_8:   |ty, default, write_memory| naga::Handle<naga::Function>,
+            store_16:  |ty, default, write_memory| naga::Handle<naga::Function>,
 
             // Comparisons
-            eqz: |ty, wasm_bool| naga::Handle<naga::Function>,
+            eqz: |ty| naga::Handle<naga::Function>,
 
-            lt_s: |ty, wasm_bool| naga::Handle<naga::Function>,
-            le_s: |ty, wasm_bool| naga::Handle<naga::Function>,
-            gt_s: |ty, wasm_bool| naga::Handle<naga::Function>,
-            ge_s: |ty, wasm_bool| naga::Handle<naga::Function>,
+            lt_s: |ty| naga::Handle<naga::Function>,
+            le_s: |ty| naga::Handle<naga::Function>,
+            gt_s: |ty| naga::Handle<naga::Function>,
+            ge_s: |ty| naga::Handle<naga::Function>,
 
-            lt_u: |ty, wasm_bool| naga::Handle<naga::Function>,
-            le_u: |ty, wasm_bool| naga::Handle<naga::Function>,
-            gt_u: |ty, wasm_bool| naga::Handle<naga::Function>,
-            ge_u: |ty, wasm_bool| naga::Handle<naga::Function>,
+            lt_u: |ty| naga::Handle<naga::Function>,
+            le_u: |ty| naga::Handle<naga::Function>,
+            gt_u: |ty| naga::Handle<naga::Function>,
+            ge_u: |ty| naga::Handle<naga::Function>,
 
             // Operations
-            clz: |ty, word_max| naga::Handle<naga::Function>,
-            ctz: |ty, word_max| naga::Handle<naga::Function>,
-            div_s: |ty, word_max, trap_values, trap_state| naga::Handle<naga::Function>,
-            div_u: |ty, word_max, trap_values, trap_state| naga::Handle<naga::Function>,
-            rem_s: |ty, word_max, trap_values, trap_state| naga::Handle<naga::Function>,
-            rem_u: |ty, word_max, trap_values, trap_state| naga::Handle<naga::Function>,
-            rotl: |ty, word_max| naga::Handle<naga::Function>,
-            rotr: |ty, word_max| naga::Handle<naga::Function>,
-            popcnt: |ty, word_max| naga::Handle<naga::Function>,
-            and: |ty, word_max| naga::Handle<naga::Function>,
-            or: |ty, word_max| naga::Handle<naga::Function>,
-            xor: |ty, word_max| naga::Handle<naga::Function>,
-            shl: |ty, word_max| naga::Handle<naga::Function>,
-            shr_s: |ty, word_max| naga::Handle<naga::Function>,
-            shr_u: |ty, word_max| naga::Handle<naga::Function>,
+            clz: |ty| naga::Handle<naga::Function>,
+            ctz: |ty| naga::Handle<naga::Function>,
+            div_s: |ty| naga::Handle<naga::Function>,
+            div_u: |ty| naga::Handle<naga::Function>,
+            rem_s: |ty| naga::Handle<naga::Function>,
+            rem_u: |ty| naga::Handle<naga::Function>,
+            rotl: |ty| naga::Handle<naga::Function>,
+            rotr: |ty| naga::Handle<naga::Function>,
+            popcnt: |ty| naga::Handle<naga::Function>,
+            and: |ty| naga::Handle<naga::Function>,
+            or: |ty| naga::Handle<naga::Function>,
+            xor: |ty| naga::Handle<naga::Function>,
+            shl: |ty| naga::Handle<naga::Function>,
+            shr_s: |ty| naga::Handle<naga::Function>,
+            shr_u: |ty| naga::Handle<naga::Function>,
 
             // Extensions
             extend_8_s: |ty| naga::Handle<naga::Function>,
@@ -156,9 +143,9 @@ macro_rules! wasm_ty_generator {
         wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts),*]; {
             $($impl)*
 
-            load_32_u:  |ty, default, word, read_memory|  naga::Handle<naga::Function>,
-            load_32_s:  |ty, default, word, read_memory|  naga::Handle<naga::Function>,
-            store_32:   |ty, default, word, write_memory| naga::Handle<naga::Function>,
+            load_32_u:  |ty, default, read_memory|  naga::Handle<naga::Function>,
+            load_32_s:  |ty, default, read_memory|  naga::Handle<naga::Function>,
+            store_32:   |ty, default, write_memory| naga::Handle<naga::Function>,
 
             // Extensions
             extend_32_s: |ty| naga::Handle<naga::Function>,
@@ -180,23 +167,23 @@ macro_rules! wasm_ty_generator {
         wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts),*]; {
             $($impl)*
 
-            abs: |ty, word_max, fp_options| naga::Handle<naga::Function>,
-            neg: |ty, word_max, fp_options| naga::Handle<naga::Function>,
-            ceil: |ty, word_max, fp_options| naga::Handle<naga::Function>,
-            floor: |ty, word_max, fp_options| naga::Handle<naga::Function>,
-            trunc: |ty, word_max, fp_options| naga::Handle<naga::Function>,
-            nearest: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+            abs: |ty| naga::Handle<naga::Function>,
+            neg: |ty| naga::Handle<naga::Function>,
+            ceil: |ty| naga::Handle<naga::Function>,
+            floor: |ty| naga::Handle<naga::Function>,
+            trunc: |ty| naga::Handle<naga::Function>,
+            nearest: |ty| naga::Handle<naga::Function>,
 
-            div: |ty, word_max, fp_options| naga::Handle<naga::Function>,
-            sqrt: |ty, word_max, fp_options| naga::Handle<naga::Function>,
-            min: |ty, word_max, fp_options| naga::Handle<naga::Function>,
-            max: |ty, word_max, fp_options| naga::Handle<naga::Function>,
-            copy_sign: |ty, word_max, fp_options| naga::Handle<naga::Function>,
+            div: |ty| naga::Handle<naga::Function>,
+            sqrt: |ty| naga::Handle<naga::Function>,
+            min: |ty| naga::Handle<naga::Function>,
+            max: |ty| naga::Handle<naga::Function>,
+            copy_sign: |ty| naga::Handle<naga::Function>,
 
-            lt: |ty, wasm_bool, fp_options| naga::Handle<naga::Function>,
-            le: |ty, wasm_bool, fp_options| naga::Handle<naga::Function>,
-            gt: |ty, wasm_bool, fp_options| naga::Handle<naga::Function>,
-            ge: |ty, wasm_bool, fp_options| naga::Handle<naga::Function>,
+            lt: |ty| naga::Handle<naga::Function>,
+            le: |ty| naga::Handle<naga::Function>,
+            gt: |ty| naga::Handle<naga::Function>,
+            ge: |ty| naga::Handle<naga::Function>,
         }; ($($extra_params)*)}
     };
     // Just f32
@@ -220,38 +207,26 @@ wasm_ty_generator!(struct ExternRefInstance; trait ExternRefGen; ExternRef; []);
 
 fn make_64_bit_const_from_2vec32(
     ty: naga::Handle<naga::Type>,
+    const_expressions: &mut naga::Arena<naga::Expression>,
     constants: &mut naga::Arena<naga::Constant>,
     value: i64,
 ) -> naga::Handle<naga::Constant> {
-    let inner = naga::ConstantInner::Composite {
-        ty: ty.clone(),
-        components: (0..2)
-            .map(|i_word| {
-                let word = value >> (32 * i_word);
-                let word =
-                    u32::try_from(word & 0xFFFFFFFF).expect("truncated word always fits in u32");
-                constants.append(
-                    naga::Constant {
-                        name: None,
-                        specialization: None,
-                        inner: naga::ConstantInner::Scalar {
-                            width: 4,
-                            value: naga::ScalarValue::Uint(word.into()),
-                        },
-                    },
-                    naga::Span::UNDEFINED,
-                )
-            })
-            .collect(),
-    };
-    constants.append(
-        naga::Constant {
-            name: None,
-            specialization: None,
-            inner,
-        },
+    let bytes = value.to_le_bytes();
+    let components = bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| {
+            let word = u32::from_le_bytes(*bytes);
+            let word = u32::try_from(word & 0xFFFFFFFF).expect("truncated word always fits in u32");
+            const_expressions.append_u32(word)
+        })
+        .collect();
+    let init = const_expressions.append(
+        naga::Expression::Compose { ty, components },
         naga::Span::UNDEFINED,
-    )
+    );
+    return constants.append_anonymous(ty, init);
 }
 
 /// Something of the form `f(A, A) -> Bool` which can be implemented with native functions
@@ -263,11 +238,11 @@ macro_rules! impl_native_bool_binexp {
                 others: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name _ $op_name >](lhs: others.ty, rhs: others.ty) -> others.wasm_bool.ty
+                    module => fn [< $name _ $op_name >](lhs: *others.ty, rhs: *others.ty) -> others.preamble.wasm_bool.ty
                 };
 
-                let t = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_true));
-                let f = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_false));
+                let t = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_true));
+                let f = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_false));
                 let res = naga_expr!(module, function_handle => if (lhs $op rhs) {t} else {f});
                 module.fn_mut(function_handle).body.push_return(res);
 
@@ -287,7 +262,7 @@ macro_rules! impl_native_inner_binexp {
                 others: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name _ $op_name >](lhs: others.ty, rhs: others.ty) -> others.ty
+                    module => fn [< $name _ $op_name >](lhs: *others.ty, rhs: *others.ty) -> *others.ty
                 };
 
                 let res = naga_expr!(module, function_handle => lhs $op rhs);
@@ -309,11 +284,11 @@ macro_rules! impl_native_unsigned_bool_binexp {
                 others: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name _ $op_name >](lhs: others.ty, rhs: others.ty) -> others.wasm_bool.ty
+                    module => fn [< $name _ $op_name >](lhs: others.ty, rhs: others.ty) -> others.preamble.wasm_bool.ty
                 };
 
-                let t = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_true));
-                let f = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_false));
+                let t = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_true));
+                let f = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_false));
                 let res = naga_expr!(module, function_handle => if ((lhs as Uint) $op (rhs as Uint)) {t} else {f});
                 module.fn_mut(function_handle).body.push_return(res);
 
@@ -418,11 +393,11 @@ macro_rules! impl_bitwise_2vec32_numeric_ops {
                 others: $instance_gen::EqRequirements,
             ) -> build::Result<$instance_gen::Eq> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name _eq >](lhs: others.ty, rhs: others.ty) -> others.wasm_bool.ty
+                    module => fn [< $name _eq >](lhs: others.ty, rhs: others.ty) -> others.preamble.wasm_bool.ty
                 };
 
-                let t = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_true));
-                let f = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_false));
+                let t = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_true));
+                let f = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_false));
 
                 let lhs_high = naga_expr!(module, function_handle => lhs[const 0]);
                 let lhs_low = naga_expr!(module, function_handle => lhs[const 1]);
@@ -439,11 +414,11 @@ macro_rules! impl_bitwise_2vec32_numeric_ops {
                 others: $instance_gen::NeRequirements,
             ) -> build::Result<$instance_gen::Ne> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name _ne >](lhs: others.ty, rhs: others.ty) -> others.wasm_bool.ty
+                    module => fn [< $name _ne >](lhs: others.ty, rhs: others.ty) -> others.preamble.wasm_bool.ty
                 };
 
-                let t = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_true));
-                let f = naga_expr!(module, function_handle => Constant(others.wasm_bool.const_false));
+                let t = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_true));
+                let f = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_false));
 
                 let lhs_high = naga_expr!(module, function_handle => lhs[const 0]);
                 let lhs_low = naga_expr!(module, function_handle => lhs[const 1]);
@@ -467,7 +442,7 @@ macro_rules! impl_load_and_store {
                 others: $instance_gen::LoadRequirements,
             ) -> build::Result<$instance_gen::Load> {
                 let (function_handle, memory, address) = declare_function! {
-                    module => fn [< $name _load >](memory: others.word, address: others.word) -> others.ty
+                    module => fn [< $name _load >](memory: others.word_ty, address: others.word) -> others.ty
                 };
 
                 // TODO: Support other memories
@@ -544,7 +519,7 @@ macro_rules! impl_load_and_store {
                 others: $instance_gen::StoreRequirements,
             ) -> build::Result<$instance_gen::Store> {
                 let (function_handle, memory, address, value) = declare_function! {
-                    module => fn [< $name _store >](memory: others.word, address: others.word, value: others.ty)
+                    module => fn [< $name _store >](memory: others.word_ty, address: others.word_ty, value: others.ty)
                 };
 
                 // TODO: Support other memories
@@ -614,7 +589,7 @@ macro_rules! impl_dud_integer_load {
                 others: $instance_gen::[< $fn:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $fn:camel >]> {
                 let (function_handle, ..) = declare_function! {
-                    module => fn [< $name _ $fn >](memory: others.word, address: others.word) -> others.ty
+                    module => fn [< $name _ $fn >](memory: others.word_ty, address: others.word) -> others.ty
                 };
                 let default = module.fn_mut(function_handle).expressions.append_constant(others.default);
                 module.fn_mut(function_handle).body.push_return(default);
@@ -634,7 +609,7 @@ macro_rules! impl_dud_integer_store {
                 others: $instance_gen::[< $fn:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $fn:camel >]> {
                 let (function_handle, ..) = declare_function! {
-                    module => fn [< $name _ $fn >](memory: others.word, address: others.word, value: others.ty)
+                    module => fn [< $name _ $fn >](memory: others.word_ty, address: others.word_ty, value: others.ty)
                 };
 
                 Ok(function_handle)
@@ -652,7 +627,7 @@ macro_rules! impl_dud_integer_rmw {
                 others: $instance_gen::[< $fn:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $fn:camel >]> {
                 let (function_handle, ..) = declare_function! {
-                    module => fn [< $name _ $fn >](memory: others.word, address: others.word, operand: others.ty)
+                    module => fn [< $name _ $fn >](memory: others.word_ty, address: others.word_ty, operand: others.ty)
                 };
 
                 Ok(function_handle)
@@ -675,6 +650,7 @@ macro_rules! impl_integer_loads_and_stores {
     };
 }
 use impl_integer_loads_and_stores;
+use naga_ext::{ConstantsExt, ExpressionsExt};
 
 /*
 macro_rules! impl_integer_atomic_loads_and_stores {
