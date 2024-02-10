@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{build, std_objects::StdObjects, BuildError, ExceededComponent};
-use naga_ext::{BlockExt, ExpressionsExt, LocalsExt};
+use naga_ext::{naga_expr, BlockExt, ExpressionsExt, LocalsExt};
 use wasmparser::ValType;
 
 use super::arguments::WasmFnArgs;
@@ -46,7 +46,8 @@ impl FnLocal {
         local_ty: ValType,
     ) -> Self {
         let ty = std_objects.get_val_type(local_ty);
-        let init = std_objects.get_default_value(local_ty);
+        let default_const = std_objects.get_default_value(local_ty);
+        let init = expressions.append_constant(default_const);
         Self::append_to(name, local_variables, expressions, ty, Some(init))
     }
 

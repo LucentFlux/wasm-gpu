@@ -1,7 +1,7 @@
 use std::{iter::Peekable, sync::atomic::AtomicUsize};
 
 use itertools::Itertools;
-use naga_ext::{naga_expr, BlockContext, BlockExt, ExpressionsExt, LocalsExt};
+use naga_ext::{naga_expr, BlockContext, BlockExt, ConstantsExt, ExpressionsExt, LocalsExt};
 use wasm_opcodes::{proposals::ControlFlowOperator, OperatorByProposal};
 use wasmparser::ValType;
 use wasmtime_environ::Trap;
@@ -1020,10 +1020,15 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
     }
 
     fn push_const_val(&mut self, value: Val) -> build::Result<()> {
-        let constant = self
+        let val_type = value.get_type();
+        let init = self
             .body_data
             .std_objects
-            .make_wasm_constant(self.body_data.constants, value)?;
+            .make_wasm_constant(self.body_data.const_expressions, value)?;
+        let constant = self
+            .body_data
+            .constants
+            .append_anonymous(self.body_data.std_objects.get_val_type(val_type), init);
         self.push(naga::Expression::Constant(constant));
 
         Ok(())

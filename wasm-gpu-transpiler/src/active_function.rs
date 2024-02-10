@@ -29,7 +29,9 @@ pub(crate) trait InactiveFunction {
 }
 
 /// Any function, entry or not, that can be modified.
-pub(crate) trait ActiveFunction<'f, 'm: 'f> {
+pub(crate) trait ActiveFunction<'f, 'm: 'f>:
+    'f + Into<BlockContext<'f>> + From<&'f mut Self>
+{
     fn fn_mut<'b>(&'b mut self) -> &'b mut naga::Function
     where
         'f: 'b;
@@ -173,8 +175,8 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
     }
 }
 
-impl<'a, 'f, 'm: 'f> From<&'a mut ActiveInternalFunction<'f, 'm>> for BlockContext<'a> {
-    fn from(value: &'a mut ActiveInternalFunction<'f, 'm>) -> Self {
+impl<'f, 'm: 'f> From<ActiveInternalFunction<'f, 'm>> for BlockContext<'f> {
+    fn from(value: ActiveInternalFunction<'f, 'm>) -> Self {
         let ActiveModule { module, .. } = value.working_module;
         let func = module.functions.get_mut(value.data.handle);
 
@@ -185,6 +187,15 @@ impl<'a, 'f, 'm: 'f> From<&'a mut ActiveInternalFunction<'f, 'm>> for BlockConte
             expressions: &mut func.expressions,
             locals: &mut func.local_variables,
             block: &mut func.body,
+        }
+    }
+}
+
+impl<'f, 'm: 'f> From<&'f mut ActiveInternalFunction<'f, 'm>> for ActiveInternalFunction<'f, 'm> {
+    fn from(value: &'f mut ActiveInternalFunction<'f, 'm>) -> Self {
+        Self {
+            working_module: value.working_module,
+            data: value.data,
         }
     }
 }
@@ -366,8 +377,8 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
     }
 }
 
-impl<'a, 'f, 'm: 'f> From<&'a mut ActiveEntryFunction<'f, 'm>> for BlockContext<'a> {
-    fn from(value: &'a mut ActiveEntryFunction<'f, 'm>) -> Self {
+impl<'f, 'm: 'f> From<ActiveEntryFunction<'f, 'm>> for BlockContext<'f> {
+    fn from(value: ActiveEntryFunction<'f, 'm>) -> Self {
         let func = &mut value
             .working_module
             .module
@@ -383,6 +394,15 @@ impl<'a, 'f, 'm: 'f> From<&'a mut ActiveEntryFunction<'f, 'm>> for BlockContext<
             expressions: &mut func.expressions,
             locals: &mut func.local_variables,
             block: &mut func.body,
+        }
+    }
+}
+
+impl<'f, 'm: 'f> From<&'f mut ActiveEntryFunction<'f, 'm>> for ActiveEntryFunction<'f, 'm> {
+    fn from(value: &'f mut ActiveEntryFunction<'f, 'm>) -> Self {
+        Self {
+            working_module: value.working_module,
+            data: value.data,
         }
     }
 }

@@ -537,8 +537,9 @@ macro_rules! extract_type_field {
             ValType::F64 => $self.f64.$($field_accessor)*,
             ValType::V128 => $self.v128.$($field_accessor)*,
             ValType::Ref(rty) => match rty.heap_type() {
-                wasmparser::HeapType::TypedFunc(_) | wasmparser::HeapType::Func => $self.func_ref.$($field_accessor)*,
+                wasmparser::HeapType::Func => $self.func_ref.$($field_accessor)*,
                 wasmparser::HeapType::Extern => $self.extern_ref.$($field_accessor)*,
+                _ => unimplemented!()
             }
         }
     };
@@ -573,21 +574,21 @@ impl StdObjects {
     /// Makes a new constant from the value
     pub(crate) fn make_wasm_constant(
         &self,
-        constants: &mut naga::Arena<naga::Constant>,
+        const_expressions: &mut naga::Arena<naga::Expression>,
         value: Val,
-    ) -> build::Result<naga::Handle<naga::Constant>> {
+    ) -> build::Result<naga::Handle<naga::Expression>> {
         match value {
-            Val::I32(value) => (self.i32.make_const)(constants, self, value),
-            Val::I64(value) => (self.i64.make_const)(constants, self, value),
-            Val::F32(value) => (self.f32.make_const)(constants, self, value),
-            Val::F64(value) => (self.f64.make_const)(constants, self, value),
-            Val::V128(value) => (self.v128.make_const)(constants, self, value),
-            Val::FuncRef(value) => (self.func_ref.make_const)(constants, self, value),
-            Val::ExternRef(value) => (self.extern_ref.make_const)(constants, self, value),
+            Val::I32(value) => (self.i32.make_const)(const_expressions, value),
+            Val::I64(value) => (self.i64.make_const)(const_expressions, value),
+            Val::F32(value) => (self.f32.make_const)(const_expressions, value),
+            Val::F64(value) => (self.f64.make_const)(const_expressions, value),
+            Val::V128(value) => (self.v128.make_const)(const_expressions, value),
+            Val::FuncRef(value) => (self.func_ref.make_const)(const_expressions, value),
+            Val::ExternRef(value) => (self.extern_ref.make_const)(const_expressions, value),
         }
     }
 
-    pub(crate) fn get_default_value(&self, val_ty: ValType) -> naga::Handle<naga::Expression> {
+    pub(crate) fn get_default_value(&self, val_ty: ValType) -> naga::Handle<naga::Constant> {
         extract_type_field!(self, val_ty => element.default)
     }
 

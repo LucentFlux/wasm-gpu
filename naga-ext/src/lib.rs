@@ -426,7 +426,7 @@ macro_rules! declare_function {
 macro_rules! naga_expr {
     ($ctx:expr => $($expression:tt)*) => {{
         #[allow(unused)]
-        let mut ctx = $crate::BlockContext::from($ctx);
+        let mut ctx: $crate::BlockContext = $ctx.into();
         $crate::naga_expr!(@inner ctx => $($expression)*)
     }};
 
