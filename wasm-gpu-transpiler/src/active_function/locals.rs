@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{build, std_objects::StdObjects, BuildError, ExceededComponent};
-use naga_ext::{naga_expr, BlockExt, ExpressionsExt, LocalsExt};
+use naga_ext::{BlockExt, ExpressionsExt, LocalsExt};
 use wasmparser::ValType;
 
 use super::arguments::WasmFnArgs;

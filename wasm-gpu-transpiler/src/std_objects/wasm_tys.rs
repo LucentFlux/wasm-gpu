@@ -587,7 +587,7 @@ macro_rules! impl_integer_loads_and_stores {
     };
 }
 use impl_integer_loads_and_stores;
-use naga_ext::{ConstantsExt, ExpressionsExt};
+use naga_ext::ExpressionsExt;
 
 /*
 macro_rules! impl_integer_atomic_loads_and_stores {

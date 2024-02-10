@@ -19,6 +19,7 @@ paste.workspace = true
 perfect-derive.workspace = true
 ouroboros.workspace = true
 nonmax.workspace = true
+sealed.workspace = true
 
 wasmparser.workspace = true
 wasmtime-environ.workspace = true

@@ -70,9 +70,9 @@ pub(crate) struct WasmFnArg {
 }
 
 impl WasmFnArg {
-    pub(crate) fn append_read_at<'f, 'm: 'f>(
+    pub(crate) fn append_read_at<'f>(
         &self,
-        function: &mut impl ActiveFunction<'f, 'm>,
+        function: &mut impl ActiveFunction<'f>,
         location: naga::Handle<naga::Expression>,
     ) -> naga::Handle<naga::Expression> {
         let load_fn = function.std_objects().get_read_input_fn(self.ty);
@@ -130,16 +130,16 @@ impl WasmFnArgs {
         return word_alignment;
     }
 
-    pub(crate) fn append_read_at<'f, 'm: 'f>(
+    pub(crate) fn append_read_at<'f>(
         &self,
-        function: &mut impl ActiveFunction<'f, 'm>,
+        function: &mut impl ActiveFunction<'f>,
         location: naga::Handle<naga::Expression>,
     ) -> Vec<naga::Handle<naga::Expression>> {
         let mut arg_results = Vec::new();
 
         let mut offset = 0u32;
         for arg in &self.args {
-            let location = naga_expr!(function => location + U32(offset));
+            let location = naga_expr!(function.ctx() => location + U32(offset));
 
             arg_results.push(arg.append_read_at(function, location));
 

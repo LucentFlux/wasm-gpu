@@ -3,16 +3,16 @@ mod arguments;
 mod locals;
 mod results;
 
-use crate::typed::FuncRef;
-use naga::Handle;
-use naga_ext::{naga_expr, BlockContext, BlockExt, ExpressionsExt, ModuleExt};
-
 use self::active_block::{ActiveBlock, BlockType, BodyData};
 use self::results::WasmFnResTy;
 use self::{
     arguments::{EntryArguments, WasmFnArgs},
     locals::FnLocals,
 };
+use crate::typed::FuncRef;
+use naga::Handle;
+use naga_ext::{naga_expr, BlockContext, BlockExt, ExpressionsExt, ModuleExt};
+use sealed::sealed;
 
 use crate::active_function::active_block::EndInstruction;
 use crate::{build, get_entry_name, std_objects::StdObjects, FuncUnit};
@@ -21,21 +21,23 @@ use crate::active_module::ActiveModule;
 
 /// A set of handles to a function that can be 'activated' given a mutable reference to a module
 pub(crate) trait InactiveFunction {
-    type Active<'f, 'm: 'f>: ActiveFunction<'f, 'm>
+    type Active<'f>: ActiveFunction<'f>
     where
         Self: 'f;
 
-    fn activate<'f, 'm: 'f>(&'f self, module: &'f mut ActiveModule<'m>) -> Self::Active<'f, 'm>;
+    fn activate<'f>(&'f self, module: &'f mut ActiveModule<'f>) -> Self::Active<'f>;
 }
 
 /// Any function, entry or not, that can be modified.
-pub(crate) trait ActiveFunction<'f, 'm: 'f>:
-    'f + Into<BlockContext<'f>> + From<&'f mut Self>
-{
+#[sealed]
+pub(crate) trait ActiveFunction<'f>: 'f {
     fn fn_mut<'b>(&'b mut self) -> &'b mut naga::Function
     where
         'f: 'b;
     fn std_objects<'b>(&'b self) -> &'b StdObjects
+    where
+        'f: 'b;
+    fn ctx<'b>(&'b mut self) -> BlockContext<'b>
     where
         'f: 'b;
 }
@@ -86,12 +88,9 @@ impl InternalFunction {
 }
 
 impl InactiveFunction for InternalFunction {
-    type Active<'f, 'm: 'f> = ActiveInternalFunction<'f, 'm>;
+    type Active<'f> = ActiveInternalFunction<'f>;
 
-    fn activate<'f, 'm: 'f>(
-        &'f self,
-        working_module: &'f mut ActiveModule<'m>,
-    ) -> Self::Active<'f, 'm> {
+    fn activate<'f>(&'f self, working_module: &'f mut ActiveModule<'f>) -> Self::Active<'f> {
         ActiveInternalFunction {
             working_module,
             data: self,
@@ -99,12 +98,12 @@ impl InactiveFunction for InternalFunction {
     }
 }
 
-pub(crate) struct ActiveInternalFunction<'f, 'm: 'f> {
-    working_module: &'f mut ActiveModule<'m>,
+pub(crate) struct ActiveInternalFunction<'f> {
+    working_module: &'f mut ActiveModule<'f>,
     data: &'f InternalFunction,
 }
 
-impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
+impl<'f> ActiveInternalFunction<'f> {
     pub(crate) fn handle(&self) -> naga::Handle<naga::Function> {
         self.data.handle
     }
@@ -175,32 +174,8 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
     }
 }
 
-impl<'f, 'm: 'f> From<ActiveInternalFunction<'f, 'm>> for BlockContext<'f> {
-    fn from(value: ActiveInternalFunction<'f, 'm>) -> Self {
-        let ActiveModule { module, .. } = value.working_module;
-        let func = module.functions.get_mut(value.data.handle);
-
-        BlockContext {
-            types: &mut module.types,
-            constants: &mut module.constants,
-            const_expressions: &mut module.const_expressions,
-            expressions: &mut func.expressions,
-            locals: &mut func.local_variables,
-            block: &mut func.body,
-        }
-    }
-}
-
-impl<'f, 'm: 'f> From<&'f mut ActiveInternalFunction<'f, 'm>> for ActiveInternalFunction<'f, 'm> {
-    fn from(value: &'f mut ActiveInternalFunction<'f, 'm>) -> Self {
-        Self {
-            working_module: value.working_module,
-            data: value.data,
-        }
-    }
-}
-
-impl<'f, 'm: 'f> ActiveFunction<'f, 'm> for ActiveInternalFunction<'f, 'm> {
+#[sealed]
+impl<'f> ActiveFunction<'f> for ActiveInternalFunction<'f> {
     fn fn_mut<'b>(&'b mut self) -> &'b mut naga::Function
     where
         'f: 'b,
@@ -215,6 +190,22 @@ impl<'f, 'm: 'f> ActiveFunction<'f, 'm> for ActiveInternalFunction<'f, 'm> {
         'f: 'b,
     {
         &self.working_module.std_objects
+    }
+    fn ctx<'b>(&'b mut self) -> BlockContext<'b>
+    where
+        'f: 'b,
+    {
+        let ActiveModule { module, .. } = self.working_module;
+        let func = module.functions.get_mut(self.data.handle);
+
+        BlockContext {
+            types: &mut module.types,
+            constants: &mut module.constants,
+            const_expressions: &mut module.const_expressions,
+            expressions: &mut func.expressions,
+            locals: &mut func.local_variables,
+            block: &mut func.body,
+        }
     }
 }
 
@@ -249,12 +240,9 @@ impl EntryFunction {
 }
 
 impl InactiveFunction for EntryFunction {
-    type Active<'f, 'm: 'f> = ActiveEntryFunction<'f, 'm>;
+    type Active<'f> = ActiveEntryFunction<'f>;
 
-    fn activate<'f, 'm: 'f>(
-        &'f self,
-        working_module: &'f mut ActiveModule<'m>,
-    ) -> Self::Active<'f, 'm> {
+    fn activate<'f>(&'f self, working_module: &'f mut ActiveModule<'f>) -> Self::Active<'f> {
         ActiveEntryFunction {
             working_module,
             data: self,
@@ -262,15 +250,15 @@ impl InactiveFunction for EntryFunction {
     }
 }
 
-pub(crate) struct ActiveEntryFunction<'f, 'm: 'f> {
-    working_module: &'f mut ActiveModule<'m>,
+pub(crate) struct ActiveEntryFunction<'f> {
+    working_module: &'f mut ActiveModule<'f>,
     data: &'f EntryFunction,
 }
 
-impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
+impl<'f> ActiveEntryFunction<'f> {
     fn get_workgroup_index(&mut self) -> naga::Handle<naga::Expression> {
         let global_id = self.data.args.global_id.expression();
-        naga_expr! {self => global_id[const 0]}
+        naga_expr! {self.ctx() => global_id[const 0]}
     }
 
     fn io_base_index(
@@ -278,7 +266,7 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
         io_word_alignment: u32,
         instance_index: naga::Handle<naga::Expression>,
     ) -> naga::Handle<naga::Expression> {
-        naga_expr! {self => U32(io_word_alignment) * instance_index}
+        naga_expr! {self.ctx() => U32(io_word_alignment) * instance_index}
     }
 
     fn read_entry_inputs(
@@ -314,23 +302,23 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
 
         let constants_buffer = self.std_objects().preamble.bindings.constants;
         let constants_buffer = self.fn_mut().expressions.append_global(constants_buffer);
-        let invocations_count = naga_expr!(self => Load(constants_buffer[const crate::TOTAL_INVOCATIONS_CONSTANT_INDEX]));
+        let invocations_count = naga_expr!(self.ctx() => Load(constants_buffer[const crate::TOTAL_INVOCATIONS_CONSTANT_INDEX]));
 
         // Write entry globals
         let instance_id_global = self.std_objects().preamble.instance_id;
-        let invocation_id_ptr = naga_expr!(self => Global(instance_id_global));
+        let invocation_id_ptr = naga_expr!(self.ctx() => Global(instance_id_global));
         self.fn_mut()
             .body
             .push_store(invocation_id_ptr, invocation_id);
 
         let invocations_count_global = self.std_objects().preamble.invocations_count;
-        let invocations_count_ptr = naga_expr!(self => Global(invocations_count_global));
+        let invocations_count_ptr = naga_expr!(self.ctx() => Global(invocations_count_global));
         self.fn_mut()
             .body
             .push_store(invocations_count_ptr, invocations_count);
 
         // Don't execute if we're beyond the invocation count
-        let is_not_being_executed = naga_expr!(self => invocation_id > invocations_count);
+        let is_not_being_executed = naga_expr!(self.ctx() => invocation_id > invocations_count);
         let mut if_not_being_executed = naga::Block::default();
         if_not_being_executed.push_bare_return();
         self.fn_mut().body.push_if(
@@ -368,38 +356,16 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
         // Write trap status
         let flag_state = self.working_module.std_objects.preamble.trap_state;
         let flags_buffer = self.working_module.std_objects.preamble.bindings.flags;
-        let flag_state = naga_expr!(self => Load(Global(flag_state)));
-        let write_word_loc =
-            naga_expr!(self => Global(flags_buffer)[invocation_id][const crate::TRAP_FLAG_INDEX]);
+        let flag_state = naga_expr!(self.ctx() => Load(Global(flag_state)));
+        let write_word_loc = naga_expr!(self.ctx() => Global(flags_buffer)[invocation_id][const crate::TRAP_FLAG_INDEX]);
         self.fn_mut().body.push_store(write_word_loc, flag_state);
 
         return Ok(());
     }
 }
 
-impl<'f, 'm: 'f> From<ActiveEntryFunction<'f, 'm>> for BlockContext<'f> {
-    fn from(value: ActiveEntryFunction<'f, 'm>) -> Self {
-        let func = &mut value
-            .working_module
-            .module
-            .entry_points
-            .get_mut(value.data.index)
-            .expect("entry points cannot be removed")
-            .function;
-
-        BlockContext {
-            types: &mut value.working_module.module.types,
-            constants: &mut value.working_module.module.constants,
-            const_expressions: &mut value.working_module.module.const_expressions,
-            expressions: &mut func.expressions,
-            locals: &mut func.local_variables,
-            block: &mut func.body,
-        }
-    }
-}
-
-impl<'f, 'm: 'f> From<&'f mut ActiveEntryFunction<'f, 'm>> for ActiveEntryFunction<'f, 'm> {
-    fn from(value: &'f mut ActiveEntryFunction<'f, 'm>) -> Self {
+impl<'f> From<&'f mut ActiveEntryFunction<'f>> for ActiveEntryFunction<'f> {
+    fn from(value: &'f mut ActiveEntryFunction<'f>) -> Self {
         Self {
             working_module: value.working_module,
             data: value.data,
@@ -407,7 +373,8 @@ impl<'f, 'm: 'f> From<&'f mut ActiveEntryFunction<'f, 'm>> for ActiveEntryFuncti
     }
 }
 
-impl<'f, 'm: 'f> ActiveFunction<'f, 'm> for ActiveEntryFunction<'f, 'm> {
+#[sealed]
+impl<'f> ActiveFunction<'f> for ActiveEntryFunction<'f> {
     fn fn_mut<'b>(&'b mut self) -> &'b mut naga::Function
     where
         'f: 'b,
@@ -424,5 +391,26 @@ impl<'f, 'm: 'f> ActiveFunction<'f, 'm> for ActiveEntryFunction<'f, 'm> {
         'f: 'b,
     {
         &self.working_module.std_objects
+    }
+    fn ctx<'b>(&'b mut self) -> BlockContext<'b>
+    where
+        'f: 'b,
+    {
+        let func = &mut self
+            .working_module
+            .module
+            .entry_points
+            .get_mut(self.data.index)
+            .expect("entry points cannot be removed")
+            .function;
+
+        BlockContext {
+            types: &mut self.working_module.module.types,
+            constants: &mut self.working_module.module.constants,
+            const_expressions: &mut self.working_module.module.const_expressions,
+            expressions: &mut func.expressions,
+            locals: &mut func.local_variables,
+            block: &mut func.body,
+        }
     }
 }

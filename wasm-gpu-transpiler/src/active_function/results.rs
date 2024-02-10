@@ -88,19 +88,19 @@ impl WasmFnResTy {
         block.push_return(struct_build);
     }
 
-    pub(crate) fn append_store_at<'f, 'm: 'f>(
+    pub(crate) fn append_store_at<'f>(
         &self,
-        function: &mut ActiveEntryFunction<'f, 'm>,
+        function: &mut ActiveEntryFunction<'f>,
         location: naga::Handle<naga::Expression>,
         value: naga::Handle<naga::Expression>,
     ) -> build::Result<()> {
         let mut word_offset = 0;
         for (i_res, val_ty) in self.wasm_ty.iter().enumerate() {
-            let location = naga_expr! {function => location + (U32(word_offset))};
+            let location = naga_expr! {function.ctx() => location + (U32(word_offset))};
 
             let i_res = u32::try_from(i_res)
                 .map_err(|_| BuildError::BoundsExceeded(ExceededComponent::ReturnType))?;
-            let result = naga_expr! {function => value[const i_res]};
+            let result = naga_expr! {function.ctx() => value[const i_res]};
 
             let store_fn = function.std_objects().get_write_output_fn(*val_ty);
 
