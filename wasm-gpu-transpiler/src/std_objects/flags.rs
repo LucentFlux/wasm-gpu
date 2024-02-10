@@ -1,4 +1,4 @@
-use naga_ext::{naga_expr, BlockContext, BlockExt, ConstantsExt, ExpressionsExt, TypesExt};
+use naga_ext::{naga_expr, BlockContext, ExpressionsExt, TypesExt};
 use wasmtime_environ::Trap;
 
 use crate::trap_to_u32;
@@ -106,21 +106,18 @@ impl TrapValuesInstance {
     /// Emits instructions to set the global trap state to the new trap, if it is unset
     pub fn emit_set_trap(
         &self,
+        ctx: &mut BlockContext<'_>,
         trap: Trap,
         trap_global: naga::Handle<naga::GlobalVariable>,
-        active: &mut BlockContext<'_>,
     ) {
         let new_trap_code = self.get(trap);
-        let new_trap_code = naga_expr!(active => Constant(new_trap_code));
+        let new_trap_code = naga_expr!(ctx => Constant(new_trap_code));
 
-        let trap_code_ptr = naga_expr!(active => Global(trap_global));
+        let trap_code_ptr = naga_expr!(ctx => Global(trap_global));
+        let is_unset = naga_expr!(ctx => Load(trap_code_ptr) == Constant(self.no_trap));
 
-        let trap_code_current_value = naga_expr!(active => Load(trap_code_ptr));
-        let mut if_unset = naga::Block::default();
-        if_unset.push_store(trap_code_ptr, new_trap_code);
-
-        let unset = naga_expr!(active => Constant(self.no_trap));
-        let is_unset = naga_expr!(active => trap_code_current_value == unset);
-        active.push_if(is_unset, if_unset, naga::Block::default());
+        ctx.test(is_unset).then(|mut ctx| {
+            ctx.store(trap_code_ptr, new_trap_code);
+        });
     }
 }

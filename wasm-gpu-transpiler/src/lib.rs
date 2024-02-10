@@ -214,8 +214,6 @@ pub struct ExternalValidationError<E> {
     #[cfg(debug_assertions)]
     pub tuneables: Tuneables,
     #[cfg(debug_assertions)]
-    pub functions: FuncsInstance,
-    #[cfg(debug_assertions)]
     pub capabilities: naga::valid::Capabilities,
 }
 
@@ -224,7 +222,6 @@ impl<E> ExternalValidationError<E> {
         source: E,
         module: &naga::Module,
         tuneables: &Tuneables,
-        functions: FuncsInstance,
         capabilities: naga::valid::Capabilities,
     ) -> Self {
         Self {
@@ -233,8 +230,6 @@ impl<E> ExternalValidationError<E> {
             module: module.clone(),
             #[cfg(debug_assertions)]
             tuneables: tuneables.clone(),
-            #[cfg(debug_assertions)]
-            functions,
             #[cfg(debug_assertions)]
             capabilities,
         }
@@ -284,7 +279,6 @@ impl<E: std::error::Error> Debug for ExternalValidationError<E> {
 
             return output
                 .field("module", &self.module)
-                .field("functions", &self.functions)
                 .field("tuneables", &self.tuneables)
                 .field("validation_pass", &validation_pass_broken)
                 .finish();

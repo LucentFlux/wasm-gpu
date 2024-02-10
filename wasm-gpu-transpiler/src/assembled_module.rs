@@ -7,16 +7,16 @@ use crate::wasm_front::FuncsInstance;
 use crate::{build, BuildError, ExternalValidationError, Tuneables, ValidationError};
 
 /// All of the functions and trampolines for a module, in wgpu objects ready to be called.
-pub struct AssembledModule {
+pub struct AssembledModule<'a> {
     pub module: naga::Module,
     pub module_info: naga::valid::ModuleInfo,
 
     // Used as debug info
-    functions: FuncsInstance,
+    functions: FuncsInstance<'a>,
     tuneables: Tuneables,
     capabilities: naga::valid::Capabilities,
 }
-impl AssembledModule {
+impl<'a> AssembledModule<'a> {
     /// Some drivers don't like some edge cases. To avoid driver crashes or panics, several modifications
     /// *that don't change module semantics* are employed here.
     fn appease_drivers(module: &mut naga::Module) {
@@ -33,10 +33,9 @@ impl AssembledModule {
         }
     }
 
-    fn validate(
+    fn validate<'b>(
         module: &naga::Module,
         tuneables: &Tuneables,
-        functions: &FuncsInstance,
         capabilities: naga::valid::Capabilities,
         skip_validation: bool,
     ) -> Result<naga::valid::ModuleInfo, ValidationError> {
@@ -59,7 +58,6 @@ impl AssembledModule {
                     source.into_inner(),
                     &module,
                     &tuneables,
-                    &functions,
                     capabilities,
                 ))
             })?;
@@ -68,7 +66,7 @@ impl AssembledModule {
     }
 
     /// Converts wasm functions to a validated naga module
-    pub fn assemble(functions: &FuncsInstance, tuneables: &Tuneables) -> build::Result<Self> {
+    pub fn assemble(functions: FuncsInstance<'a>, tuneables: &Tuneables) -> build::Result<Self> {
         let mut module = naga::Module::default();
 
         let mut base_functions = FunctionLookup::empty();
@@ -79,7 +77,7 @@ impl AssembledModule {
         let mut active_module = ActiveModule::new(&mut module, tuneables)?;
 
         // Calculate direct call graph to figure out if two functions are directly corecursive
-        let call_graph = CallGraph::calculate(functions);
+        let call_graph = CallGraph::calculate(&functions);
         let call_order = call_graph.to_call_order();
 
         // Declare base and entry functions first
@@ -135,18 +133,19 @@ impl AssembledModule {
             naga::valid::Capabilities::empty()
         };
 
+        let module_info = Self::validate(&module, tuneables, capabilities, true)
+            .map_err(BuildError::ValidationError)?;
+
         let assembled = Self {
-            module_info: Self::validate(&module, tuneables, functions, capabilities, true)
-                .map_err(BuildError::ValidationError)?,
+            module_info,
             module,
             tuneables: tuneables.clone(),
-            functions: functions.clone(),
+            functions,
             capabilities,
         };
 
         let assembled = if cfg!(feature = "opt") {
-            assembled
-                .perform_opt_passes()?
+            assembled.perform_opt_passes()?
         } else {
             assembled
         };
@@ -174,9 +173,10 @@ impl AssembledModule {
         // Reduce expressions like `expr ? val : false`, `expr ? false : val`, `expr ? val : true` or `expr ? true : val`
         // TODO
 
+        let module_info = Self::validate(&module, &tuneables, capabilities, false)
+            .map_err(BuildError::ValidationError)?;
         Ok(Self {
-            module_info: Self::validate(&module, &tuneables, &functions, capabilities, false)
-                .map_err(BuildError::ValidationError)?,
+            module_info,
             module,
             functions,
             tuneables,

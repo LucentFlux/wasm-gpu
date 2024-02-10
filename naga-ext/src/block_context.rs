@@ -45,22 +45,63 @@ impl<'a> From<(&'a mut naga::Module, naga::Handle<naga::Function>)> for BlockCon
 }
 
 impl<'a> BlockContext<'a> {
-    #[inline(always)]
-    pub fn append_expression(
-        &mut self,
-        expression: naga::Expression,
-    ) -> naga::Handle<naga::Expression> {
-        self.expressions.append(expression, naga::Span::UNDEFINED)
-    }
+    fn push_emit(&mut self, handle: naga::Handle<naga::Expression>) {
+        // If the last statement was an emit, append this one to that one's range
+        if let Some(naga::Statement::Emit(range)) = self.block.last_mut() {
+            if let Some((start, end)) = range.first_and_last() {
+                if end.index() + 1 == handle.index() {
+                    *range = naga::Range::new_from_bounds(start, handle);
+                    return;
+                }
+            }
+        }
 
-    pub fn emit(
-        &mut self,
-        handle: naga::Handle<naga::Expression>,
-    ) -> naga::Handle<naga::Expression> {
         self.block.push(
             naga::Statement::Emit(naga::Range::new_from_bounds(handle, handle)),
             naga::Span::UNDEFINED,
         );
+    }
+
+    /// Appends an expression, emitting it immediately if it needs to be emitted.
+    #[inline(always)]
+    pub fn append_expr(&mut self, expression: naga::Expression) -> naga::Handle<naga::Expression> {
+        let shoult_emit = match expression {
+            naga::Expression::Literal(_)
+            | naga::Expression::Constant(_)
+            | naga::Expression::ZeroValue(_)
+            | naga::Expression::FunctionArgument(_)
+            | naga::Expression::LocalVariable(_)
+            | naga::Expression::GlobalVariable(_)
+            | naga::Expression::CallResult(_)
+            | naga::Expression::AtomicResult { .. }
+            | naga::Expression::RayQueryProceedResult => false,
+
+            naga::Expression::Compose { .. }
+            | naga::Expression::Access { .. }
+            | naga::Expression::AccessIndex { .. }
+            | naga::Expression::Splat { .. }
+            | naga::Expression::Swizzle { .. }
+            | naga::Expression::Load { .. }
+            | naga::Expression::ImageSample { .. }
+            | naga::Expression::ImageLoad { .. }
+            | naga::Expression::ImageQuery { .. }
+            | naga::Expression::Unary { .. }
+            | naga::Expression::Binary { .. }
+            | naga::Expression::Select { .. }
+            | naga::Expression::Derivative { .. }
+            | naga::Expression::Relational { .. }
+            | naga::Expression::Math { .. }
+            | naga::Expression::As { .. }
+            | naga::Expression::WorkGroupUniformLoadResult { .. }
+            | naga::Expression::ArrayLength(_)
+            | naga::Expression::RayQueryGetIntersection { .. } => true,
+        };
+
+        let handle = self.expressions.append(expression, naga::Span::UNDEFINED);
+
+        if shoult_emit {
+            self.push_emit(handle);
+        }
 
         return handle;
     }
@@ -82,11 +123,11 @@ impl<'a> BlockContext<'a> {
         &mut self,
         local: naga::Handle<naga::LocalVariable>,
     ) -> naga::Handle<naga::Expression> {
-        self.append_expression(naga::Expression::LocalVariable(local))
+        self.append_expr(naga::Expression::LocalVariable(local))
     }
     #[inline(always)]
     pub fn literal_expr(&mut self, literal: naga::Literal) -> naga::Handle<naga::Expression> {
-        self.append_expression(naga::Expression::Literal(literal))
+        self.append_expr(naga::Expression::Literal(literal))
     }
     #[inline(always)]
     pub fn literal_expr_from(
@@ -100,14 +141,14 @@ impl<'a> BlockContext<'a> {
         &mut self,
         constant: naga::Handle<naga::Constant>,
     ) -> naga::Handle<naga::Expression> {
-        self.append_expression(naga::Expression::Constant(constant))
+        self.append_expr(naga::Expression::Constant(constant))
     }
     #[inline(always)]
     pub fn global_expr(
         &mut self,
         global: naga::Handle<naga::GlobalVariable>,
     ) -> naga::Handle<naga::Expression> {
-        self.append_expression(naga::Expression::GlobalVariable(global))
+        self.append_expr(naga::Expression::GlobalVariable(global))
     }
 
     /// Builds a [`naga::Statement::If`] using the given condition.
@@ -171,6 +212,105 @@ impl<'a> BlockContext<'a> {
         )
     }
 
+    /// Calls a function with [`naga::Statement::Call`], placing the result in an expression which is returned.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use naga_ext::*;
+    /// let mut module = naga::Module::default();
+    /// let u32_ty = module.types.insert_u32();
+    ///
+    /// // Function to be called
+    /// let (fn_foo, _) = naga_ext::declare_function! {&mut module =>
+    ///     fn foo() -> u32_ty
+    /// };
+    /// let mut ctx = naga_ext::BlockContext::from((&mut module, fn_foo));
+    /// let res = ctx.literal_expr_from(10u32);
+    /// ctx.result(res);
+    ///
+    /// let (fn_bar, _) = naga_ext::declare_function! {&mut module =>
+    ///     fn bar() -> u32_ty
+    /// };
+    /// let mut ctx = naga_ext::BlockContext::from((&mut module, fn_bar));
+    /// let res = ctx.call_get_return(fn_foo, vec![]);
+    /// ctx.result(res);
+    /// # naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&mut module).unwrap();
+    /// ```
+    ///
+    /// The above code results in the following shader:
+    ///
+    /// ```wgsl
+    /// fn foo() -> u32 {
+    ///     return 10;
+    /// }
+    /// fn bar() -> u32 {
+    ///     return foo();
+    /// }
+    /// ```
+    #[inline(always)]
+    pub fn call_get_return(
+        &mut self,
+        function: naga::Handle<naga::Function>,
+        arguments: Vec<naga::Handle<naga::Expression>>,
+    ) -> naga::Handle<naga::Expression> {
+        let result = self.append_expr(naga::Expression::CallResult(function));
+        self.block.push(
+            naga::Statement::Call {
+                function,
+                arguments,
+                result: Some(result),
+            },
+            naga::Span::UNDEFINED,
+        );
+        return result;
+    }
+
+    /// Calls a function with [`naga::Statement::Call`].
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use naga_ext::*;
+    /// let mut module = naga::Module::default();
+    ///
+    /// // Function to be called
+    /// let (fn_foo,) = naga_ext::declare_function! {&mut module =>
+    ///     fn foo()
+    /// };
+    ///
+    /// let (fn_bar,) = naga_ext::declare_function! {&mut module =>
+    ///     fn bar()
+    /// };
+    /// let mut ctx = naga_ext::BlockContext::from((&mut module, fn_bar));
+    /// ctx.call_void(fn_foo, vec![]);
+    /// # naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&mut module).unwrap();
+    /// ```
+    ///
+    /// The above code results in the following shader:
+    ///
+    /// ```wgsl
+    /// fn foo() { }
+    /// fn bar() {
+    ///     foo();
+    /// }
+    /// ```
+    #[inline(always)]
+    pub fn call_void(
+        &mut self,
+        function: naga::Handle<naga::Function>,
+        arguments: Vec<naga::Handle<naga::Expression>>,
+    ) {
+        self.block.push(
+            naga::Statement::Call {
+                function,
+                arguments,
+                result: None,
+            },
+            naga::Span::UNDEFINED,
+        );
+    }
+
     /// Builds a [`naga::Statement::Return`] using the given value.
     ///
     /// # Example
@@ -199,6 +339,28 @@ impl<'a> BlockContext<'a> {
     pub fn result(self, value: naga::Handle<naga::Expression>) {
         self.block.push(
             naga::Statement::Return { value: Some(value) },
+            naga::Span::UNDEFINED,
+        )
+    }
+
+    /// Builds a [`naga::Statement::Return`] with no return value.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use naga_ext::*;
+    /// let mut module = naga::Module::default();
+    /// let (function,) = naga_ext::declare_function! {&mut module =>
+    ///     fn foo()
+    /// };
+    /// let mut ctx = naga_ext::BlockContext::from((&mut module, function));
+    /// ctx.void_return();
+    /// # naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&mut module).unwrap();
+    /// ```
+    #[inline(always)]
+    pub fn void_return(self) {
+        self.block.push(
+            naga::Statement::Return { value: None },
             naga::Span::UNDEFINED,
         )
     }

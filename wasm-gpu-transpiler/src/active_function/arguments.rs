@@ -169,7 +169,7 @@ impl EntryArguments {
     pub(crate) fn append_to(function: &mut naga::Function, std_objects: &StdObjects) -> Self {
         let global_id = FnArg::append_bound_to(
             function,
-            std_objects.uvec3,
+            std_objects.preamble.uvec3_ty,
             naga::Binding::BuiltIn(naga::BuiltIn::GlobalInvocationId),
         );
 

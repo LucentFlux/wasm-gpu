@@ -87,8 +87,8 @@ impl BlockLabel {
                 format!("branching_escape_flag_{}", block_id),
                 local_variables,
                 expressions,
-                std_objects.naga_bool.ty,
-                Some(expressions.append_constant(std_objects.naga_bool.const_false)),
+                std_objects.preamble.naga_bool.ty,
+                Some(expressions.append_constant(std_objects.preamble.naga_bool.const_false)),
             ),
         }
     }
@@ -147,14 +147,18 @@ impl<'a> BodyData<'a> {
         std_objects: &'a StdObjects,
         uses_disjoint_memory: bool,
     ) -> Self {
-        let wasm_true_expression = expressions.append_constant(std_objects.wasm_bool.const_true);
-        let wasm_false_expression = expressions.append_constant(std_objects.wasm_bool.const_false);
-        let naga_true_expression = expressions.append_constant(std_objects.naga_bool.const_true);
-        let naga_false_expression = expressions.append_constant(std_objects.naga_bool.const_false);
+        let wasm_true_expression =
+            expressions.append_constant(std_objects.preamble.wasm_bool.const_true);
+        let wasm_false_expression =
+            expressions.append_constant(std_objects.preamble.wasm_bool.const_false);
+        let naga_true_expression =
+            expressions.append_constant(std_objects.preamble.naga_bool.const_true);
+        let naga_false_expression =
+            expressions.append_constant(std_objects.preamble.naga_bool.const_false);
 
         let trap_check_counter = local_variables.new_local(
             "trap_check_counter",
-            std_objects.word,
+            std_objects.preamble.word_ty,
             Some(expressions.append_u32(0)),
         );
         let trap_check_counter = expressions.append_local(trap_check_counter);
@@ -393,7 +397,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
             own_label.is_branching.expression,
             body_data
                 .expressions
-                .append_constant(body_data.std_objects.naga_bool.const_false),
+                .append_constant(body_data.std_objects.preamble.naga_bool.const_false),
         );
 
         parents.push(own_label);
@@ -656,7 +660,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         blockty: wasmparser::BlockType,
         instructions: &mut Peekable<impl Iterator<Item = &'c OperatorByProposal<'a>>>,
     ) -> build::Result<ControlFlowState> {
-        let trap_state = self.body_data.std_objects.trap_state;
+        let trap_state = self.body_data.std_objects.preamble.trap_state;
         let trap_state = naga_expr!(self => Global(trap_state));
 
         let block_type = BlockType::from_parsed(blockty, &self.body_data.module_data.types);
@@ -1001,11 +1005,16 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
 
     /// Calls trap, recording the given flag
     fn append_trap(&mut self, trap_id: Trap) -> build::Result<()> {
-        self.body_data.std_objects.trap_values.emit_set_trap(
-            trap_id,
-            self.body_data.std_objects.trap_state,
-            self,
-        );
+        let mut ctx = self.into();
+        self.body_data
+            .std_objects
+            .preamble
+            .trap_values
+            .emit_set_trap(
+                &mut ctx,
+                trap_id,
+                self.body_data.std_objects.preamble.trap_state,
+            );
 
         Ok(())
     }
@@ -1036,10 +1045,10 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
     ) -> naga::Handle<naga::Expression> {
         let stride_bytes = naga_expr!(self => U32(MEMORY_STRIDE_WORDS * 4));
 
-        let invocations_count_global = self.std_objects().invocations_count;
+        let invocations_count_global = self.std_objects().preamble.invocations_count;
         let invocations_count = naga_expr!(self => Load(Global(invocations_count_global)));
 
-        let instance_id_global = self.std_objects().instance_id;
+        let instance_id_global = self.std_objects().preamble.instance_id;
         let instance_id = naga_expr!(self => Load(Global(instance_id_global)));
 
         naga_expr!(self => ((shared_address / stride_bytes) * {invocations_count}) + (stride_bytes * instance_id) + (shared_address % stride_bytes))
@@ -1088,7 +1097,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         let offset = u32::try_from(*offset)
             .map_err(|_| BuildError::BoundsExceeded(ExceededComponent::MemArgOffset))?;
 
-        let memory = naga_expr!(self => U32(memory));
+        let memory = naga_expr!(self => U32(*memory));
 
         let address = self.pop();
         let mut address = naga_expr!(self => address + U32(offset));
@@ -1121,7 +1130,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
 
         let value = self.pop();
 
-        let memory = naga_expr!(self => U32(memory));
+        let memory = naga_expr!(self => U32(*memory));
 
         let address = self.pop();
         let mut address = naga_expr!(self => address + U32(offset));
@@ -1157,6 +1166,7 @@ impl<'a, 'b, 'd> From<&'a mut ActiveBlock<'b, 'd>> for BlockContext<'a> {
             constants: &mut value.body_data.constants,
             const_expressions: &mut value.body_data.const_expressions,
             expressions: &mut value.body_data.expressions,
+            locals: &mut value.body_data.local_variables,
             block: &mut value.block,
         }
     }

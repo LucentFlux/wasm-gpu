@@ -424,15 +424,9 @@ macro_rules! declare_function {
 
 #[macro_export]
 macro_rules! naga_expr {
-    ($a:expr => $($expression:tt)*) => {{
+    ($ctx:expr => $($expression:tt)*) => {{
         #[allow(unused)]
-        let mut ctx = $crate::BlockContext::from($a);
-        $crate::naga_expr!(@inner ctx => $($expression)*)
-    }};
-
-    ($a:expr, $b:expr => $($expression:tt)*) => {{
-        #[allow(unused)]
-        let mut ctx = $crate::BlockContext::from(($a, $b));
+        let mut ctx = $crate::BlockContext::from($ctx);
         $crate::naga_expr!(@inner ctx => $($expression)*)
     }};
 
@@ -469,16 +463,14 @@ macro_rules! naga_expr {
     }};
     (@inner $ctx:expr => $lhs:tt as $kind:tt ($bitcount:expr) $($others:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
-        let handle = $ctx.append_expression(naga::Expression::As { expr: left, kind: naga::ScalarKind::$kind, convert: Some($bitcount) });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::As { expr: left, kind: naga::ScalarKind::$kind, convert: Some($bitcount) });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 
     // Casting
     (@inner $ctx:expr => $lhs:tt as $kind:tt $($others:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
-        let handle = $ctx.append_expression(naga::Expression::As { expr: left, kind: naga::ScalarKind::$kind, convert: None });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::As { expr: left, kind: naga::ScalarKind::$kind, convert: None });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 
@@ -486,121 +478,101 @@ macro_rules! naga_expr {
     (@inner $ctx:expr => $lhs:tt + $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Add, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::Add, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt - $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Subtract, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::Subtract, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt * $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Multiply, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::Multiply, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt / $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Divide, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::Divide, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt % $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Modulo, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::Modulo, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt >> $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::ShiftRight, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::ShiftRight, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt << $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::ShiftLeft, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::ShiftLeft, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt | $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::InclusiveOr, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::InclusiveOr, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt ^ $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::ExclusiveOr, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::ExclusiveOr, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt & $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::And, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::And, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt > $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Greater, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::Greater, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt >= $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::GreaterEqual, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::GreaterEqual, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt < $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Less, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::Less, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt <= $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::LessEqual, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::LessEqual, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt == $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::Equal, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::Equal, left, right })
     }};
     (@inner $ctx:expr => $lhs:tt != $($rhs:tt)*) => {{
         let left = $crate::naga_expr!(@inner $ctx => $lhs);
         let right = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Binary { op: naga::BinaryOperator::NotEqual, left, right });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Binary { op: naga::BinaryOperator::NotEqual, left, right })
     }};
 
     (@inner $ctx:expr => !$($value:tt)*) => {{
         let value = $crate::naga_expr!(@inner $ctx => $($value)*);
-        let handle = $ctx.append_expression(naga::Expression::Unary { op: naga::UnaryOperator::LogicalNot, expr: value });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Unary { op: naga::UnaryOperator::LogicalNot, expr: value })
     }};
     (@inner $ctx:expr => ~$($value:tt)*) => {{
         let value = $crate::naga_expr!(@inner $ctx => $($value)*);
-        let handle = $ctx.append_expression(naga::Expression::Unary { op: naga::UnaryOperator::BitwiseNot, expr: value });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Unary { op: naga::UnaryOperator::BitwiseNot, expr: value })
     }};
     (@inner $ctx:expr => -$($value:tt)*) => {{
         let value = $crate::naga_expr!(@inner $ctx => $($value)*);
-        let handle = $ctx.append_expression(naga::Expression::Unary { op: naga::UnaryOperator::Negate, expr: value });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Unary { op: naga::UnaryOperator::Negate, expr: value })
     }};
 
     // Struct Ops
     (@inner $ctx:expr => $base:tt [const $index:expr ] $($others:tt)*) => {{
         let base = $crate::naga_expr!(@inner $ctx => $base);
-        let handle = $ctx.append_expression(naga::Expression::AccessIndex{ base, index: $index });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::AccessIndex{ base, index: $index });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 
@@ -608,8 +580,7 @@ macro_rules! naga_expr {
     (@inner $ctx:expr => $base:tt [ $($index:tt)* ] $($others:tt)*) => {{
         let base = $crate::naga_expr!(@inner $ctx => $base);
         let index = $crate::naga_expr!(@inner $ctx => $($index)*);
-        let handle = $ctx.append_expression(naga::Expression::Access { base, index });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::Access { base, index });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 
@@ -651,64 +622,54 @@ macro_rules! naga_expr {
     // Deref
     (@inner $ctx:expr => Load($($pointer:tt)*) $($others:tt)*) => {{
         let pointer = $crate::naga_expr!(@inner $ctx => $($pointer)*);
-        let handle = $ctx.append_expression(naga::Expression::Load { pointer });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::Load { pointer });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 
     // Maths
     (@inner $ctx:expr => countLeadingZeros($($arg:tt)*) $($others:tt)*) => {{
         let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
-        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::CountLeadingZeros, arg, arg1: None, arg2: None, arg3: None });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::Math { fun: naga::MathFunction::CountLeadingZeros, arg, arg1: None, arg2: None, arg3: None });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
     (@inner $ctx:expr => exp2($($arg:tt)*) $($others:tt)*) => {{
         let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
-        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Exp2, arg, arg1: None, arg2: None, arg3: None });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::Math { fun: naga::MathFunction::Exp2, arg, arg1: None, arg2: None, arg3: None });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
     (@inner $ctx:expr => abs($($arg:tt)*) $($others:tt)*) => {{
         let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
-        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Abs, arg, arg1: None, arg2: None, arg3: None });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::Math { fun: naga::MathFunction::Abs, arg, arg1: None, arg2: None, arg3: None });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
     (@inner $ctx:expr => ceil($($arg:tt)*) $($others:tt)*) => {{
         let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
-        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Ceil, arg, arg1: None, arg2: None, arg3: None });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::Math { fun: naga::MathFunction::Ceil, arg, arg1: None, arg2: None, arg3: None });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
     (@inner $ctx:expr => floor($($arg:tt)*) $($others:tt)*) => {{
         let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
-        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Floor, arg, arg1: None, arg2: None, arg3: None });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::Math { fun: naga::MathFunction::Floor, arg, arg1: None, arg2: None, arg3: None });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
     (@inner $ctx:expr => trunc($($arg:tt)*) $($others:tt)*) => {{
         let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
-        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Trunc, arg, arg1: None, arg2: None, arg3: None });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::Math { fun: naga::MathFunction::Trunc, arg, arg1: None, arg2: None, arg3: None });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
     (@inner $ctx:expr => round($($arg:tt)*) $($others:tt)*) => {{
         let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
-        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Round, arg, arg1: None, arg2: None, arg3: None });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::Math { fun: naga::MathFunction::Round, arg, arg1: None, arg2: None, arg3: None });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
     (@inner $ctx:expr => sqrt($($arg:tt)*) $($others:tt)*) => {{
         let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
-        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Sqrt, arg, arg1: None, arg2: None, arg3: None });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::Math { fun: naga::MathFunction::Sqrt, arg, arg1: None, arg2: None, arg3: None });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
     (@inner $ctx:expr => sign($($arg:tt)*) $($others:tt)*) => {{
         let arg = $crate::naga_expr!(@inner $ctx => $($arg)*);
-        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Sign, arg, arg1: None, arg2: None, arg3: None });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::Math { fun: naga::MathFunction::Sign, arg, arg1: None, arg2: None, arg3: None });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
     (@inner $ctx:expr => min($($args:tt)*) $($others:tt)*) => {{
@@ -716,8 +677,7 @@ macro_rules! naga_expr {
         $crate::naga_expr!{@innerconstructor $ctx, components => $($args)* }
         let arg = components[0];
         let arg1 = components[1];
-        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Min, arg, arg1: Some(arg1), arg2: None, arg3: None });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::Math { fun: naga::MathFunction::Min, arg, arg1: Some(arg1), arg2: None, arg3: None });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
     (@inner $ctx:expr => max($($args:tt)*) $($others:tt)*) => {{
@@ -725,8 +685,7 @@ macro_rules! naga_expr {
         $crate::naga_expr!{@innerconstructor $ctx, components => $($args)* }
         let arg = components[0];
         let arg1 = components[1];
-        let handle = $ctx.append_expression(naga::Expression::Math { fun: naga::MathFunction::Max, arg, arg1: Some(arg1), arg2: None, arg3: None });
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::Math { fun: naga::MathFunction::Max, arg, arg1: Some(arg1), arg2: None, arg3: None });
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 
@@ -735,8 +694,7 @@ macro_rules! naga_expr {
         let condition = $crate::naga_expr!(@inner $ctx => $($condition)* );
         let accept = $crate::naga_expr!(@inner $ctx => $($lhs)*);
         let reject = $crate::naga_expr!(@inner $ctx => $($rhs)*);
-        let handle = $ctx.append_expression(naga::Expression::Select { condition, accept, reject });
-        $ctx.emit(handle)
+        $ctx.append_expr(naga::Expression::Select { condition, accept, reject })
     }};
 
     // Constructors
@@ -763,8 +721,7 @@ macro_rules! naga_expr {
     (@inner $ctx:expr => $ty:tt ( $($args:tt)* ) $($others:tt)*) => {{
         let mut components = Vec::new();
         $crate::naga_expr!{@innerconstructor $ctx, components => $($args)* }
-        let handle = $ctx.append_expression(naga::Expression::Compose {ty: $ty, components});
-        $ctx.emit(handle);
+        let handle = $ctx.append_expr(naga::Expression::Compose {ty: $ty, components});
         $crate::naga_expr!(@inner $ctx => handle $($others)*)
     }};
 

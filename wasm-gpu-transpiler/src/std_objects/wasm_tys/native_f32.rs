@@ -3,20 +3,11 @@ use crate::{
     std_objects::{preamble_objects_gen, wasm_tys::impl_native_bool_binexp},
 };
 use naga_ext::{
-    declare_function, naga_expr, BlockContext, BlockExt, ConstantsExt, ExpressionsExt, LocalsExt,
-    ModuleExt, TypesExt,
+    declare_function, naga_expr, BlockContext, ConstantsExt, ExpressionsExt, TypesExt,
 };
 
 use super::{f32_instance_gen, F32Gen};
 
-fn make_const_impl(
-    module: &mut naga::Module,
-    ty: naga::Handle<naga::Type>,
-    value: f32,
-) -> naga::Handle<naga::Constant> {
-    let expr = module.const_expressions.append_f32(value);
-    module.constants.append_anonymous(ty, expr)
-}
 
 /// Takes a float and produces one that has been multiplied by 2^x, respecting denormals
 /// using bitwise operations
@@ -493,93 +484,94 @@ pub(crate) struct NativeF32;
 impl F32Gen for NativeF32 {
     fn gen_ty(
         module: &mut naga::Module,
-        _others: super::f32_instance_gen::TyRequirements,
+        _requirements: super::f32_instance_gen::TyRequirements,
     ) -> build::Result<super::f32_instance_gen::Ty> {
         Ok(module.types.insert_f32())
     }
 
     fn gen_default(
         module: &mut naga::Module,
-        others: super::f32_instance_gen::DefaultRequirements,
+        requirements: super::f32_instance_gen::DefaultRequirements,
     ) -> build::Result<super::f32_instance_gen::Default> {
-        Ok(make_const_impl(module, *others.ty, 0.0))
+        let expr = module.const_expressions.append_f32(0.0);
+        let res = module.constants.append_anonymous(*requirements.ty, expr);
+        Ok(res)
     }
 
     fn gen_size_bytes(
         _module: &mut naga::Module,
-        _others: super::f32_instance_gen::SizeBytesRequirements,
+        _requirements: super::f32_instance_gen::SizeBytesRequirements,
     ) -> build::Result<super::f32_instance_gen::SizeBytes> {
         Ok(4)
     }
 
     fn gen_make_const(
         _module: &mut naga::Module,
-        others: super::f32_instance_gen::MakeConstRequirements,
+        _requirements: super::f32_instance_gen::MakeConstRequirements,
     ) -> build::Result<super::f32_instance_gen::MakeConst> {
-        let ty = *others.ty;
-        Ok(Box::new(move |module, value| {
-            Ok(make_const_impl(module, ty, value))
+        Ok(Box::new(|const_expressions, value| {
+            Ok(const_expressions.append_f32(value))
         }))
     }
 
     fn gen_read_input(
         module: &mut naga::Module,
-        others: super::f32_instance_gen::ReadInputRequirements,
+        requirements: super::f32_instance_gen::ReadInputRequirements,
     ) -> build::Result<super::f32_instance_gen::ReadInput> {
         gen_read(
             module,
-            others.preamble.word_ty,
-            *others.ty,
-            others.preamble.bindings.input,
+            requirements.preamble.word_ty,
+            *requirements.ty,
+            requirements.preamble.bindings.input,
             "input",
         )
     }
 
     fn gen_write_output(
         module: &mut naga::Module,
-        others: super::f32_instance_gen::WriteOutputRequirements,
+        requirements: super::f32_instance_gen::WriteOutputRequirements,
     ) -> build::Result<super::f32_instance_gen::WriteOutput> {
         gen_write(
             module,
-            others.preamble.word_ty,
-            *others.ty,
-            others.preamble.bindings.output,
+            requirements.preamble.word_ty,
+            *requirements.ty,
+            requirements.preamble.bindings.output,
             "output",
         )
     }
 
     fn gen_read_memory(
         module: &mut naga::Module,
-        others: super::f32_instance_gen::ReadMemoryRequirements,
+        requirements: super::f32_instance_gen::ReadMemoryRequirements,
     ) -> build::Result<super::f32_instance_gen::ReadMemory> {
         gen_read(
             module,
-            others.preamble.word_ty,
-            *others.ty,
-            others.preamble.bindings.memory,
+            requirements.preamble.word_ty,
+            *requirements.ty,
+            requirements.preamble.bindings.memory,
             "memory",
         )
     }
 
     fn gen_write_memory(
         module: &mut naga::Module,
-        others: super::f32_instance_gen::WriteMemoryRequirements,
+        requirements: super::f32_instance_gen::WriteMemoryRequirements,
     ) -> build::Result<super::f32_instance_gen::WriteMemory> {
         gen_write(
             module,
-            others.preamble.word_ty,
-            *others.ty,
-            others.preamble.bindings.memory,
+            requirements.preamble.word_ty,
+            *requirements.ty,
+            requirements.preamble.bindings.memory,
             "memory",
         )
     }
 
     fn gen_abs(
         module: &mut naga::Module,
-        others: f32_instance_gen::AbsRequirements,
+        requirements: f32_instance_gen::AbsRequirements,
     ) -> build::Result<f32_instance_gen::Abs> {
         let (function_handle, value) = declare_function! {
-            module => fn f32_abs(value: *others.ty) -> *others.ty
+            module => fn f32_abs(value: *requirements.ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
@@ -592,10 +584,10 @@ impl F32Gen for NativeF32 {
 
     fn gen_neg(
         module: &mut naga::Module,
-        others: f32_instance_gen::NegRequirements,
+        requirements: f32_instance_gen::NegRequirements,
     ) -> build::Result<f32_instance_gen::Neg> {
         let (function_handle, value) = declare_function! {
-            module => fn f32_neg(value: *others.ty) -> *others.ty
+            module => fn f32_neg(value: *requirements.ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
@@ -608,14 +600,14 @@ impl F32Gen for NativeF32 {
 
     fn gen_ceil(
         module: &mut naga::Module,
-        others: f32_instance_gen::CeilRequirements,
+        requirements: f32_instance_gen::CeilRequirements,
     ) -> build::Result<f32_instance_gen::Ceil> {
         let (function_handle, value) = declare_function! {
-            module => fn f32_ceil(value: *others.ty) -> *others.ty
+            module => fn f32_ceil(value: *requirements.ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let res = if others.fp_options.emulate_subnormals {
+        let res = if requirements.fp_options.emulate_subnormals {
             naga_expr!(ctx =>
                 let value_u32 = bitcast<u32>(value);
                 let exp = (value_u32 >> U32(23)) & U32(0xFF);
@@ -641,14 +633,14 @@ impl F32Gen for NativeF32 {
 
     fn gen_floor(
         module: &mut naga::Module,
-        others: f32_instance_gen::FloorRequirements,
+        requirements: f32_instance_gen::FloorRequirements,
     ) -> build::Result<f32_instance_gen::Floor> {
         let (function_handle, value) = declare_function! {
-            module => fn f32_floor(value: *others.ty) -> *others.ty
+            module => fn f32_floor(value: *requirements.ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let res = if others.fp_options.emulate_subnormals {
+        let res = if requirements.fp_options.emulate_subnormals {
             naga_expr!(ctx =>
                 let value_u32 = bitcast<u32>(value);
                 let exp = (value_u32 >> U32(23)) & U32(0xFF);
@@ -674,10 +666,10 @@ impl F32Gen for NativeF32 {
 
     fn gen_trunc(
         module: &mut naga::Module,
-        others: f32_instance_gen::TruncRequirements,
+        requirements: f32_instance_gen::TruncRequirements,
     ) -> build::Result<f32_instance_gen::Trunc> {
         let (function_handle, value) = declare_function! {
-            module => fn f32_trunc(value: *others.ty) -> *others.ty
+            module => fn f32_trunc(value: *requirements.ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
@@ -690,10 +682,10 @@ impl F32Gen for NativeF32 {
 
     fn gen_nearest(
         module: &mut naga::Module,
-        others: f32_instance_gen::NearestRequirements,
+        requirements: f32_instance_gen::NearestRequirements,
     ) -> build::Result<f32_instance_gen::Nearest> {
         let (function_handle, value) = declare_function! {
-            module => fn f32_nearest(value: *others.ty) -> *others.ty
+            module => fn f32_nearest(value: *requirements.ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
@@ -706,15 +698,15 @@ impl F32Gen for NativeF32 {
 
     fn gen_sqrt(
         module: &mut naga::Module,
-        others: f32_instance_gen::SqrtRequirements,
+        requirements: f32_instance_gen::SqrtRequirements,
     ) -> build::Result<f32_instance_gen::Sqrt> {
         let (function_handle, value) = declare_function! {
-            module => fn f32_sqrt(value: *others.ty) -> *others.ty
+            module => fn f32_sqrt(value: *requirements.ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let res = if others.fp_options.emulate_subnormals {
-            let subnormal_sqrt = subnormal_sqrt(&mut ctx, *others.ty, value);
+        let res = if requirements.fp_options.emulate_subnormals {
+            let subnormal_sqrt = subnormal_sqrt(&mut ctx, *requirements.ty, value);
             naga_expr!(ctx =>
                 let value_u32 = bitcast<u32>(value);
                 let sign = value_u32 & U32(0x80000000);
@@ -738,15 +730,15 @@ impl F32Gen for NativeF32 {
 
     fn gen_min(
         module: &mut naga::Module,
-        others: f32_instance_gen::MinRequirements,
+        requirements: f32_instance_gen::MinRequirements,
     ) -> build::Result<f32_instance_gen::Min> {
         let (function_handle, lhs, rhs) = declare_function! {
-            module => fn f32_min(lhs: *others.ty, rhs: *others.ty) -> *others.ty
+            module => fn f32_min(lhs: *requirements.ty, rhs: *requirements.ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let min = if others.fp_options.emulate_subnormals {
-            subnormal_min(&mut ctx, *others.ty, lhs, rhs)
+        let min = if requirements.fp_options.emulate_subnormals {
+            subnormal_min(&mut ctx, *requirements.ty, lhs, rhs)
         } else {
             naga_expr!(ctx => min(lhs, rhs))
         };
@@ -761,15 +753,15 @@ impl F32Gen for NativeF32 {
 
     fn gen_max(
         module: &mut naga::Module,
-        others: f32_instance_gen::MaxRequirements,
+        requirements: f32_instance_gen::MaxRequirements,
     ) -> build::Result<f32_instance_gen::Max> {
         let (function_handle, lhs, rhs) = declare_function! {
-            module => fn f32_max(lhs: *others.ty, rhs: *others.ty) -> *others.ty
+            module => fn f32_max(lhs: *requirements.ty, rhs: *requirements.ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let max = if others.fp_options.emulate_subnormals {
-            subnormal_max(&mut ctx, *others.ty, lhs, rhs)
+        let max = if requirements.fp_options.emulate_subnormals {
+            subnormal_max(&mut ctx, *requirements.ty, lhs, rhs)
         } else {
             naga_expr!(ctx => max(lhs, rhs))
         };
@@ -784,10 +776,10 @@ impl F32Gen for NativeF32 {
 
     fn gen_copy_sign(
         module: &mut naga::Module,
-        others: f32_instance_gen::CopySignRequirements,
+        requirements: f32_instance_gen::CopySignRequirements,
     ) -> build::Result<f32_instance_gen::CopySign> {
         let (function_handle, lhs, rhs) = declare_function! {
-            module => fn f32_copy_sign(lhs: *others.ty, rhs: *others.ty) -> *others.ty
+            module => fn f32_copy_sign(lhs: *requirements.ty, rhs: *requirements.ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
@@ -799,15 +791,15 @@ impl F32Gen for NativeF32 {
 
     fn gen_add(
         module: &mut naga::Module,
-        others: f32_instance_gen::AddRequirements,
+        requirements: f32_instance_gen::AddRequirements,
     ) -> build::Result<f32_instance_gen::Add> {
         let (function_handle, lhs, rhs) = declare_function! {
-          module => fn f32_add(lhs: *others.ty, rhs: *others.ty) -> *others.ty
+          module => fn f32_add(lhs: *requirements.ty, rhs: *requirements.ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let res = if others.fp_options.emulate_subnormals {
-            subnormal_add(&mut ctx, *others.ty, lhs, rhs)
+        let res = if requirements.fp_options.emulate_subnormals {
+            subnormal_add(&mut ctx, *requirements.ty, lhs, rhs)
         } else {
             naga_expr!(ctx => lhs + rhs)
         };
@@ -817,15 +809,15 @@ impl F32Gen for NativeF32 {
     }
     fn gen_sub(
         module: &mut naga::Module,
-        others: f32_instance_gen::SubRequirements,
+        requirements: f32_instance_gen::SubRequirements,
     ) -> build::Result<f32_instance_gen::Sub> {
         let (function_handle, lhs, rhs) = declare_function! {
-          module => fn f32_sub(lhs: *others.ty, rhs: *others.ty) -> *others.ty
+          module => fn f32_sub(lhs: *requirements.ty, rhs: *requirements.ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let res = if others.fp_options.emulate_subnormals {
-            subnormal_sub(&mut ctx, *others.ty, lhs, rhs)
+        let res = if requirements.fp_options.emulate_subnormals {
+            subnormal_sub(&mut ctx, *requirements.ty, lhs, rhs)
         } else {
             naga_expr!(ctx => lhs - rhs)
         };
@@ -835,15 +827,15 @@ impl F32Gen for NativeF32 {
     }
     fn gen_mul(
         module: &mut naga::Module,
-        others: f32_instance_gen::MulRequirements,
+        requirements: f32_instance_gen::MulRequirements,
     ) -> build::Result<f32_instance_gen::Mul> {
         let (function_handle, lhs, rhs) = declare_function! {
-          module => fn f32_mul(lhs: *others.ty, rhs: *others.ty) -> *others.ty
+          module => fn f32_mul(lhs: *requirements.ty, rhs: *requirements.ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let res = if others.fp_options.emulate_subnormals {
-            subnormal_mult(&mut ctx, *others.ty, lhs, rhs)
+        let res = if requirements.fp_options.emulate_subnormals {
+            subnormal_mult(&mut ctx, *requirements.ty, lhs, rhs)
         } else {
             naga_expr!(ctx => lhs * rhs)
         };
@@ -857,14 +849,14 @@ impl F32Gen for NativeF32 {
 
     fn gen_div(
         module: &mut naga::Module,
-        others: f32_instance_gen::DivRequirements,
+        requirements: f32_instance_gen::DivRequirements,
     ) -> build::Result<f32_instance_gen::Div> {
         let (function_handle, lhs, rhs) = declare_function! {
-            module => fn f32_div(lhs: *others.ty, rhs: *others.ty) -> *others.ty
+            module => fn f32_div(lhs: *requirements.ty, rhs: *requirements.ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        if others.fp_options.emulate_div_beyond_max {
+        if requirements.fp_options.emulate_div_beyond_max {
             let lhs_exp = naga_expr!(ctx => (bitcast<u32>(lhs) >> U32(23)) & U32(0xFF));
             let rhs_exp = naga_expr!(ctx => (bitcast<u32>(rhs) >> U32(23)) & U32(0xFF));
             let is_lhs_beyond_max = naga_expr!(ctx => (lhs_exp >= U32(253)) & (lhs_exp != U32(255)));
@@ -893,8 +885,8 @@ impl F32Gen for NativeF32 {
             });
         }
 
-        let res = if others.fp_options.emulate_subnormals {
-            subnormal_div(&mut ctx, *others.ty, lhs, rhs)
+        let res = if requirements.fp_options.emulate_subnormals {
+            subnormal_div(&mut ctx, *requirements.ty, lhs, rhs)
         } else {
             naga_expr!(ctx => lhs / rhs)
         };
@@ -907,10 +899,10 @@ impl F32Gen for NativeF32 {
 
     fn gen_convert_i32_s(
         module: &mut naga::Module,
-        others: f32_instance_gen::ConvertI32SRequirements,
+        requirements: f32_instance_gen::ConvertI32SRequirements,
     ) -> build::Result<f32_instance_gen::ConvertI32S> {
         let (function_handle, value) = declare_function! {
-            module => fn f32_convert_i32_s(value: *others.i32_ty) -> *others.ty
+            module => fn f32_convert_i32_s(value: *requirements.i32_ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
@@ -923,10 +915,10 @@ impl F32Gen for NativeF32 {
 
     fn gen_convert_i32_u(
         module: &mut naga::Module,
-        others: f32_instance_gen::ConvertI32URequirements,
+        requirements: f32_instance_gen::ConvertI32URequirements,
     ) -> build::Result<f32_instance_gen::ConvertI32U> {
         let (function_handle, value) = declare_function! {
-            module => fn f32_convert_i32_s(value: *others.i32_ty) -> *others.ty
+            module => fn f32_convert_i32_s(value: *requirements.i32_ty) -> *requirements.ty
         };
         let mut ctx = BlockContext::from((module, function_handle));
 

@@ -162,25 +162,25 @@ generator_struct! {
 impl GenWasmBool for WasmBoolInstance {
     fn gen_ty(
         module: &mut naga::Module,
-        _others: wasm_bool_instance_gen::TyRequirements,
+        _requirements: wasm_bool_instance_gen::TyRequirements,
     ) -> build::Result<wasm_bool_instance_gen::Ty> {
         Ok(module.types.insert_u32())
     }
 
     fn gen_const_false(
         module: &mut naga::Module,
-        others: wasm_bool_instance_gen::ConstFalseRequirements,
+        requirements: wasm_bool_instance_gen::ConstFalseRequirements,
     ) -> build::Result<wasm_bool_instance_gen::ConstFalse> {
         let init = module.const_expressions.append_u32(0);
-        Ok(module.constants.append_anonymous(*others.ty, init))
+        Ok(module.constants.append_anonymous(*requirements.ty, init))
     }
 
     fn gen_const_true(
         module: &mut naga::Module,
-        others: wasm_bool_instance_gen::ConstTrueRequirements,
+        requirements: wasm_bool_instance_gen::ConstTrueRequirements,
     ) -> build::Result<wasm_bool_instance_gen::ConstTrue> {
         let init = module.const_expressions.append_u32(1);
-        Ok(module.constants.append_anonymous(*others.ty, init))
+        Ok(module.constants.append_anonymous(*requirements.ty, init))
     }
 }
 
@@ -196,25 +196,25 @@ generator_struct! {
 impl GenNagaBool for NagaBoolInstance {
     fn gen_ty(
         module: &mut naga::Module,
-        _others: naga_bool_instance_gen::TyRequirements,
+        _requirements: naga_bool_instance_gen::TyRequirements,
     ) -> build::Result<naga_bool_instance_gen::Ty> {
         Ok(module.types.insert_bool())
     }
 
     fn gen_const_false(
         module: &mut naga::Module,
-        others: naga_bool_instance_gen::ConstFalseRequirements,
+        requirements: naga_bool_instance_gen::ConstFalseRequirements,
     ) -> build::Result<naga_bool_instance_gen::ConstFalse> {
         let init = module.const_expressions.append_bool(false);
-        Ok(module.constants.append_anonymous(*others.ty, init))
+        Ok(module.constants.append_anonymous(*requirements.ty, init))
     }
 
     fn gen_const_true(
         module: &mut naga::Module,
-        others: naga_bool_instance_gen::ConstTrueRequirements,
+        requirements: naga_bool_instance_gen::ConstTrueRequirements,
     ) -> build::Result<naga_bool_instance_gen::ConstTrue> {
         let init = module.const_expressions.append_bool(true);
-        Ok(module.constants.append_anonymous(*others.ty, init))
+        Ok(module.constants.append_anonymous(*requirements.ty, init))
     }
 }
 
@@ -261,10 +261,7 @@ generator_struct! {
 
 /// All swappable parts of module generation
 ///
-/// Some different implemetations are switched out based on GPU features. By representing these
-/// options in the type system, we can ensure at compile time that we have covered every case.
-/// The alternative is to patten match on a set of configuration values every time we generate
-/// anything. This is clearly more foolproof.
+/// Some different implementations are switched out based on GPU features.
 pub(crate) trait GenerationParameters {
     type I32: wasm_tys::I32Gen;
     type I64: wasm_tys::I64Gen;
@@ -280,18 +277,12 @@ macro_rules! impl_gen_wasm {
         paste::paste! {
             fn [< gen_ $ty >](
                 module: &mut naga::Module,
-                others: std_objects_gen::[< $ty:camel Requirements >],
+                requirements: std_objects_gen::[< $ty:camel Requirements >],
             ) -> build::Result<std_objects_gen::[< $ty:camel >]> {
                 std_objects_gen::[< $ty:camel >]::gen_from::<Ps::[< $ty:camel >]>(
                     module,
-                    *others.word_ty,
-                    others.bindings,
-                    others.word_max,
-                    others.wasm_bool,
-                    others.instance_id,
-                    others.trap_values,
-                    others.trap_state,
-                    others.fp_options,
+                    requirements.preamble,
+                    requirements.fp_options,
                 )
             }
         }
@@ -302,21 +293,21 @@ struct PreambleObjectsGenerator<Ps: GenerationParameters>(PhantomData<Ps>);
 impl<Ps: GenerationParameters> PreambleObjectsGen for PreambleObjectsGenerator<Ps> {
     fn gen_word_ty(
         module: &mut naga::Module,
-        _others: preamble_objects_gen::WordTyRequirements,
+        _requirements: preamble_objects_gen::WordTyRequirements,
     ) -> build::Result<preamble_objects_gen::WordTy> {
         Ok(module.types.insert_u32())
     }
 
     fn gen_word_max(
         module: &mut naga::Module,
-        others: preamble_objects_gen::WordMaxRequirements,
+        requirements: preamble_objects_gen::WordMaxRequirements,
     ) -> build::Result<preamble_objects_gen::WordMax> {
         let init = module.const_expressions.append_u32(u32::MAX);
         Ok(module.constants.append(
             naga::Constant {
                 name: Some("MAX_WORD".to_owned()),
                 r#override: naga::Override::None,
-                ty: *others.word_ty,
+                ty: *requirements.word_ty,
                 init,
             },
             naga::Span::UNDEFINED,
@@ -325,7 +316,7 @@ impl<Ps: GenerationParameters> PreambleObjectsGen for PreambleObjectsGenerator<P
 
     fn gen_uvec3_ty(
         module: &mut naga::Module,
-        _others: preamble_objects_gen::Uvec3TyRequirements,
+        _requirements: preamble_objects_gen::Uvec3TyRequirements,
     ) -> build::Result<preamble_objects_gen::Uvec3Ty> {
         Ok(module.types.insert(
             naga::Type {
@@ -341,13 +332,13 @@ impl<Ps: GenerationParameters> PreambleObjectsGen for PreambleObjectsGenerator<P
 
     fn gen_word_array_buffer_ty(
         module: &mut naga::Module,
-        others: preamble_objects_gen::WordArrayBufferTyRequirements,
+        requirements: preamble_objects_gen::WordArrayBufferTyRequirements,
     ) -> build::Result<preamble_objects_gen::WordArrayBufferTy> {
         let word_array_ty = module.types.insert(
             naga::Type {
                 name: None,
                 inner: naga::TypeInner::Array {
-                    base: *others.word_ty,
+                    base: *requirements.word_ty,
                     size: naga::ArraySize::Dynamic,
                     stride: 4,
                 },
@@ -360,11 +351,11 @@ impl<Ps: GenerationParameters> PreambleObjectsGen for PreambleObjectsGenerator<P
 
     fn gen_constants_buffer_ty(
         module: &mut naga::Module,
-        others: preamble_objects_gen::ConstantsBufferTyRequirements,
+        requirements: preamble_objects_gen::ConstantsBufferTyRequirements,
     ) -> build::Result<preamble_objects_gen::ConstantsBufferTy> {
         let constants_members = vec![naga::StructMember {
             name: Some("total_invocations".to_owned()),
-            ty: *others.word_ty,
+            ty: *requirements.word_ty,
             binding: None,
             offset: TOTAL_INVOCATIONS_CONSTANT_INDEX * 4,
         }];
@@ -384,11 +375,11 @@ impl<Ps: GenerationParameters> PreambleObjectsGen for PreambleObjectsGenerator<P
 
     fn gen_flags_ty(
         module: &mut naga::Module,
-        others: preamble_objects_gen::FlagsTyRequirements,
+        requirements: preamble_objects_gen::FlagsTyRequirements,
     ) -> build::Result<preamble_objects_gen::FlagsTy> {
         let flag_members = vec![naga::StructMember {
             name: Some("trap_flag".to_owned()),
-            ty: *others.word_ty,
+            ty: *requirements.word_ty,
             binding: None,
             offset: TRAP_FLAG_INDEX * 4,
         }];
@@ -408,13 +399,13 @@ impl<Ps: GenerationParameters> PreambleObjectsGen for PreambleObjectsGenerator<P
 
     fn gen_flags_array_buffer_ty(
         module: &mut naga::Module,
-        others: preamble_objects_gen::FlagsArrayBufferTyRequirements,
+        requirements: preamble_objects_gen::FlagsArrayBufferTyRequirements,
     ) -> build::Result<preamble_objects_gen::FlagsArrayBufferTy> {
         let flags_array_ty = module.types.insert(
             naga::Type {
                 name: None,
                 inner: naga::TypeInner::Array {
-                    base: others.flags_ty,
+                    base: *requirements.flags_ty,
                     size: naga::ArraySize::Dynamic,
                     stride: FLAGS_LEN_BYTES,
                 },
@@ -427,34 +418,36 @@ impl<Ps: GenerationParameters> PreambleObjectsGen for PreambleObjectsGenerator<P
 
     fn gen_bindings(
         module: &mut naga::Module,
-        others: preamble_objects_gen::BindingsRequirements,
+        requirements: preamble_objects_gen::BindingsRequirements,
     ) -> build::Result<preamble_objects_gen::Bindings> {
         StdBindings::gen(
             module,
-            others.constants_buffer_ty,
-            others.word_array_buffer_ty,
-            others.flags_array_buffer_ty,
+            *requirements.constants_buffer_ty,
+            *requirements.word_array_buffer_ty,
+            *requirements.flags_array_buffer_ty,
         )
     }
 
     fn gen_trap_values(
         module: &mut naga::Module,
-        _others: preamble_objects_gen::TrapValuesRequirements,
+        _requirements: preamble_objects_gen::TrapValuesRequirements,
     ) -> build::Result<preamble_objects_gen::TrapValues> {
         Ok(TrapValuesInstance::gen(module))
     }
     fn gen_trap_state(
         module: &mut naga::Module,
-        others: preamble_objects_gen::TrapStateRequirements,
+        requirements: preamble_objects_gen::TrapStateRequirements,
     ) -> build::Result<preamble_objects_gen::TrapState> {
-        let zero = module.constants.append_u32(0);
+        let zero = module
+            .const_expressions
+            .append_literal(naga::Literal::U32(0));
 
         Ok(module.global_variables.append(
             naga::GlobalVariable {
                 name: Some("trap_state".to_owned()),
                 space: naga::AddressSpace::Private,
                 binding: None,
-                ty: *others.word_ty,
+                ty: *requirements.word_ty,
                 init: Some(zero),
             },
             naga::Span::UNDEFINED,
@@ -462,26 +455,26 @@ impl<Ps: GenerationParameters> PreambleObjectsGen for PreambleObjectsGenerator<P
     }
     fn gen_naga_bool(
         module: &mut naga::Module,
-        _others: preamble_objects_gen::NagaBoolRequirements,
+        _requirements: preamble_objects_gen::NagaBoolRequirements,
     ) -> build::Result<preamble_objects_gen::NagaBool> {
         NagaBoolInstance::gen_from::<NagaBoolInstance>(module)
     }
     fn gen_wasm_bool(
         module: &mut naga::Module,
-        _others: preamble_objects_gen::WasmBoolRequirements,
+        _requirements: preamble_objects_gen::WasmBoolRequirements,
     ) -> build::Result<preamble_objects_gen::WasmBool> {
         WasmBoolInstance::gen_from::<WasmBoolInstance>(module)
     }
     fn gen_instance_id(
         module: &mut naga::Module,
-        others: preamble_objects_gen::InstanceIdRequirements,
+        requirements: preamble_objects_gen::InstanceIdRequirements,
     ) -> build::Result<preamble_objects_gen::InstanceId> {
         Ok(module.global_variables.append(
             naga::GlobalVariable {
                 name: Some("invocation_id".to_owned()),
                 space: naga::AddressSpace::Private,
                 binding: None,
-                ty: *others.word_ty,
+                ty: *requirements.word_ty,
                 init: None,
             },
             naga::Span::UNDEFINED,
@@ -489,14 +482,14 @@ impl<Ps: GenerationParameters> PreambleObjectsGen for PreambleObjectsGenerator<P
     }
     fn gen_invocations_count(
         module: &mut naga::Module,
-        others: preamble_objects_gen::InvocationsCountRequirements,
+        requirements: preamble_objects_gen::InvocationsCountRequirements,
     ) -> build::Result<preamble_objects_gen::InvocationsCount> {
         Ok(module.global_variables.append(
             naga::GlobalVariable {
                 name: Some("invocations_count".to_owned()),
                 space: naga::AddressSpace::Private,
                 binding: None,
-                ty: *others.word_ty,
+                ty: *requirements.word_ty,
                 init: None,
             },
             naga::Span::UNDEFINED,
@@ -506,23 +499,27 @@ impl<Ps: GenerationParameters> PreambleObjectsGen for PreambleObjectsGenerator<P
 
 struct StdObjectsGenerator<Ps: GenerationParameters>(PhantomData<Ps>);
 impl<Ps: GenerationParameters> GenStdObjects for StdObjectsGenerator<Ps> {
+    fn gen_preamble(
+        module: &mut naga::Module,
+        requirements: std_objects_gen::PreambleRequirements<'_>,
+    ) -> build::Result<std_objects_gen::Preamble> {
+        std_objects_gen::Preamble::gen_from::<PreambleObjectsGenerator<Ps>>(
+            module,
+            requirements.fp_options,
+        )
+    }
+
     impl_gen_wasm! {i32}
     impl_gen_wasm! {i64}
     fn gen_f32(
         module: &mut naga::Module,
-        others: std_objects_gen::F32Requirements,
+        requirements: std_objects_gen::F32Requirements,
     ) -> build::Result<std_objects_gen::F32> {
         std_objects_gen::F32::gen_from::<Ps::F32>(
             module,
-            *others.word_ty,
-            others.bindings,
-            others.word_max,
-            others.wasm_bool,
-            others.instance_id,
-            others.trap_values,
-            others.trap_state,
-            others.fp_options,
-            others.i32.ty,
+            requirements.preamble,
+            requirements.fp_options,
+            &requirements.i32.ty,
         )
     }
     impl_gen_wasm! {f64}
@@ -550,7 +547,7 @@ macro_rules! extract_type_field {
 impl StdObjects {
     pub(crate) fn new<Ps: GenerationParameters>(
         module: &mut naga::Module,
-        fp_options: FloatingPointOptions,
+        fp_options: &FloatingPointOptions,
     ) -> build::Result<Self> {
         StdObjects::gen_from::<StdObjectsGenerator<Ps>>(module, fp_options)
     }
@@ -560,7 +557,7 @@ impl StdObjects {
         tuneables: &Tuneables,
     ) -> build::Result<StdObjects> {
         // TODO: Support native f64 and i64
-        StdObjects::new::<FullPolyfill>(module, tuneables.fp_options)
+        StdObjects::new::<FullPolyfill>(module, &tuneables.fp_options)
     }
 
     /// Get's a WASM val type's naga type

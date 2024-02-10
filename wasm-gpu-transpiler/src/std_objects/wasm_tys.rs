@@ -1,9 +1,5 @@
-use std::sync::Arc;
-
 use crate::build;
 use crate::typed::{ExternRef, FuncRef, V128};
-
-use super::{bindings::StdBindings, StdObjects, WasmBoolInstance};
 
 pub(crate) mod native_f32;
 pub(crate) mod native_i32;
@@ -13,8 +9,9 @@ pub(crate) mod polyfill_f64;
 pub(crate) mod polyfill_i64;
 pub(crate) mod polyfill_v128;
 
-type MakeConstFn<Ty> =
-    Box<dyn Fn(&mut naga::Module, Ty) -> build::Result<naga::Handle<naga::Constant>>>;
+type MakeConstFn<Ty> = Box<
+    dyn Fn(&mut naga::Arena<naga::Expression>, Ty) -> build::Result<naga::Handle<naga::Expression>>,
+>;
 
 macro_rules! wasm_ty_generator {
     (struct $struct_name:ident; trait $trait_name:ident; $wasm_ty:ty; [$($parts:tt)*]) => {
@@ -191,8 +188,8 @@ macro_rules! wasm_ty_generator {
         wasm_ty_generator!{struct $struct_name; trait $trait_name; $wasm_ty; [$($parts),*]; {
             $($impl)*
 
-            convert_i32_s: |ty, i32_ty| naga::Handle<naga::Function>,
-            convert_i32_u: |ty, i32_ty| naga::Handle<naga::Function>,
+            convert_i32_s: |ty| naga::Handle<naga::Function>,
+            convert_i32_u: |ty| naga::Handle<naga::Function>,
         }; ($($extra_params)* i32_ty: naga::Handle<naga::Type>,)}
     };
 }
@@ -205,12 +202,11 @@ wasm_ty_generator!(struct V128Instance; trait V128Gen; V128; []);
 wasm_ty_generator!(struct FuncRefInstance; trait FuncRefGen; FuncRef; []);
 wasm_ty_generator!(struct ExternRefInstance; trait ExternRefGen; ExternRef; []);
 
-fn make_64_bit_const_from_2vec32(
+fn make_64_bit_const_expr_from_2vec32(
     ty: naga::Handle<naga::Type>,
     const_expressions: &mut naga::Arena<naga::Expression>,
-    constants: &mut naga::Arena<naga::Constant>,
     value: i64,
-) -> naga::Handle<naga::Constant> {
+) -> naga::Handle<naga::Expression> {
     let bytes = value.to_le_bytes();
     let components = bytes
         .as_chunks::<4>()
@@ -222,11 +218,11 @@ fn make_64_bit_const_from_2vec32(
             const_expressions.append_u32(word)
         })
         .collect();
-    let init = const_expressions.append(
+    let expr = const_expressions.append(
         naga::Expression::Compose { ty, components },
         naga::Span::UNDEFINED,
     );
-    return constants.append_anonymous(ty, init);
+    return expr;
 }
 
 /// Something of the form `f(A, A) -> Bool` which can be implemented with native functions
@@ -235,16 +231,17 @@ macro_rules! impl_native_bool_binexp {
         paste::paste! {
             fn [< gen_ $op_name >](
                 module: &mut naga::Module,
-                others: $instance_gen::[< $op_name:camel Requirements >],
+                requirements: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name _ $op_name >](lhs: *others.ty, rhs: *others.ty) -> others.preamble.wasm_bool.ty
+                    module => fn [< $name _ $op_name >](lhs: *requirements.ty, rhs: *requirements.ty) -> requirements.preamble.wasm_bool.ty
                 };
+                let mut ctx = BlockContext::from((module, function_handle));
 
-                let t = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_true));
-                let f = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_false));
-                let res = naga_expr!(module, function_handle => if (lhs $op rhs) {t} else {f});
-                module.fn_mut(function_handle).body.push_return(res);
+                let t = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_true));
+                let f = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_false));
+                let res = naga_expr!(ctx => if (lhs $op rhs) {t} else {f});
+                ctx.result(res);
 
                 Ok(function_handle)
             }
@@ -259,14 +256,15 @@ macro_rules! impl_native_inner_binexp {
         paste::paste! {
             fn [< gen_ $op_name >](
                 module: &mut naga::Module,
-                others: $instance_gen::[< $op_name:camel Requirements >],
+                requirements: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name _ $op_name >](lhs: *others.ty, rhs: *others.ty) -> *others.ty
+                    module => fn [< $name _ $op_name >](lhs: *requirements.ty, rhs: *requirements.ty) -> *requirements.ty
                 };
+                let mut ctx = BlockContext::from((module, function_handle));
 
-                let res = naga_expr!(module, function_handle => lhs $op rhs);
-                module.fn_mut(function_handle).body.push_return(res);
+                let res = naga_expr!(ctx => lhs $op rhs);
+                ctx.result(res);
 
                 Ok(function_handle)
             }
@@ -281,16 +279,17 @@ macro_rules! impl_native_unsigned_bool_binexp {
         paste::paste! {
             fn [< gen_ $op_name >](
                 module: &mut naga::Module,
-                others: $instance_gen::[< $op_name:camel Requirements >],
+                requirements: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name _ $op_name >](lhs: others.ty, rhs: others.ty) -> others.preamble.wasm_bool.ty
+                    module => fn [< $name _ $op_name >](lhs: *requirements.ty, rhs: *requirements.ty) -> requirements.preamble.wasm_bool.ty
                 };
+                let mut ctx = BlockContext::from((module, function_handle));
 
-                let t = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_true));
-                let f = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_false));
-                let res = naga_expr!(module, function_handle => if ((lhs as Uint) $op (rhs as Uint)) {t} else {f});
-                module.fn_mut(function_handle).body.push_return(res);
+                let t = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_true));
+                let f = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_false));
+                let res = naga_expr!(ctx => if ((lhs as Uint) $op (rhs as Uint)) {t} else {f});
+                ctx.result(res);
 
                 Ok(function_handle)
             }
@@ -305,14 +304,15 @@ macro_rules! impl_native_unsigned_inner_binexp {
         paste::paste! {
             fn [< gen_ $op_name >](
                 module: &mut naga::Module,
-                others: $instance_gen::[< $op_name:camel Requirements >],
+                requirements: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name _ $op_name >](lhs: others.ty, rhs: others.ty) -> others.ty
+                    module => fn [< $name _ $op_name >](lhs: *requirements.ty, rhs: *requirements.ty) -> *requirements.ty
                 };
+                let mut ctx = BlockContext::from((module, function_handle));
 
-                let res = naga_expr!(module, function_handle => ((lhs as Uint) $op (rhs as Uint)) as Sint);
-                module.fn_mut(function_handle).body.push_return(res);
+                let res = naga_expr!(ctx => ((lhs as Uint) $op (rhs as Uint)) as Sint);
+                ctx.result(res);
 
                 Ok(function_handle)
             }
@@ -327,21 +327,21 @@ macro_rules! impl_native_unary_inner_math_fn {
         paste::paste! {
             fn [< gen_ $op_name >](
                 module: &mut naga::Module,
-                others: $instance_gen::[< $op_name:camel Requirements >],
+                requirements: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, value) = declare_function! {
-                    module => fn [< $name _ $op_name >](value: others.ty) -> others.ty
+                    module => fn [< $name _ $op_name >](value: *requirements.ty) -> *requirements.ty
                 };
+                let mut ctx = BlockContext::from((module, function_handle));
 
-                let res = module.fn_mut(function_handle).expressions.append(naga::Expression::Math {
+                let res = ctx.append_expr(naga::Expression::Math {
                     fun: naga::MathFunction::$op,
                     arg: value,
                     arg1: None,
                     arg2: None,
                     arg3: None
-                }, naga::Span::UNDEFINED);
-                module.fn_mut(function_handle).body.push_emit(res);
-                module.fn_mut(function_handle).body.push_return(res);
+                });
+                ctx.result(res);
 
                 Ok(function_handle)
             }
@@ -356,13 +356,14 @@ macro_rules! impl_dud_inner_binexp {
         paste::paste! {
             fn [< gen_ $op_name >](
                 module: &mut naga::Module,
-                others: $instance_gen::[< $op_name:camel Requirements >],
+                requirements: $instance_gen::[< $op_name:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $op_name:camel >]> {
                 let (function_handle, lhs, _) = declare_function! {
-                    module => fn [< $name _ $op_name >](lhs: others.ty, rhs: others.ty) -> others.ty
+                    module => fn [< $name _ $op_name >](lhs: *requirements.ty, rhs: *requirements.ty) -> *requirements.ty
                 };
+                let mut ctx = BlockContext::from((module, function_handle));
 
-                module.fn_mut(function_handle).body.push_return(lhs);
+                ctx.result(lhs);
 
                 Ok(function_handle)
             }
@@ -390,42 +391,44 @@ macro_rules! impl_bitwise_2vec32_numeric_ops {
         paste::paste!{
             fn gen_eq(
                 module: &mut naga::Module,
-                others: $instance_gen::EqRequirements,
+                requirements: $instance_gen::EqRequirements,
             ) -> build::Result<$instance_gen::Eq> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name _eq >](lhs: others.ty, rhs: others.ty) -> others.preamble.wasm_bool.ty
+                    module => fn [< $name _eq >](lhs: *requirements.ty, rhs: *requirements.ty) -> requirements.preamble.wasm_bool.ty
                 };
+                let mut ctx = BlockContext::from((module, function_handle));
 
-                let t = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_true));
-                let f = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_false));
+                let t = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_true));
+                let f = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_false));
 
-                let lhs_high = naga_expr!(module, function_handle => lhs[const 0]);
-                let lhs_low = naga_expr!(module, function_handle => lhs[const 1]);
-                let rhs_high = naga_expr!(module, function_handle => rhs[const 0]);
-                let rhs_low = naga_expr!(module, function_handle => rhs[const 1]);
-                let res = naga_expr!(module, function_handle => if ((lhs_low == rhs_low) & (lhs_high == rhs_high)) {t} else {f});
-                module.fn_mut(function_handle).body.push_return(res);
+                let lhs_high = naga_expr!(ctx => lhs[const 0]);
+                let lhs_low = naga_expr!(ctx => lhs[const 1]);
+                let rhs_high = naga_expr!(ctx => rhs[const 0]);
+                let rhs_low = naga_expr!(ctx => rhs[const 1]);
+                let res = naga_expr!(ctx => if ((lhs_low == rhs_low) & (lhs_high == rhs_high)) {t} else {f});
+                ctx.result(res);
 
                 Ok(function_handle)
             }
 
             fn gen_ne(
                 module: &mut naga::Module,
-                others: $instance_gen::NeRequirements,
+                requirements: $instance_gen::NeRequirements,
             ) -> build::Result<$instance_gen::Ne> {
                 let (function_handle, lhs, rhs) = declare_function! {
-                    module => fn [< $name _ne >](lhs: others.ty, rhs: others.ty) -> others.preamble.wasm_bool.ty
+                    module => fn [< $name _ne >](lhs: *requirements.ty, rhs: *requirements.ty) -> requirements.preamble.wasm_bool.ty
                 };
+                let mut ctx = BlockContext::from((module, function_handle));
 
-                let t = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_true));
-                let f = naga_expr!(module, function_handle => Constant(others.preamble.wasm_bool.const_false));
+                let t = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_true));
+                let f = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_false));
 
-                let lhs_high = naga_expr!(module, function_handle => lhs[const 0]);
-                let lhs_low = naga_expr!(module, function_handle => lhs[const 1]);
-                let rhs_high = naga_expr!(module, function_handle => rhs[const 0]);
-                let rhs_low = naga_expr!(module, function_handle => rhs[const 1]);
-                let res = naga_expr!(module, function_handle => if ((lhs_low != rhs_low) | (lhs_high != rhs_high)) {t} else {f});
-                module.fn_mut(function_handle).body.push_return(res);
+                let lhs_high = naga_expr!(ctx => lhs[const 0]);
+                let lhs_low = naga_expr!(ctx => lhs[const 1]);
+                let rhs_high = naga_expr!(ctx => rhs[const 0]);
+                let rhs_low = naga_expr!(ctx => rhs[const 1]);
+                let res = naga_expr!(ctx => if ((lhs_low != rhs_low) | (lhs_high != rhs_high)) {t} else {f});
+                ctx.result(res);
 
                 Ok(function_handle)
             }
@@ -439,140 +442,90 @@ macro_rules! impl_load_and_store {
         paste::paste!{
             fn gen_load(
                 module: &mut naga::Module,
-                others: $instance_gen::LoadRequirements,
+                requirements: $instance_gen::LoadRequirements,
             ) -> build::Result<$instance_gen::Load> {
                 let (function_handle, memory, address) = declare_function! {
-                    module => fn [< $name _load >](memory: others.word_ty, address: others.word) -> others.ty
+                    module => fn [< $name _load >](memory: requirements.preamble.word_ty, address: requirements.preamble.word_ty) -> *requirements.ty
                 };
+                let mut ctx = BlockContext::from((module, function_handle));
 
                 // TODO: Support other memories
                 drop(memory);
 
                 // Variable to unify aligned and unaligned loads
-                let loaded_value_local = module.fn_mut(function_handle).local_variables.new_local(
+                let loaded_value_local = ctx.new_local(
                     "loaded_value".to_owned(),
-                    others.ty,
+                    *requirements.ty,
                     None,
                 );
-                let loaded_value_ptr = module
-                    .fn_mut(function_handle)
-                    .expressions
-                    .append_local(loaded_value_local);
-
-                // Load aligned
-                let mut aligned_block = naga::Block::default();
-                let aligned_address = naga_expr!(module, function_handle => address >> U32(2));
-                let load_fn = others.read_memory;
-                let load_result = module
-                    .fn_mut(function_handle)
-                    .expressions
-                    .append(naga::Expression::CallResult(load_fn), naga::Span::UNDEFINED);
-                aligned_block.push(
-                    naga::Statement::Call {
-                        function: load_fn,
-                        arguments: vec![aligned_address],
-                        result: Some(load_result),
-                    },
-                    naga::Span::UNDEFINED,
-                );
-                aligned_block.push_store(loaded_value_ptr, load_result);
-
-                // We can do things much faster if the address is word-alligned
-                // Otherwise we have to load twice and merge
-                let mut unaligned_block = naga::Block::default();
-
-                // TODO: unaligned path
-                let aligned_address = naga_expr!(module, function_handle => address >> U32(2));
-                let load_fn = others.read_memory;
-                let load_result = module
-                    .fn_mut(function_handle)
-                    .expressions
-                    .append(naga::Expression::CallResult(load_fn), naga::Span::UNDEFINED);
-                unaligned_block.push(
-                    naga::Statement::Call {
-                        function: load_fn,
-                        arguments: vec![aligned_address],
-                        result: Some(load_result),
-                    },
-                    naga::Span::UNDEFINED,
-                );
-                unaligned_block.push_store(loaded_value_ptr, load_result);
-                // END TODO
+                let loaded_value_ptr = ctx.local_expr(loaded_value_local);
 
                 // Test for unalignment
-                let unaligned_condition =
-                    naga_expr!(module, function_handle => (address & U32(3)) != U32(0));
-                module.fn_mut(function_handle).body.push_if(unaligned_condition,
-                    unaligned_block,
-                    aligned_block
-                );
+                let is_aligned = naga_expr!(ctx => (address & U32(3)) == U32(0));
+                ctx.test(is_aligned).then(|mut ctx| {
+                    // Load aligned
+                    let aligned_address = naga_expr!(ctx => address >> U32(2));
+                    let load_fn = *requirements.read_memory;
+                    let load_result = ctx.call_get_return(load_fn, vec![aligned_address]);
+                    ctx.store(loaded_value_ptr, load_result);
+                }).otherwise(|mut ctx| {
+                    // We can do things much faster if the address is word-aligned
+                    // Otherwise we have to load twice and merge
+                    // TODO: unaligned path
+                    let aligned_address = naga_expr!(ctx => address >> U32(2));
+                    let load_fn = *requirements.read_memory;
+                    let load_result = ctx.call_get_return(load_fn, vec![aligned_address]);
+                    ctx.store(loaded_value_ptr, load_result);
+                    // END TODO
+                });
 
                 // Then unify load paths
-                let res = naga_expr!(module, function_handle => Load(loaded_value_ptr));
-                module.fn_mut(function_handle).body.push_return(res);
+                let res = naga_expr!(ctx => Load(loaded_value_ptr));
+                ctx.result(res);
 
                 Ok(function_handle)
             }
 
             fn gen_store(
                 module: &mut naga::Module,
-                others: $instance_gen::StoreRequirements,
+                requirements: $instance_gen::StoreRequirements,
             ) -> build::Result<$instance_gen::Store> {
                 let (function_handle, memory, address, value) = declare_function! {
-                    module => fn [< $name _store >](memory: others.word_ty, address: others.word_ty, value: others.ty)
+                    module => fn [< $name _store >](memory: requirements.preamble.word_ty, address: requirements.preamble.word_ty, value: *requirements.ty)
                 };
+                let mut ctx = BlockContext::from((module, function_handle));
 
                 // TODO: Support other memories
                 drop(memory);
 
                 // If we have trapped, don't store
-                let mut trapped_block = naga::Block::default();
-                trapped_block.push_bare_return();
-                let trap_state = others.trap_state;
-                let trapped_condition =
-                    naga_expr!(module, function_handle => Load(Global(trap_state)) != U32(0));
-                module.fn_mut(function_handle).body.push_if(trapped_condition,
-                    trapped_block,
-                    naga::Block::default(),
-                );
-
-                // Store aligned
-                let mut aligned_block = naga::Block::default();
-                let aligned_address = naga_expr!(module, function_handle => address >> U32(2));
-                let store_fn = others.write_memory;
-                aligned_block.push(
-                    naga::Statement::Call {
-                        function: store_fn,
-                        arguments: vec![aligned_address, value],
-                        result: None,
-                    },
-                    naga::Span::UNDEFINED,
-                );
-
-                // We can do things much faster if the address is word-alligned
-                // Otherwise we have to load twice, merge in value, and store back
-                let mut unaligned_block = naga::Block::default();
-
-                // TODO: unaligned path
-                let aligned_address = naga_expr!(module, function_handle => address >> U32(2));
-                let store_fn = others.write_memory;
-                unaligned_block.push(
-                    naga::Statement::Call {
-                        function: store_fn,
-                        arguments: vec![aligned_address, value],
-                        result: None,
-                    },
-                    naga::Span::UNDEFINED,
-                );
-                // END TODO
+                let trap_state = requirements.preamble.trap_state;
+                let is_trapped = naga_expr!(ctx => Load(Global(trap_state)) != U32(0));
+                ctx.test(is_trapped).then(|mut ctx| {
+                    ctx.void_return();
+                });
 
                 // Test for unalignment
-                let unaligned_condition =
-                    naga_expr!(module, function_handle => (address & U32(3)) != U32(0));
-                module.fn_mut(function_handle).body.push_if(unaligned_condition,
-                    unaligned_block,
-                    aligned_block,
-                );
+                let is_aligned = naga_expr!(ctx => (address & U32(3)) == U32(0));
+                ctx.test(is_aligned).then(|mut ctx| {
+                    // Store aligned
+                    let aligned_address = naga_expr!(ctx => address >> U32(2));
+                    let store_fn = *requirements.write_memory;
+                    ctx.call_void(store_fn, vec![aligned_address, value]);
+                }).otherwise(|mut ctx| {
+                    // We can do things much faster if the address is word-aligned
+                    // Otherwise we have to load twice, merge in value, and store back
+
+                    // TODO: unaligned path
+                    let aligned_address = naga_expr!(ctx => address >> U32(2));
+                    let store_fn = *requirements.write_memory;
+                    ctx.call_void(
+                        store_fn,
+                        vec![aligned_address, value],
+                    );
+                    // END TODO
+                });
+
 
                 Ok(function_handle)
             }
@@ -586,13 +539,15 @@ macro_rules! impl_dud_integer_load {
         paste::paste!{
             fn [< gen_ $fn >](
                 module: &mut naga::Module,
-                others: $instance_gen::[< $fn:camel Requirements >],
+                requirements: $instance_gen::[< $fn:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $fn:camel >]> {
                 let (function_handle, ..) = declare_function! {
-                    module => fn [< $name _ $fn >](memory: others.word_ty, address: others.word) -> others.ty
+                    module => fn [< $name _ $fn >](memory: requirements.preamble.word_ty, address: requirements.preamble.word_ty) -> *requirements.ty
                 };
-                let default = module.fn_mut(function_handle).expressions.append_constant(others.default);
-                module.fn_mut(function_handle).body.push_return(default);
+                let mut ctx = BlockContext::from((module, function_handle));
+
+                let default = naga_expr!(ctx => Constant(*requirements.default));
+                ctx.result(default);
 
                 Ok(function_handle)
             }
@@ -606,10 +561,10 @@ macro_rules! impl_dud_integer_store {
         paste::paste!{
             fn [< gen_ $fn >](
                 module: &mut naga::Module,
-                others: $instance_gen::[< $fn:camel Requirements >],
+                requirements: $instance_gen::[< $fn:camel Requirements >],
             ) -> build::Result<$instance_gen::[< $fn:camel >]> {
                 let (function_handle, ..) = declare_function! {
-                    module => fn [< $name _ $fn >](memory: others.word_ty, address: others.word_ty, value: others.ty)
+                    module => fn [< $name _ $fn >](memory: requirements.preamble.word_ty, address: requirements.preamble.word_ty, value: *requirements.ty)
                 };
 
                 Ok(function_handle)
@@ -618,24 +573,6 @@ macro_rules! impl_dud_integer_store {
     };
 }
 use impl_dud_integer_store;
-
-macro_rules! impl_dud_integer_rmw {
-    ($instance_gen:ident, $name:ident, $fn:ident) => {
-        paste::paste!{
-            fn [< gen_ $fn >](
-                module: &mut naga::Module,
-                others: $instance_gen::[< $fn:camel Requirements >],
-            ) -> build::Result<$instance_gen::[< $fn:camel >]> {
-                let (function_handle, ..) = declare_function! {
-                    module => fn [< $name _ $fn >](memory: others.word_ty, address: others.word_ty, operand: others.ty)
-                };
-
-                Ok(function_handle)
-            }
-        }
-    };
-}
-use impl_dud_integer_rmw;
 
 macro_rules! impl_integer_loads_and_stores {
     ($instance_gen:ident, $name:ident) => {

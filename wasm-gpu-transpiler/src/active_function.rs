@@ -134,9 +134,9 @@ impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
             module_data,
             return_type,
             &data.locals,
-            constants,
             types,
             const_expressions,
+            constants,
             &mut function.expressions,
             &mut function.local_variables,
             &std_objects,
@@ -183,6 +183,7 @@ impl<'a, 'f, 'm: 'f> From<&'a mut ActiveInternalFunction<'f, 'm>> for BlockConte
             constants: &mut module.constants,
             const_expressions: &mut module.const_expressions,
             expressions: &mut func.expressions,
+            locals: &mut func.local_variables,
             block: &mut func.body,
         }
     }
@@ -300,18 +301,18 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
     ) -> build::Result<()> {
         let invocation_id = self.get_workgroup_index();
 
-        let constants_buffer = self.std_objects().bindings.constants;
+        let constants_buffer = self.std_objects().preamble.bindings.constants;
         let constants_buffer = self.fn_mut().expressions.append_global(constants_buffer);
         let invocations_count = naga_expr!(self => Load(constants_buffer[const crate::TOTAL_INVOCATIONS_CONSTANT_INDEX]));
 
         // Write entry globals
-        let instance_id_global = self.std_objects().instance_id;
+        let instance_id_global = self.std_objects().preamble.instance_id;
         let invocation_id_ptr = naga_expr!(self => Global(instance_id_global));
         self.fn_mut()
             .body
             .push_store(invocation_id_ptr, invocation_id);
 
-        let invocations_count_global = self.std_objects().invocations_count;
+        let invocations_count_global = self.std_objects().preamble.invocations_count;
         let invocations_count_ptr = naga_expr!(self => Global(invocations_count_global));
         self.fn_mut()
             .body
@@ -354,8 +355,8 @@ impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
         }
 
         // Write trap status
-        let flag_state = self.working_module.std_objects.trap_state;
-        let flags_buffer = self.working_module.std_objects.bindings.flags;
+        let flag_state = self.working_module.std_objects.preamble.trap_state;
+        let flags_buffer = self.working_module.std_objects.preamble.bindings.flags;
         let flag_state = naga_expr!(self => Load(Global(flag_state)));
         let write_word_loc =
             naga_expr!(self => Global(flags_buffer)[invocation_id][const crate::TRAP_FLAG_INDEX]);
@@ -380,6 +381,7 @@ impl<'a, 'f, 'm: 'f> From<&'a mut ActiveEntryFunction<'f, 'm>> for BlockContext<
             constants: &mut value.working_module.module.constants,
             const_expressions: &mut value.working_module.module.const_expressions,
             expressions: &mut func.expressions,
+            locals: &mut func.local_variables,
             block: &mut func.body,
         }
     }
