@@ -28,7 +28,7 @@ macro_rules! impl_op {
 }
 
 pub(super) fn eat_threads_operator(
-    state: &mut ActiveBlock<'_, '_>,
+    state: &mut ActiveBlock<'_>,
     operator: &ThreadsOperator,
 ) -> build::Result<()> {
     let err = Err(BuildError::UnsupportedInstructionError {

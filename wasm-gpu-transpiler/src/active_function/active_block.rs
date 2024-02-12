@@ -1,21 +1,24 @@
-use std::{iter::Peekable, sync::atomic::AtomicUsize};
+use std::iter::Peekable;
 
 use itertools::Itertools;
-use naga_ext::{naga_expr, BlockContext, BlockExt, ConstantsExt, ExpressionsExt, LocalsExt};
+use naga_ext::{naga_expr, BlockContext, ConstantsExt};
 use wasm_opcodes::{proposals::ControlFlowOperator, OperatorByProposal};
 use wasmparser::ValType;
 use wasmtime_environ::Trap;
 
 use crate::{
-    build, std_objects::StdObjects, typed::Val, BuildError, ExceededComponent, FuncAccessible,
-    FunctionModuleData, MEMORY_STRIDE_WORDS,
+    build, linked_stack::LinkedStack, std_objects::StdObjects, typed::Val, BuildError,
+    ExceededComponent, FuncAccessible, FunctionModuleData, Tuneables, MEMORY_STRIDE_WORDS,
 };
+
+use self::block_label::{BlockLabel, BlockLabelGen};
 
 use super::{
     locals::{FnLocal, FnLocals},
     results::WasmFnResTy,
 };
 
+mod block_label;
 mod mvp;
 mod sign_extension;
 mod simd;
@@ -63,74 +66,22 @@ impl BlockType {
     }
 }
 
-/// The webassembly `br` instruction has the ability to pierce through multiple layers of blocks at once.
-/// To track this in our shader code, we assign an 'is_branching' boolean at each block layer, which
-/// is used to check (on exit from a child block) whether the child is requesting that the branch continues
-/// down the chain of blocks.
-///
-/// This is excessive, and we could optimise this system to only include propogation variables where required,
-/// but this reduces the simplicity of our code and may introduce bugs. Instead, we trust the optimising compiler
-/// of both spirv-tools and the driver to remove excess, leaving us to focus on correctness.
-#[derive(Clone)]
-pub(crate) struct BlockLabel {
-    is_branching: FnLocal,
-}
-impl BlockLabel {
-    fn new(
-        block_id: usize,
-        local_variables: &mut naga::Arena<naga::LocalVariable>,
-        expressions: &mut naga::Arena<naga::Expression>,
-        std_objects: &StdObjects,
-    ) -> Self {
-        Self {
-            is_branching: FnLocal::append_to(
-                format!("branching_escape_flag_{}", block_id),
-                local_variables,
-                expressions,
-                std_objects.preamble.naga_bool.ty,
-                Some(expressions.append_constant(std_objects.preamble.naga_bool.const_false)),
-            ),
-        }
-    }
-}
-
 /// Data shared across an entire function body, shared by many blocks and mutable references are built into as blocks are populated.
 pub(crate) struct BodyData<'a> {
+    std_objects: &'a StdObjects,
+    tuneables: &'a Tuneables,
+
     // Taken from the definition of the function
     accessible: &'a FuncAccessible,
     module_data: &'a FunctionModuleData,
     return_type: &'a Option<WasmFnResTy>,
     locals: &'a FnLocals,
 
-    // Pulled from the module and function
-    types: &'a mut naga::UniqueArena<naga::Type>,
-    const_expressions: &'a mut naga::Arena<naga::Expression>,
-    constants: &'a mut naga::Arena<naga::Constant>,
-    expressions: &'a mut naga::Arena<naga::Expression>,
-    local_variables: &'a mut naga::Arena<naga::LocalVariable>,
-    std_objects: &'a StdObjects,
-
-    // Config from tuneables
-    uses_disjoint_memory: bool,
-
-    // Standard things we use
-    /// A handle to an expression holding a true value
-    wasm_true_expression: naga::Handle<naga::Expression>,
-    /// A handle to an expression holding a false value
-    wasm_false_expression: naga::Handle<naga::Expression>,
-    /// A handle to an expression holding a true value
-    naga_true_expression: naga::Handle<naga::Expression>,
-    /// A handle to an expression holding a false value
-    naga_false_expression: naga::Handle<naga::Expression>,
-
-    /// To allow reuse of labels across blocks, we first pop from this, then create if that gave None
-    unused_labels: Vec<BlockLabel>,
+    /// Used when branching through many scopes at once.
+    block_label_set: BlockLabelGen,
 
     /// To avoid checking if we have trapped too often, this counter is used and incremented on each loop iteration
     trap_check_counter: naga::Handle<naga::Expression>,
-
-    /// Used to generate unique IDs for each block
-    block_count: AtomicUsize,
 }
 
 impl<'a> BodyData<'a> {
@@ -139,58 +90,34 @@ impl<'a> BodyData<'a> {
         module_data: &'a FunctionModuleData,
         return_type: &'a Option<WasmFnResTy>,
         locals: &'a FnLocals,
-        types: &'a mut naga::UniqueArena<naga::Type>,
-        const_expressions: &'a mut naga::Arena<naga::Expression>,
-        constants: &'a mut naga::Arena<naga::Constant>,
-        expressions: &'a mut naga::Arena<naga::Expression>,
-        local_variables: &'a mut naga::Arena<naga::LocalVariable>,
+        ctx: &mut BlockContext<'_>,
         std_objects: &'a StdObjects,
-        uses_disjoint_memory: bool,
+        tuneables: &'a Tuneables,
     ) -> Self {
-        let wasm_true_expression =
-            expressions.append_constant(std_objects.preamble.wasm_bool.const_true);
-        let wasm_false_expression =
-            expressions.append_constant(std_objects.preamble.wasm_bool.const_false);
-        let naga_true_expression =
-            expressions.append_constant(std_objects.preamble.naga_bool.const_true);
-        let naga_false_expression =
-            expressions.append_constant(std_objects.preamble.naga_bool.const_false);
-
-        let trap_check_counter = local_variables.new_local(
+        let zero = ctx.literal_expr_from(0u32);
+        let trap_check_counter = ctx.new_local(
             "trap_check_counter",
             std_objects.preamble.word_ty,
-            Some(expressions.append_u32(0)),
+            Some(zero),
         );
-        let trap_check_counter = expressions.append_local(trap_check_counter);
+        let trap_check_counter = ctx.local_expr(trap_check_counter);
+
+        let block_label_set = BlockLabelGen::new(ctx);
 
         Self {
+            tuneables,
             accessible,
             module_data,
             return_type,
             locals,
-            types,
-            const_expressions,
-            constants,
-            expressions,
-            local_variables,
             std_objects,
-            uses_disjoint_memory,
-            wasm_true_expression,
-            wasm_false_expression,
-            naga_true_expression,
-            naga_false_expression,
             trap_check_counter,
-            unused_labels: vec![],
-            block_count: AtomicUsize::new(0),
+            block_label_set,
         }
     }
 
     /// Return results by popping from the current stack, or just returns if the function has no such return values.
-    fn push_return(
-        &mut self,
-        block: &mut naga::Block,
-        stack: &mut Vec<naga::Handle<naga::Expression>>,
-    ) {
+    fn push_return(&self, ctx: BlockContext<'_>, stack: &mut Vec<naga::Handle<naga::Expression>>) {
         if let Some(return_type) = &self.return_type {
             let required_values = return_type.components().len();
             let mut results = Vec::new();
@@ -198,24 +125,24 @@ impl<'a> BodyData<'a> {
                 results.push(stack.pop().expect("validation ensures that enough values were on the stack when return is invoked"))
             }
             results.reverse();
-            return_type.push_return(self.expressions, block, results);
+            return_type.push_return(ctx, results);
         } else {
-            block.push_bare_return()
+            ctx.void_return()
         }
     }
 
     /// Used in the outer function scope once the final block has been completed to emit the final return
-    pub(crate) fn push_final_return(&mut self, block: &mut naga::Block, results: Vec<FnLocal>) {
+    pub(crate) fn push_final_return(&self, mut ctx: BlockContext<'_>, results: Vec<FnLocal>) {
         let mut result_expressions = Vec::new();
 
         for local in results {
             // Load values as expressions
             let ptr = local.expression;
-            let expression = self.expressions.append_load(ptr);
-            block.push_emit(expression);
+            let expression = naga_expr!(&mut ctx => Load(ptr));
             result_expressions.push(expression)
         }
-        self.push_return(block, &mut result_expressions);
+
+        self.push_return(ctx, &mut result_expressions);
     }
 }
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -226,50 +153,50 @@ pub(crate) enum EndInstruction {
 
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct ControlFlowState {
-    /// The depth at which it is guaranteed that we will be unconditionally branching. A conservative upper bound.
-    pub(crate) upper_unconditional_depth: Option<u32>,
-    /// The lower depth at which it is possible that we will be conditionally branching. A conservative lower bound.
-    pub(crate) lower_conditional_depth: Option<u32>,
-    /// The upper depth at which it is possible that we will be conditionally branching. A conservative upper bound.
+    /// The depth at which it is guaranteed that we will be unconditionally branching. A conservative lower bound.
+    pub(crate) lower_unconditional_depth: Option<u32>,
+    /// The lower depth at which it is possible that we will be conditionally branching. A conservative upper bound.
     pub(crate) upper_conditional_depth: Option<u32>,
+    /// The upper depth at which it is possible that we will be conditionally branching. A conservative lower bound.
+    pub(crate) lower_conditional_depth: Option<u32>,
 }
 impl ControlFlowState {
-    /// Finds the state given that control flow may have come from the left or righ branch.
+    /// Finds the state given that control flow may have come from the left or right branch.
     fn union(lhs: ControlFlowState, rhs: ControlFlowState) -> ControlFlowState {
         ControlFlowState {
-            upper_unconditional_depth: <Option<u32>>::min(
-                lhs.upper_unconditional_depth,
-                rhs.upper_unconditional_depth,
+            lower_unconditional_depth: <Option<u32>>::min(
+                lhs.lower_unconditional_depth,
+                rhs.lower_unconditional_depth,
             ),
-            lower_conditional_depth: <Option<u32>>::min(
-                lhs.lower_conditional_depth,
-                rhs.lower_conditional_depth,
-            ),
-            upper_conditional_depth: <Option<u32>>::max(
+            upper_conditional_depth: <Option<u32>>::min(
                 lhs.upper_conditional_depth,
                 rhs.upper_conditional_depth,
+            ),
+            lower_conditional_depth: <Option<u32>>::max(
+                lhs.lower_conditional_depth,
+                rhs.lower_conditional_depth,
             ),
         }
     }
 
     /// Finds the state given that control flow flowed through the first, and then the second block.
     fn concat(first: ControlFlowState, second: ControlFlowState) -> ControlFlowState {
-        match first.upper_unconditional_depth {
+        match first.lower_unconditional_depth {
             Some(_) => first,
             None => {
                 let lower_conditional_depth = <Option<u32>>::min(
-                    first.lower_conditional_depth,
-                    second.lower_conditional_depth,
+                    first.upper_conditional_depth,
+                    second.upper_conditional_depth,
                 );
                 ControlFlowState {
-                    upper_unconditional_depth: <Option<u32>>::min(
-                        second.upper_unconditional_depth,
+                    lower_unconditional_depth: <Option<u32>>::min(
+                        second.lower_unconditional_depth,
                         lower_conditional_depth,
                     ),
-                    lower_conditional_depth,
-                    upper_conditional_depth: <Option<u32>>::max(
-                        first.upper_conditional_depth,
-                        second.upper_conditional_depth,
+                    upper_conditional_depth: lower_conditional_depth,
+                    lower_conditional_depth: <Option<u32>>::max(
+                        first.lower_conditional_depth,
+                        second.lower_conditional_depth,
                     ),
                 }
             }
@@ -281,11 +208,11 @@ impl ControlFlowState {
     /// depth of 2 gives a branch with a conditional depth of 1
     fn decrement(&self) -> ControlFlowState {
         Self {
-            upper_unconditional_depth: self
-                .upper_unconditional_depth
+            lower_unconditional_depth: self
+                .lower_unconditional_depth
                 .and_then(|v| v.checked_sub(1)),
-            lower_conditional_depth: self.lower_conditional_depth.and_then(|v| v.checked_sub(1)),
             upper_conditional_depth: self.upper_conditional_depth.and_then(|v| v.checked_sub(1)),
+            lower_conditional_depth: self.lower_conditional_depth.and_then(|v| v.checked_sub(1)),
         }
     }
 }
@@ -293,9 +220,9 @@ impl ControlFlowState {
 impl Default for ControlFlowState {
     fn default() -> Self {
         Self {
-            upper_unconditional_depth: None,
-            upper_conditional_depth: None,
+            lower_unconditional_depth: None,
             lower_conditional_depth: None,
+            upper_conditional_depth: None,
         }
     }
 }
@@ -331,10 +258,14 @@ use mem_store;
 /// When we're building the body of a function, we don't actually need to know what the function is.
 /// We can simply build the block objects, and keep a mutable reference to the expressions within the
 /// function, and go from there.
-pub(crate) struct ActiveBlock<'b, 'd> {
-    body_data: &'b mut BodyData<'d>,
+pub(crate) struct ActiveBlock<'b> {
+    /// The block we are populating into.
+    pub(crate) ctx: BlockContext<'b>,
 
-    parents: Vec<BlockLabel>,
+    /// The immutable state from the function we're within.
+    body_data: &'b BodyData<'b>,
+
+    labels: LinkedStack<'b, BlockLabel>,
 
     /// Blocks take arguments off of the stack and push back results, like inline functions. To manage these
     /// values in a control-flow independent way (e.g. for looping or branching blocks) we take the parameters
@@ -342,92 +273,60 @@ pub(crate) struct ActiveBlock<'b, 'd> {
     arguments: Vec<FnLocal>,
     results: Vec<FnLocal>,
 
-    /// The block we are populating into. We don't take ownership because we swap this out sometimes, e.g. when
-    /// branching in a basic block we begin populating the 'else' block instead.
-    ///
-    /// Sometimes (e.g. after unconditional branches/returns) we can just throw away instructions.
-    /// None represents a dud block that is discarded after the blocks are build. Ultimately this is not
-    /// super efficient, but compilers to WASM shouldn't emit instructions that go here so it's
-    /// more about matching the specification than being a good engine. (I am a good engine :))
-    block: &'b mut naga::Block,
-
     stack: Vec<naga::Handle<naga::Expression>>,
 
     exit_state: ControlFlowState,
 }
 
-impl<'b, 'd> ActiveBlock<'b, 'd> {
+impl<'b> ActiveBlock<'b> {
     pub(super) fn new(
-        block: &'b mut naga::Block,
+        mut ctx: BlockContext<'b>,
         block_type: BlockType,
-        body_data: &'b mut BodyData<'d>,
-        mut parents: Vec<BlockLabel>,
+        body_data: &'b BodyData<'b>,
+        parents: Option<&'b LinkedStack<BlockLabel>>,
     ) -> Self {
-        let block_id = body_data
-            .block_count
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        // Set up block-level data
+        let own_label = body_data.block_label_set.get_label(&mut ctx);
 
-        let arguments = FnLocal::append_wasm_set_to(
-            format!("block_{}_arguments", block_id),
-            &mut body_data.local_variables,
-            &mut body_data.expressions,
+        let arguments = FnLocal::append_all_wasm_to(
+            format!("block_{}_arguments", own_label.id()),
+            &mut ctx,
             &body_data.std_objects,
             block_type.arguments,
         );
-        let results = FnLocal::append_wasm_set_to(
-            format!("block_{}_results", block_id),
-            &mut body_data.local_variables,
-            &mut body_data.expressions,
+        let results = FnLocal::append_all_wasm_to(
+            format!("block_{}_results", own_label.id()),
+            &mut ctx,
             &body_data.std_objects,
             block_type.results,
         );
 
-        // Set up block-level data
-        let own_label = body_data.unused_labels.pop().unwrap_or_else(|| {
-            BlockLabel::new(
-                block_id,
-                &mut body_data.local_variables,
-                &mut body_data.expressions,
-                &body_data.std_objects,
-            )
-        });
-
-        // Clear is_branching flag
-        block.push_store(
-            own_label.is_branching.expression,
-            body_data
-                .expressions
-                .append_constant(body_data.std_objects.preamble.naga_bool.const_false),
-        );
-
-        parents.push(own_label);
+        let labels = match parents {
+            Some(parents) => parents.push(own_label),
+            None => LinkedStack::new(own_label),
+        };
 
         // First thing we do is load arguments into stack
         let mut stack = Vec::new();
         for argument in &arguments {
-            let load_expression = body_data.expressions.append_load(argument.expression);
-            block.push_emit(load_expression);
+            let load_expression = naga_expr!(&mut ctx => Load(argument.expression));
             stack.push(load_expression);
         }
 
         Self {
+            ctx,
             body_data,
-            parents,
+            labels,
             arguments,
             results,
-            block,
             stack,
             exit_state: ControlFlowState::default(),
         }
     }
 
-    pub(crate) fn assign_arguments(
-        &self,
-        block: &mut naga::Block,
-        values: Vec<naga::Handle<naga::Expression>>,
-    ) {
+    pub(crate) fn assign_arguments(&mut self, values: Vec<naga::Handle<naga::Expression>>) {
         for (value, local) in values.into_iter().zip_eq(&self.arguments) {
-            block.push_store(local.expression, value);
+            self.ctx.store(local.expression, value);
         }
     }
 
@@ -462,70 +361,46 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
     /// Peeks the top n items and stores them in the n return variables
     fn push_store_stack_in_results(&mut self) {
         for (value, local) in self.stack.iter().rev().zip(self.results.iter().rev()) {
-            self.block.push_store(local.expression, *value);
+            self.ctx.store(local.expression, *value);
         }
     }
 
     /// Stores true in the variables giving whether the top n parents should break
     fn push_store_break_top_n_parents(
-        block: &mut naga::Block,
-        parents: &Vec<BlockLabel>,
-        true_expression: naga::Handle<naga::Expression>,
+        ctx: &mut BlockContext<'_>,
+        labels: &LinkedStack<BlockLabel>,
         relative_depth: u32,
     ) {
-        for i in 0..=relative_depth {
-            let i = usize::try_from(i).expect("branching depth must fit within CPU word size");
-            let i = parents.len() - i - 1;
-            let parent = parents
-                .get(i)
-                .expect("validation must ensure that branch does not escape parents");
-
-            let is_branching = parent.is_branching.expression;
-            block.push_store(is_branching, true_expression);
+        let relative_depth =
+            usize::try_from(relative_depth).expect("branching depth must fit within CPU word size");
+        for label in labels.peek_n(relative_depth) {
+            label.set(ctx);
         }
     }
 
     fn do_br(&mut self, relative_depth: u32) -> ControlFlowState {
-        Self::push_store_break_top_n_parents(
-            &mut self.block,
-            &self.parents,
-            self.body_data.naga_true_expression,
-            relative_depth,
-        );
+        Self::push_store_break_top_n_parents(&mut self.ctx, &self.labels, relative_depth);
         ControlFlowState {
-            upper_unconditional_depth: Some(relative_depth),
-            upper_conditional_depth: Some(relative_depth),
+            lower_unconditional_depth: Some(relative_depth),
             lower_conditional_depth: Some(relative_depth),
+            upper_conditional_depth: Some(relative_depth),
         }
     }
 
     fn do_br_if(&mut self, relative_depth: u32) -> ControlFlowState {
-        let mut accept = naga::Block::default();
-        Self::push_store_break_top_n_parents(
-            &mut accept,
-            &self.parents,
-            self.body_data.naga_true_expression,
-            relative_depth,
-        );
-
         // Build condition
         let value = self.pop();
-        let wasm_false = self.body_data.wasm_false_expression;
-        let condition = naga_expr!(self => value != wasm_false);
+        let wasm_false = self.body_data.std_objects.preamble.wasm_bool.const_false;
+        let condition = naga_expr!(self => value != Constant(wasm_false));
 
-        self.block.push(
-            naga::Statement::If {
-                condition,
-                accept,
-                reject: naga::Block::default(),
-            },
-            naga::Span::UNDEFINED,
-        );
+        self.ctx.test(condition).then(|mut ctx| {
+            Self::push_store_break_top_n_parents(&mut ctx, &self.labels, relative_depth);
+        });
 
         ControlFlowState {
-            upper_unconditional_depth: None,
-            lower_conditional_depth: Some(relative_depth),
+            lower_unconditional_depth: None,
             upper_conditional_depth: Some(relative_depth),
+            lower_conditional_depth: Some(relative_depth),
         }
     }
 
@@ -545,22 +420,19 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
 
         // Make new block, temporarily moving out of this
         let mut inner_block = naga::Block::default();
-        let inner_active_block = ActiveBlock::new(
-            &mut inner_block,
+        let mut inner_active_block = ActiveBlock::new(
+            (&mut self.ctx).into(),
             block_type,
             self.body_data,
-            self.parents.clone(),
+            Some(&self.labels),
         );
 
         // Write args
-        inner_active_block.assign_arguments(&mut self.block, args);
+        inner_active_block.assign_arguments(args);
 
-        let (inner_active_block, end) = inner_active_block.populate_straight(instructions)?;
+        let end = inner_active_block.populate_straight(instructions)?;
         debug_assert_eq!(end, EndInstruction::End);
         let (results, exit_state) = inner_active_block.finish();
-
-        self.block
-            .push(naga::Statement::Block(inner_block), naga::Span::UNDEFINED);
 
         // Extract results
         for result in results {
@@ -577,8 +449,8 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         instructions: &mut Peekable<impl Iterator<Item = &'c OperatorByProposal<'a>>>,
     ) -> build::Result<ControlFlowState> {
         let value = self.pop();
-        let wasm_false = self.body_data.wasm_false_expression;
-        let condition = naga_expr!(self => value != wasm_false);
+        let wasm_false = self.body_data.std_objects.preamble.wasm_bool.const_false;
+        let condition = naga_expr!(self => value != Constant(wasm_false));
 
         let block_type = BlockType::from_parsed(blockty, &self.body_data.module_data.types);
 
@@ -589,59 +461,50 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         }
         args.reverse();
 
-        // Make new accept block, temporarily moving out of this
-        let mut accept = naga::Block::default();
-        let inner_active_accept_block = ActiveBlock::new(
-            &mut accept,
-            block_type.clone(),
-            self.body_data,
-            self.parents.clone(),
-        );
-
-        // Write args
-        inner_active_accept_block.assign_arguments(&mut self.block, args.clone());
-        let (inner_active_accept_block, end) =
-            inner_active_accept_block.populate_straight(instructions)?;
-        let (results, accept_exit_state) = inner_active_accept_block.finish();
-
-        let mut reject = naga::Block::default();
-        let (results, reject_exit_state) = if end == EndInstruction::Else {
-            // Make new reject block, temporarily moving out of this
-            let mut inner_active_reject_block = ActiveBlock::new(
-                &mut reject,
-                block_type,
-                &mut self.body_data,
-                self.parents.clone(),
-            );
+        let mut end = EndInstruction::End;
+        let mut results = vec![];
+        let mut exit_state = ControlFlowState::default();
+        let test = self.ctx.test(condition).try_then(|ctx| {
+            // Make new accept block
+            let mut accept_block =
+                ActiveBlock::new(ctx, block_type.clone(), self.body_data, Some(&self.labels));
 
             // Write args
-            inner_active_reject_block.assign_arguments(&mut self.block, args);
-            // Overwrite results to unify if statement results
-            inner_active_reject_block.results = results;
-            let (inner_active_reject_block, end) =
-                inner_active_reject_block.populate_straight(instructions)?;
-            debug_assert_eq!(end, EndInstruction::End);
-            let (results, reject_exit_state) = inner_active_reject_block.finish();
+            accept_block.assign_arguments(args.clone());
 
-            (results, reject_exit_state)
+            // Perform body
+            end = accept_block.populate_straight(instructions)?;
+            (results, exit_state) = accept_block.finish();
+
+            Ok(())
+        })?;
+
+        if end == EndInstruction::Else {
+            test.otherwise(|ctx| {
+                // Make new reject block
+                let mut reject_block =
+                    ActiveBlock::new(ctx, block_type, self.body_data, Some(&self.labels));
+
+                // Write args
+                reject_block.assign_arguments(args);
+                // Overwrite results to unify if statement results
+                reject_block.results = results.clone();
+                let end = reject_block.populate_straight(instructions)?;
+                debug_assert_eq!(end, EndInstruction::End);
+                let (_, reject_exit_state) = reject_block.finish();
+
+                exit_state = ControlFlowState::union(exit_state, reject_exit_state);
+
+                Ok(())
+            })?;
         } else {
-            // To match if branch, write popped args to results
-            for (arg, result) in args.into_iter().zip_eq(results.iter()) {
-                reject.push_store(result.expression, arg)
-            }
-
-            // If we don't have an else branch, we continue straight through
-            (results, ControlFlowState::default())
+            test.otherwise(|mut ctx| {
+                // To match if branch, write popped args to results
+                for (arg, result) in args.into_iter().zip_eq(results.iter()) {
+                    ctx.store(result.expression, arg)
+                }
+            });
         };
-
-        self.block.push(
-            naga::Statement::If {
-                condition,
-                accept,
-                reject,
-            },
-            naga::Span::UNDEFINED,
-        );
 
         // Extract unified results
         for result in results {
@@ -649,10 +512,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
             self.stack.push(expr);
         }
 
-        Ok(ControlFlowState::union(
-            accept_exit_state,
-            reject_exit_state,
-        ))
+        Ok(exit_state)
     }
 
     fn do_loop<'a: 'c, 'c>(
@@ -672,42 +532,35 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         }
         args.reverse();
 
-        // Loop body
-        let mut inner_block = naga::Block::default();
+        // Make loop block
+        let (results, exit_state) = self.ctx.cycle(|mut ctx| {
+            let mut loop_body = ActiveBlock::new(
+                ctx.reborrow(),
+                block_type,
+                self.body_data,
+                Some(&self.labels),
+            );
 
-        // Make new block, temporarily moving out of this
-        let mut inner_active_block = ActiveBlock::new(
-            &mut inner_block,
-            block_type,
-            self.body_data,
-            self.parents.clone(),
-        );
+            // To avoid infinite loops on trapped modules, periodically check if we have trapped
+            let trapped_condition = naga_expr!(&mut loop_body => Load(trap_state) != U32(0));
+            loop_body
+                .ctx
+                .test(trapped_condition)
+                .then(|ctx| ctx.stop_loop());
 
-        // To avoid infinite loops on trapped modules, periodically check if we have trapped
-        let trapped_condition = naga_expr!(&mut inner_active_block => Load(trap_state) != U32(0));
-        let mut trapped_block = naga::Block::default();
-        trapped_block.push(naga::Statement::Break, naga::Span::UNDEFINED);
-        inner_active_block
-            .block
-            .push_if(trapped_condition, trapped_block, naga::Block::default());
+            // Write args
+            loop_body.assign_arguments(args);
 
-        // Write args
-        inner_active_block.assign_arguments(&mut self.block, args);
-        let (inner_active_block, end) = inner_active_block.populate_looping(instructions)?;
-        debug_assert_eq!(end, EndInstruction::End);
-        let (results, exit_state) = inner_active_block.finish();
+            // Do loop body
+            let end = loop_body.populate_looping(instructions)?;
+            debug_assert_eq!(end, EndInstruction::End);
+            let res = loop_body.finish();
 
-        // Loops exit if they don't continue
-        inner_block.push(naga::Statement::Break, naga::Span::UNDEFINED);
+            // Loops exit if they don't continue
+            ctx.stop_loop();
 
-        self.block.push(
-            naga::Statement::Loop {
-                body: inner_block,
-                continuing: naga::Block::default(),
-                break_if: None,
-            },
-            naga::Span::UNDEFINED,
-        );
+            Ok(res)
+        })?;
 
         // Extract results
         for result in results {
@@ -719,24 +572,25 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
     }
 
     fn do_return(&mut self) -> ControlFlowState {
-        self.body_data.push_return(&mut self.block, &mut self.stack);
+        self.body_data
+            .push_return((&mut self.ctx).into(), &mut self.stack);
 
         ControlFlowState {
-            upper_unconditional_depth: Some(u32::MAX), // Gone
-            lower_conditional_depth: Some(u32::MAX),
+            lower_unconditional_depth: Some(u32::MAX), // Gone
             upper_conditional_depth: Some(u32::MAX),
+            lower_conditional_depth: Some(u32::MAX),
         }
     }
 
     /// Populates a block using the callbacks provided
     pub(crate) fn populate<'a: 'c, 'c>(
-        mut self,
+        &mut self,
         instructions: &mut Peekable<impl Iterator<Item = &'c OperatorByProposal<'a>>>,
         // What to do when we're branching with relative distance 0
-        on_r0_branching: impl Fn(&mut ActiveBlock, &mut naga::Block),
+        on_r0_branching: impl Fn(&mut ActiveBlock<'_>),
         // What to do when we're branching with relative distance >0
-        on_rp_branching: impl Fn(&mut ActiveBlock, &mut naga::Block),
-    ) -> build::Result<(Self, EndInstruction)> {
+        on_rp_branching: impl Fn(&mut ActiveBlock<'_>),
+    ) -> build::Result<EndInstruction> {
         let end_instruction = loop {
             let operation = self.eat_basic_block(instructions)?;
             let state = match operation {
@@ -765,113 +619,93 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
             self.exit_state = ControlFlowState::concat(self.exit_state, state.decrement());
 
             // No need to do any control flow shenanigans if there's no control flow happening
-            if state.upper_conditional_depth.is_none() {
+            if state.lower_conditional_depth.is_none() {
                 continue;
             }
 
             // Write current stack to variables, since we might be leaving this block here
             self.push_store_stack_in_results();
 
-            // Decide what to do if we are branching
-            let mut r0_branching = naga::Block::default();
-            on_r0_branching(&mut self, &mut r0_branching);
-
-            // Decide what to do if the parent is also branching - useful for loops where we break rather than continue
-            let mut rp_branching = naga::Block::default();
-            on_rp_branching(&mut self, &mut rp_branching);
-
             match state {
                 ControlFlowState {
-                    upper_unconditional_depth: None,
-                    upper_conditional_depth: None,
+                    lower_unconditional_depth: None,
+                    lower_conditional_depth: None,
                     ..
                 } => {}
                 ControlFlowState {
-                    upper_unconditional_depth: Some(0),
+                    lower_unconditional_depth: Some(0),
                     ..
                 } => {
-                    self.block.append(&mut r0_branching);
+                    on_r0_branching(self);
                 }
                 ControlFlowState {
-                    upper_unconditional_depth: Some(_),
+                    lower_unconditional_depth: Some(_),
                     ..
                 } => {
-                    self.block.append(&mut rp_branching);
+                    on_rp_branching(self);
                 }
                 ControlFlowState {
-                    upper_unconditional_depth: None,
-                    upper_conditional_depth: Some(relative_depth),
+                    lower_unconditional_depth: None,
+                    lower_conditional_depth: Some(relative_depth),
                     ..
                 } => {
                     // Get r0 break expression
-                    let r0_break_expr = self
-                        .parents
-                        .last()
-                        .expect("every block pushes its own label")
-                        .is_branching
-                        .expression;
-                    let r0_condition = naga_expr!(&mut self => Load(r0_break_expr));
-                    // Reset our break expression (after loading the value it contains)
-                    self.block
-                        .push_store(r0_break_expr, self.body_data.naga_false_expression);
+                    let top_label = self.labels.peek();
 
-                    // Get rp break expression
-                    if relative_depth > 0 && self.parents.len() > 1 {
-                        if let Some(parent_label) = self.parents.get(self.parents.len() - 2) {
-                            let rp_break_expr = parent_label.is_branching.expression;
-                            let rp_condition = naga_expr!(&mut self => Load(rp_break_expr));
-                            r0_branching = naga::Block::from_vec(vec![naga::Statement::If {
-                                condition: rp_condition,
-                                accept: rp_branching,
-                                reject: r0_branching,
-                            }]);
-                        }
-                    }
+                    top_label
+                        .if_is_set(&mut self.ctx)
+                        .then(|mut ctx| {
+                            // Reset our break expression if it were set.
+                            top_label.unset(&mut ctx);
 
-                    self.block.push(
-                        naga::Statement::If {
-                            condition: r0_condition,
-                            accept: r0_branching,
-                            reject: naga::Block::default(),
-                        },
-                        naga::Span::UNDEFINED,
-                    );
-
-                    // Then get the reject block back to continue populating
-                    self.block = match self.block.last_mut().expect("just pushed something") {
-                        naga::Statement::If { reject, .. } => reject,
-                        _ => unreachable!(
-                            "just pushed an if statement, so last item must be an if statement"
-                        ),
-                    }
+                            if let Some(parent_label) = self.labels.peek_nth(1) {
+                                parent_label
+                                    .if_is_set(&mut ctx)
+                                    .then(|mut ctx| {
+                                        let mut rp_branching = self.reborrow(ctx);
+                                        on_rp_branching(&mut rp_branching);
+                                    })
+                                    .otherwise(|mut ctx| {
+                                        let mut r0_branching = self.reborrow(ctx);
+                                        on_r0_branching(&mut r0_branching);
+                                    });
+                            } else {
+                                let mut r0_branching = self.reborrow(ctx);
+                                on_r0_branching(&mut r0_branching);
+                            }
+                        })
+                        .otherwise(|ctx| {
+                            // If we aren't branching, continue with the remainder of the body we're generating.
+                            self.ctx = ctx;
+                        });
                 }
             }
 
             // If we're done with this block, leave
-            if state.upper_unconditional_depth.is_some() {
+            if state.lower_unconditional_depth.is_some() {
                 Self::eat_to_end(instructions);
             }
         };
 
-        Ok((self, end_instruction))
+        Ok(end_instruction)
     }
 
     /// Populates a non-looping (straight) block
     pub(crate) fn populate_straight<'a: 'c, 'c>(
-        self,
+        &mut self,
         instructions: &mut Peekable<impl Iterator<Item = &'c OperatorByProposal<'a>>>,
-    ) -> build::Result<(Self, EndInstruction)> {
-        self.populate(instructions, |_, _| {}, |_, _| {})
+    ) -> build::Result<EndInstruction> {
+        self.populate(instructions, |_| {}, |_| {})
     }
 
     /// Populates a looping block
     pub(crate) fn populate_looping<'a: 'c, 'c>(
-        self,
+        &mut self,
         instructions: &mut Peekable<impl Iterator<Item = &'c OperatorByProposal<'a>>>,
-    ) -> build::Result<(Self, EndInstruction)> {
+    ) -> build::Result<EndInstruction> {
         self.populate(
             instructions,
-            |active, block| {
+            |active| {
                 // Read results back to arguments
                 for (dst, src) in active
                     .arguments
@@ -880,12 +714,12 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
                     .zip(active.results.clone().into_iter())
                 {
                     let value = naga_expr!(active => Load(src.expression));
-                    block.push_store(dst.expression, value);
+                    active.ctx.store(dst.expression, value);
                 }
-                block.push(naga::Statement::Continue, naga::Span::UNDEFINED);
+                active.ctx.resume_loop();
             },
-            |_, block| {
-                block.push(naga::Statement::Break, naga::Span::UNDEFINED);
+            |active| {
+                active.ctx.stop_loop();
             },
         )
     }
@@ -894,29 +728,23 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         // Write back stack
         self.push_store_stack_in_results();
 
-        // Put label back
-        let own_label = self
-            .parents
-            .pop()
-            .expect("every block pushes then pops its own label");
-        self.body_data.unused_labels.push(own_label);
-
         // Deconstruct
         let Self {
+            ctx,
+            body_data,
+            labels,
+            arguments,
             results,
+            stack,
             exit_state,
-            body_data: _,
-            parents: _,
-            block: _,
-            arguments: _,
-            stack: _,
         } = self;
+
         return (results, exit_state);
     }
 
     /// Fills instructions until some control flow instruction
-    fn eat_basic_block<'a: 'c, 'c>(
-        &mut self,
+    fn eat_basic_block<'a: 'c, 'c, 's>(
+        &'s mut self,
         instructions: &mut impl Iterator<Item = &'c OperatorByProposal<'a>>,
     ) -> build::Result<&'c ControlFlowOperator> {
         let mut last_op = None;
@@ -952,33 +780,19 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
 
         return Ok(last_op.expect("blocks should be balanced"));
     }
+
+    /// Given a context, borrows this and gives a new active block for the given time
+    fn reborrow<'a>(&'a self, ctx: BlockContext<'a>) -> ActiveBlock<'a> {
+        ActiveBlock { ctx, ..*self }
+    }
 }
 
 // Methods used by instruction implementations to modify a working block
-impl<'b, 'd> ActiveBlock<'b, 'd> {
+impl<'b> ActiveBlock<'b> {
     /// Pushes an expression on to the current stack
     fn push(&mut self, value: naga::Expression) -> naga::Handle<naga::Expression> {
-        let needs_emitting = match &value {
-            naga::Expression::FunctionArgument(_)
-            | naga::Expression::GlobalVariable(_)
-            | naga::Expression::LocalVariable(_)
-            | naga::Expression::Constant(_)
-            | naga::Expression::CallResult(_)
-            | naga::Expression::AtomicResult { .. } => false,
-            _ => true,
-        };
-
-        let handle = self
-            .body_data
-            .expressions
-            .append(value, naga::Span::UNDEFINED);
+        let handle = self.ctx.append_expr(value);
         self.stack.push(handle);
-
-        if needs_emitting {
-            self.append(naga::Statement::Emit(naga::Range::new_from_bounds(
-                handle, handle,
-            )));
-        }
 
         return handle;
     }
@@ -996,11 +810,6 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
             .last()
             .expect("wasm validation asserts local stack will not be empty")
             .clone()
-    }
-
-    /// Appends a statement to the current block
-    fn append(&mut self, statement: naga::Statement) {
-        self.block.push(statement, naga::Span::UNDEFINED);
     }
 
     /// Calls trap, recording the given flag
@@ -1024,9 +833,9 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         let init = self
             .body_data
             .std_objects
-            .make_wasm_constant(self.body_data.const_expressions, value)?;
+            .make_wasm_constant(self.ctx.const_expressions, value)?;
         let constant = self
-            .body_data
+            .ctx
             .constants
             .append_anonymous(self.body_data.std_objects.get_val_type(val_type), init);
         self.push(naga::Expression::Constant(constant));
@@ -1065,13 +874,8 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         function: naga::Handle<naga::Function>,
         arguments: Vec<naga::Handle<naga::Expression>>,
     ) -> build::Result<()> {
-        let result = self.push(naga::Expression::CallResult(function));
-
-        self.append(naga::Statement::Call {
-            function,
-            arguments,
-            result: Some(result),
-        });
+        let result = self.ctx.call_get_return(function, arguments);
+        self.stack.push(result);
 
         Ok(())
     }
@@ -1107,7 +911,7 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         let address = self.pop();
         let mut address = naga_expr!(self => address + U32(offset));
 
-        if self.body_data.uses_disjoint_memory {
+        if self.body_data.tuneables.disjoint_memory {
             address = self.disjoint_memory_address(address);
         }
 
@@ -1140,15 +944,12 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
         let address = self.pop();
         let mut address = naga_expr!(self => address + U32(offset));
 
-        if self.body_data.uses_disjoint_memory {
+        if self.body_data.tuneables.disjoint_memory {
             address = self.disjoint_memory_address(address);
         }
 
-        self.append(naga::Statement::Call {
-            function: memory_function,
-            arguments: vec![memory, address, value],
-            result: None,
-        });
+        self.ctx
+            .call_void(memory_function, vec![memory, address, value]);
 
         Ok(())
     }
@@ -1164,15 +965,8 @@ impl<'b, 'd> ActiveBlock<'b, 'd> {
     }
 }
 
-impl<'a, 'b, 'd> From<&'a mut ActiveBlock<'b, 'd>> for BlockContext<'a> {
-    fn from(value: &'a mut ActiveBlock<'b, 'd>) -> Self {
-        BlockContext {
-            types: &mut value.body_data.types,
-            constants: &mut value.body_data.constants,
-            const_expressions: &mut value.body_data.const_expressions,
-            expressions: &mut value.body_data.expressions,
-            locals: &mut value.body_data.local_variables,
-            block: &mut value.block,
-        }
+impl<'a, 'b> From<&'a mut ActiveBlock<'b>> for BlockContext<'a> {
+    fn from(value: &'a mut ActiveBlock<'b>) -> Self {
+        value.ctx
     }
 }

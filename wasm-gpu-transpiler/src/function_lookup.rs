@@ -27,11 +27,11 @@ impl<F> FunctionLookup<F> {
 }
 
 impl<F: InactiveFunction> FunctionLookup<F> {
-    pub(crate) fn lookup_mut<'f>(
+    pub(crate) fn lookup_mut<'f, 'm>(
         &'f self,
-        module: &'f mut ActiveModule<'f>,
+        module: &'f mut ActiveModule<'m>,
         ptr: &FuncRef,
-    ) -> F::Active<'f> {
+    ) -> F::Active<'f, 'm> {
         self.lookup(ptr).activate(module)
     }
 }

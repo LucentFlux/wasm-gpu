@@ -185,40 +185,6 @@ impl GenWasmBool for WasmBoolInstance {
 }
 
 generator_struct! {
-    pub(crate) struct NagaBoolInstance
-    {
-        ty: naga::Handle<naga::Type>,
-        const_false: |ty|naga::Handle<naga::Constant>,
-        const_true: |ty|naga::Handle<naga::Constant>,
-    } with trait GenNagaBool;
-}
-
-impl GenNagaBool for NagaBoolInstance {
-    fn gen_ty(
-        module: &mut naga::Module,
-        _requirements: naga_bool_instance_gen::TyRequirements,
-    ) -> build::Result<naga_bool_instance_gen::Ty> {
-        Ok(module.types.insert_bool())
-    }
-
-    fn gen_const_false(
-        module: &mut naga::Module,
-        requirements: naga_bool_instance_gen::ConstFalseRequirements,
-    ) -> build::Result<naga_bool_instance_gen::ConstFalse> {
-        let init = module.const_expressions.append_bool(false);
-        Ok(module.constants.append_anonymous(*requirements.ty, init))
-    }
-
-    fn gen_const_true(
-        module: &mut naga::Module,
-        requirements: naga_bool_instance_gen::ConstTrueRequirements,
-    ) -> build::Result<naga_bool_instance_gen::ConstTrue> {
-        let init = module.const_expressions.append_bool(true);
-        Ok(module.constants.append_anonymous(*requirements.ty, init))
-    }
-}
-
-generator_struct! {
     pub(crate) struct PreambleObjects (fp_options: crate::FloatingPointOptions)
     {
         word_ty: naga::Handle<naga::Type>,
@@ -227,6 +193,7 @@ generator_struct! {
         instance_id: |word_ty| naga::Handle<naga::GlobalVariable>,
         invocations_count: |word_ty| naga::Handle<naga::GlobalVariable>,
 
+        bool_ty: naga::Handle<naga::Type>,
         uvec3_ty: naga::Handle<naga::Type>,
 
         word_array_buffer_ty:   |word_ty| naga::Handle<naga::Type>,
@@ -239,7 +206,6 @@ generator_struct! {
         trap_values: TrapValuesInstance,
         trap_state: |word_ty| naga::Handle<naga::GlobalVariable>,
 
-        naga_bool: NagaBoolInstance,
         wasm_bool: WasmBoolInstance,
     } with trait PreambleObjectsGen;
 }
@@ -453,12 +419,6 @@ impl<Ps: GenerationParameters> PreambleObjectsGen for PreambleObjectsGenerator<P
             naga::Span::UNDEFINED,
         ))
     }
-    fn gen_naga_bool(
-        module: &mut naga::Module,
-        _requirements: preamble_objects_gen::NagaBoolRequirements,
-    ) -> build::Result<preamble_objects_gen::NagaBool> {
-        NagaBoolInstance::gen_from::<NagaBoolInstance>(module)
-    }
     fn gen_wasm_bool(
         module: &mut naga::Module,
         _requirements: preamble_objects_gen::WasmBoolRequirements,
@@ -494,6 +454,13 @@ impl<Ps: GenerationParameters> PreambleObjectsGen for PreambleObjectsGenerator<P
             },
             naga::Span::UNDEFINED,
         ))
+    }
+
+    fn gen_bool_ty(
+        module: &mut naga::Module,
+        requirements: preamble_objects_gen::BoolTyRequirements<'_>,
+    ) -> build::Result<preamble_objects_gen::BoolTy> {
+        Ok(module.types.insert_bool())
     }
 }
 

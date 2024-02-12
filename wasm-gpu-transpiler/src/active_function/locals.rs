@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{build, std_objects::StdObjects, BuildError, ExceededComponent};
-use naga_ext::{BlockExt, ExpressionsExt, LocalsExt};
+use naga_ext::{BlockContext, ExpressionsExt, LocalsExt};
 use wasmparser::ValType;
 
 use super::arguments::WasmFnArgs;
@@ -16,10 +16,9 @@ pub(crate) struct FnLocal {
 }
 
 impl FnLocal {
-    pub(crate) fn append_wasm_set_to(
+    pub(crate) fn append_all_wasm_to(
         name_prefix: String,
-        local_variables: &mut naga::Arena<naga::LocalVariable>,
-        expressions: &mut naga::Arena<naga::Expression>,
+        ctx: &mut BlockContext<'_>,
         std_objects: &StdObjects,
         local_tys: Vec<ValType>,
     ) -> Vec<Self> {
@@ -27,39 +26,31 @@ impl FnLocal {
             .into_iter()
             .enumerate()
             .map(|(i, local_ty)| {
-                Self::append_wasm_to(
-                    format!("{}_{}", name_prefix, i),
-                    local_variables,
-                    expressions,
-                    std_objects,
-                    local_ty,
-                )
+                Self::append_wasm_to(format!("{}_{}", name_prefix, i), ctx, std_objects, local_ty)
             })
             .collect()
     }
 
     pub(crate) fn append_wasm_to(
         name: String,
-        local_variables: &mut naga::Arena<naga::LocalVariable>,
-        expressions: &mut naga::Arena<naga::Expression>,
+        ctx: &mut BlockContext<'_>,
         std_objects: &StdObjects,
         local_ty: ValType,
     ) -> Self {
         let ty = std_objects.get_val_type(local_ty);
         let default_const = std_objects.get_default_value(local_ty);
-        let init = expressions.append_constant(default_const);
-        Self::append_to(name, local_variables, expressions, ty, Some(init))
+        let init = ctx.expressions.append_constant(default_const);
+        Self::append_to(name, ctx, ty, Some(init))
     }
 
     pub(crate) fn append_to(
         name: String,
-        local_variables: &mut naga::Arena<naga::LocalVariable>,
-        expressions: &mut naga::Arena<naga::Expression>,
+        ctx: &mut BlockContext<'_>,
         ty: naga::Handle<naga::Type>,
         init: Option<naga::Handle<naga::Expression>>,
     ) -> Self {
-        let local = local_variables.new_local(name, ty, init);
-        let expression = expressions.append_local(local);
+        let local = ctx.locals.new_local(name, ty, init);
+        let expression = ctx.expressions.append_local(local);
         Self { ty, expression }
     }
 }
@@ -70,7 +61,7 @@ pub(crate) struct FnLocals {
 
 impl FnLocals {
     pub(crate) fn append_to(
-        function: &mut naga::Function,
+        ctx: &mut BlockContext<'_>,
         std_objects: &StdObjects,
         parsed_locals: &Vec<(u32, ValType)>,
         parameters: &WasmFnArgs,
@@ -78,8 +69,6 @@ impl FnLocals {
         let mut locals = HashMap::new();
 
         // First insert actual wasm locals
-        let local_variables = &mut function.local_variables;
-        let expressions = &mut function.expressions;
         let mut i_local = parameters.len() as u32;
         for (local_count, local_ty) in parsed_locals {
             for _ in 0..*local_count {
@@ -87,8 +76,7 @@ impl FnLocals {
                     i_local,
                     FnLocal::append_wasm_to(
                         format!("wasm_defined_local_{}", i_local),
-                        local_variables,
-                        expressions,
+                        ctx,
                         std_objects,
                         *local_ty,
                     ),
@@ -101,19 +89,16 @@ impl FnLocals {
         for (i_param, parameter) in parameters.iter().enumerate() {
             let i_param = u32::try_from(i_param)
                 .map_err(|_| BuildError::BoundsExceeded(ExceededComponent::ParameterCount))?;
-            let local_variables = &mut function.local_variables;
-            let expressions = &mut function.expressions;
             let local = FnLocal::append_wasm_to(
                 format!("parameter_{}_as_local", i_param),
-                local_variables,
-                expressions,
+                ctx,
                 std_objects,
                 parameter.ty,
             );
 
             // Immediately assign value to local
             let parameter_value = parameter.arg.expression_handle;
-            function.body.push_store(local.expression, parameter_value);
+            ctx.store(local.expression, parameter_value);
 
             let popped = locals.insert(i_param, local);
             assert!(

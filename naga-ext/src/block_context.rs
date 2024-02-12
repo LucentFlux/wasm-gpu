@@ -15,7 +15,7 @@ pub struct BlockContext<'a> {
     pub block: &'a mut naga::Block,
 }
 
-/// Reborrowing
+/// Implicit reborrowing
 impl<'a: 'b, 'b> From<&'b mut BlockContext<'a>> for BlockContext<'b> {
     fn from(value: &'b mut BlockContext<'a>) -> Self {
         Self {
@@ -45,6 +45,11 @@ impl<'a> From<(&'a mut naga::Module, naga::Handle<naga::Function>)> for BlockCon
 }
 
 impl<'a> BlockContext<'a> {
+    /// Explicit reborrowing
+    pub fn reborrow<'b>(&'b mut self) -> BlockContext<'b> {
+        self.into()
+    }
+
     fn push_emit(&mut self, handle: naga::Handle<naga::Expression>) {
         // If the last statement was an emit, append this one to that one's range
         if let Some(naga::Statement::Emit(range)) = self.block.last_mut() {
@@ -211,6 +216,52 @@ impl<'a> BlockContext<'a> {
             naga::Span::UNDEFINED,
         )
     }
+    /// Builds a [`naga::Statement::Loop`] without a continuing or break if block.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use naga_ext::*;
+    /// let mut module = naga::Module::default();
+    /// let (function,) = naga_ext::declare_function! {&mut module =>
+    ///     fn foo()
+    /// };
+    /// let mut ctx = naga_ext::BlockContext::from((&mut module, function));
+    /// ctx.cycle(|mut ctx| {
+    ///     ctx.stop_loop()
+    /// });
+    /// # naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&mut module).unwrap();
+    /// ```
+    ///
+    /// The above code results in the following shader:
+    ///
+    /// ```wgsl
+    /// fn foo() {
+    ///     while true {
+    ///         break;
+    ///     }
+    /// }
+    /// ```
+    #[inline(always)]
+    pub fn cycle<R>(&mut self, f: impl FnOnce(BlockContext<'_>) -> R) -> R {
+        let mut body = naga::Block::new();
+        let ctx = BlockContext {
+            block: &mut body,
+            ..self.into()
+        };
+        let res = f(ctx);
+
+        self.block.push(
+            naga::Statement::Loop {
+                body,
+                continuing: naga::Block::new(),
+                break_if: None,
+            },
+            naga::Span::UNDEFINED,
+        );
+
+        return res;
+    }
 
     /// Calls a function with [`naga::Statement::Call`], placing the result in an expression which is returned.
     ///
@@ -364,6 +415,70 @@ impl<'a> BlockContext<'a> {
             naga::Span::UNDEFINED,
         )
     }
+
+    /// Builds a [`naga::Statement::Break`].
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use naga_ext::*;
+    /// let mut module = naga::Module::default();
+    /// let (function,) = naga_ext::declare_function! {&mut module =>
+    ///     fn foo()
+    /// };
+    /// let mut ctx = naga_ext::BlockContext::from((&mut module, function));
+    /// ctx.cycle(|mut ctx| {
+    ///     ctx.stop_loop()
+    /// });
+    /// # naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&mut module).unwrap();
+    /// ```
+    ///
+    /// The above code results in the following shader:
+    ///
+    /// ```wgsl
+    /// fn foo() {
+    ///     while true {
+    ///         break;
+    ///     }
+    /// }
+    /// ```
+    #[inline(always)]
+    pub fn stop_loop(self) {
+        self.block
+            .push(naga::Statement::Break, naga::Span::UNDEFINED)
+    }
+
+    /// Builds a [`naga::Statement::Continue`].
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use naga_ext::*;
+    /// let mut module = naga::Module::default();
+    /// let (function,) = naga_ext::declare_function! {&mut module =>
+    ///     fn foo()
+    /// };
+    /// let mut ctx = naga_ext::BlockContext::from((&mut module, function));
+    /// ctx.cycle(|mut ctx| {
+    ///     ctx.resume_loop()
+    /// });
+    /// # naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&mut module).unwrap();
+    /// ```
+    ///
+    /// The above code results in the following shader:
+    ///
+    /// ```wgsl
+    /// fn foo() {
+    ///     while true {
+    ///         continue;
+    ///     }
+    /// }
+    /// ```
+    #[inline(always)]
+    pub fn resume_loop(self) {
+        self.block
+            .push(naga::Statement::Continue, naga::Span::UNDEFINED)
+    }
 }
 
 /// Built by a call to [`BlockContext::test`], and must be consumed by a call to [`Test::then`].
@@ -376,7 +491,16 @@ pub struct Test<'a> {
 impl<'a> Test<'a> {
     /// Populates a block to be run if the test condition is true.
     #[inline]
-    pub fn then(mut self, f: impl FnOnce(BlockContext<'_>)) -> TestThen<'a> {
+    pub fn then(self, f: impl FnOnce(BlockContext<'_>)) -> TestThen<'a> {
+        self.try_then::<!>(|ctx| Ok(f(ctx))).into_ok()
+    }
+
+    /// Tries to populate a block to be run if the test condition is true.
+    #[inline]
+    pub fn try_then<E>(
+        mut self,
+        f: impl FnOnce(BlockContext<'_>) -> Result<(), E>,
+    ) -> Result<TestThen<'a>, E> {
         let condition_index = self.ctx.block.len();
 
         let mut accept_block = naga::Block::new();
@@ -384,7 +508,7 @@ impl<'a> Test<'a> {
             block: &mut accept_block,
             ..(&mut self.ctx).into()
         };
-        f(accept_ctx);
+        f(accept_ctx)?;
 
         self.ctx.block.push(
             naga::Statement::If {
@@ -395,10 +519,10 @@ impl<'a> Test<'a> {
             naga::Span::UNDEFINED,
         );
 
-        TestThen {
+        Ok(TestThen {
             ctx: self.ctx,
             condition_index,
-        }
+        })
     }
 }
 
@@ -412,13 +536,13 @@ pub struct TestThen<'a> {
 impl<'a> TestThen<'a> {
     /// Populates a block to be run if the test condition is false.
     #[inline]
-    pub fn otherwise(self, f: impl FnOnce(BlockContext<'_>)) {
+    pub fn otherwise<R>(self, f: impl FnOnce(BlockContext<'_>) -> R) -> R {
         if let naga::Statement::If { reject, .. } = &mut self.ctx.block[self.condition_index] {
             let reject_ctx = BlockContext {
                 block: reject,
                 ..self.ctx
             };
-            f(reject_ctx);
+            return f(reject_ctx);
         } else {
             panic!(
                 "context block was changed between a call to `Test::then` and `TestThen::otherwise"

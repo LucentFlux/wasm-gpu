@@ -1,7 +1,7 @@
 use crate::typed::ValTypeByteCount;
 use crate::{active_function::ActiveFunction, build};
 use crate::{BuildError, ExceededComponent};
-use naga_ext::{naga_expr, BlockExt, ExpressionsExt};
+use naga_ext::{naga_expr, BlockContext, BlockExt, ExpressionsExt};
 use wasmparser::ValType;
 
 use crate::{std_objects::StdObjects, IO_ARGUMENT_ALIGNMENT_WORDS, IO_INVOCATION_ALIGNMENT_WORDS};
@@ -79,18 +79,19 @@ impl WasmFnResTy {
     /// statements.
     pub(crate) fn push_return(
         &self,
-        expressions: &mut naga::Arena<naga::Expression>,
-        block: &mut naga::Block,
+        mut ctx: BlockContext<'_>,
         components: Vec<naga::Handle<naga::Expression>>,
     ) {
-        let struct_build = expressions.append_compose(self.handle, components);
-        block.push_emit(struct_build);
-        block.push_return(struct_build);
+        let struct_build = ctx.append_expr(naga::Expression::Compose {
+            ty: self.handle,
+            components,
+        });
+        ctx.result(struct_build);
     }
 
-    pub(crate) fn append_store_at<'f>(
+    pub(crate) fn append_store_at(
         &self,
-        function: &mut ActiveEntryFunction<'f>,
+        function: &mut ActiveEntryFunction<'_, '_>,
         location: naga::Handle<naga::Expression>,
         value: naga::Handle<naga::Expression>,
     ) -> build::Result<()> {

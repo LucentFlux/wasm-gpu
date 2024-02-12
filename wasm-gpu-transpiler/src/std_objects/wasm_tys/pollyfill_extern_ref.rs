@@ -39,9 +39,8 @@ impl ExternRefGen for PolyfillExternRef {
 
     fn gen_make_const(
         _module: &mut naga::Module,
-        requirements: super::extern_ref_instance_gen::MakeConstRequirements,
+        _requirements: super::extern_ref_instance_gen::MakeConstRequirements,
     ) -> build::Result<super::extern_ref_instance_gen::MakeConst> {
-        let ty = *requirements.ty;
         Ok(Box::new(move |const_expressions, value| {
             let value = value.as_u32().unwrap_or(u32::MAX).into();
             let expr = const_expressions.append_u32(value);
@@ -116,7 +115,7 @@ fn gen_read(
     };
     let mut ctx = BlockContext::from((module, function_handle));
 
-    let read_value = naga_expr!(ctx => Load(Global(buffer)[word_address]));
+    let read_value = naga_expr!(&mut ctx => Load(Global(buffer)[word_address]));
     ctx.result(read_value);
 
     Ok(function_handle)
@@ -136,8 +135,8 @@ fn gen_write(
     };
     let mut ctx = BlockContext::from((module, function_handle));
 
-    let write_word_loc = naga_expr!(ctx => Global(buffer)[word_address]);
-    let word = naga_expr!(ctx => value as Uint);
+    let write_word_loc = naga_expr!(&mut ctx => Global(buffer)[word_address]);
+    let word = naga_expr!(&mut ctx => value as Uint);
     ctx.store(write_word_loc, word);
 
     Ok(function_handle)

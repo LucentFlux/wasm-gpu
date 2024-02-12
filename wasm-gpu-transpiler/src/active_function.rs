@@ -21,11 +21,11 @@ use crate::active_module::ActiveModule;
 
 /// A set of handles to a function that can be 'activated' given a mutable reference to a module
 pub(crate) trait InactiveFunction {
-    type Active<'f>: ActiveFunction<'f>
+    type Active<'f, 'm: 'f>: ActiveFunction<'f>
     where
         Self: 'f;
 
-    fn activate<'f>(&'f self, module: &'f mut ActiveModule<'f>) -> Self::Active<'f>;
+    fn activate<'f, 'm: 'f>(&'f self, module: &'f mut ActiveModule<'m>) -> Self::Active<'f, 'm>;
 }
 
 /// Any function, entry or not, that can be modified.
@@ -71,8 +71,9 @@ impl InternalFunction {
             wasm_results.set_return_type(function)
         }
 
+        let mut ctx = BlockContext::from((module, handle));
         let locals = FnLocals::append_to(
-            function,
+            &mut ctx,
             std_objects,
             &function_definition.data.locals,
             &wasm_arguments,
@@ -88,9 +89,12 @@ impl InternalFunction {
 }
 
 impl InactiveFunction for InternalFunction {
-    type Active<'f> = ActiveInternalFunction<'f>;
+    type Active<'f, 'm: 'f> = ActiveInternalFunction<'f, 'm>;
 
-    fn activate<'f>(&'f self, working_module: &'f mut ActiveModule<'f>) -> Self::Active<'f> {
+    fn activate<'f, 'm: 'f>(
+        &'f self,
+        working_module: &'f mut ActiveModule<'m>,
+    ) -> Self::Active<'f, 'm> {
         ActiveInternalFunction {
             working_module,
             data: self,
@@ -98,12 +102,12 @@ impl InactiveFunction for InternalFunction {
     }
 }
 
-pub(crate) struct ActiveInternalFunction<'f> {
-    working_module: &'f mut ActiveModule<'f>,
+pub(crate) struct ActiveInternalFunction<'f, 'm: 'f> {
+    working_module: &'f mut ActiveModule<'m>,
     data: &'f InternalFunction,
 }
 
-impl<'f> ActiveInternalFunction<'f> {
+impl<'f, 'm: 'f> ActiveInternalFunction<'f, 'm> {
     pub(crate) fn handle(&self) -> naga::Handle<naga::Function> {
         self.data.handle
     }
@@ -126,40 +130,35 @@ impl<'f> ActiveInternalFunction<'f> {
             std_objects,
             ..
         } = working_module;
-        let types = &mut module.types;
-        let const_expressions = &mut module.const_expressions;
-        let constants = &mut module.constants;
-        let function = module.functions.get_mut(data.handle);
-        let mut body_data = BodyData::new(
+
+        let mut ctx = BlockContext::from((&mut **module, data.handle));
+
+        let body_data = BodyData::new(
             accessible,
             module_data,
             return_type,
             &data.locals,
-            types,
-            const_expressions,
-            constants,
-            &mut function.expressions,
-            &mut function.local_variables,
+            &mut ctx,
             &std_objects,
-            working_module.uses_disjoint_memory,
+            working_module.tuneables,
         );
 
         // Define base block
-        let base_block = ActiveBlock::new(&mut function.body, block_type, &mut body_data, vec![]);
+        let mut base_block = ActiveBlock::new((&mut ctx).into(), block_type, &body_data, None);
 
         // Parse instructions
         let mut instructions = func_data.data.operators.iter().peekable();
 
         // Populate recursively
-        let (base_block, end) = base_block.populate_straight(&mut instructions)?;
+        let end = base_block.populate_straight(&mut instructions)?;
         assert_eq!(end, EndInstruction::End);
         let (results, control_flow_state) = base_block.finish();
 
         debug_assert!(instructions.next().is_none(), "validation ensures that all instructions are within the body and that blocks are balanced");
 
         // Return results if there's a chance control flow exits the end of the block of the body
-        if control_flow_state.upper_unconditional_depth.is_none() {
-            body_data.push_final_return(&mut function.body, results)
+        if control_flow_state.lower_unconditional_depth.is_none() {
+            body_data.push_final_return(ctx, results)
         }
 
         return Ok(());
@@ -175,7 +174,7 @@ impl<'f> ActiveInternalFunction<'f> {
 }
 
 #[sealed]
-impl<'f> ActiveFunction<'f> for ActiveInternalFunction<'f> {
+impl<'f, 'm: 'f> ActiveFunction<'f> for ActiveInternalFunction<'f, 'm> {
     fn fn_mut<'b>(&'b mut self) -> &'b mut naga::Function
     where
         'f: 'b,
@@ -240,9 +239,12 @@ impl EntryFunction {
 }
 
 impl InactiveFunction for EntryFunction {
-    type Active<'f> = ActiveEntryFunction<'f>;
+    type Active<'f, 'm: 'f> = ActiveEntryFunction<'f, 'm>;
 
-    fn activate<'f>(&'f self, working_module: &'f mut ActiveModule<'f>) -> Self::Active<'f> {
+    fn activate<'f, 'm: 'f>(
+        &'f self,
+        working_module: &'f mut ActiveModule<'m>,
+    ) -> Self::Active<'f, 'm> {
         ActiveEntryFunction {
             working_module,
             data: self,
@@ -250,12 +252,12 @@ impl InactiveFunction for EntryFunction {
     }
 }
 
-pub(crate) struct ActiveEntryFunction<'f> {
-    working_module: &'f mut ActiveModule<'f>,
+pub(crate) struct ActiveEntryFunction<'f, 'm: 'f> {
+    working_module: &'f mut ActiveModule<'m>,
     data: &'f EntryFunction,
 }
 
-impl<'f> ActiveEntryFunction<'f> {
+impl<'f, 'm: 'f> ActiveEntryFunction<'f, 'm> {
     fn get_workgroup_index(&mut self) -> naga::Handle<naga::Expression> {
         let global_id = self.data.args.global_id.expression();
         naga_expr! {self.ctx() => global_id[const 0]}
@@ -364,8 +366,8 @@ impl<'f> ActiveEntryFunction<'f> {
     }
 }
 
-impl<'f> From<&'f mut ActiveEntryFunction<'f>> for ActiveEntryFunction<'f> {
-    fn from(value: &'f mut ActiveEntryFunction<'f>) -> Self {
+impl<'f, 'm: 'f> From<&'f mut ActiveEntryFunction<'f, 'm>> for ActiveEntryFunction<'f, 'm> {
+    fn from(value: &'f mut ActiveEntryFunction<'f, 'm>) -> Self {
         Self {
             working_module: value.working_module,
             data: value.data,
@@ -374,7 +376,7 @@ impl<'f> From<&'f mut ActiveEntryFunction<'f>> for ActiveEntryFunction<'f> {
 }
 
 #[sealed]
-impl<'f> ActiveFunction<'f> for ActiveEntryFunction<'f> {
+impl<'f, 'm: 'f> ActiveFunction<'f> for ActiveEntryFunction<'f, 'm> {
     fn fn_mut<'b>(&'b mut self) -> &'b mut naga::Function
     where
         'f: 'b,

@@ -1,3 +1,6 @@
+#![feature(never_type)]
+#![feature(unwrap_infallible)]
+
 //! Provide a collection of shorthand and opinionated methods extending base naga objects.
 pub mod block_context;
 pub mod into_literal;

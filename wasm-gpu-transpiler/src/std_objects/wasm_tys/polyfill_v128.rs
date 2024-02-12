@@ -1,10 +1,7 @@
 use crate::build;
 use crate::std_objects::preamble_objects_gen;
 use crate::typed::V128;
-use naga_ext::{
-    declare_function, naga_expr, BlockContext, BlockExt, ConstantsExt, ExpressionsExt, ModuleExt,
-    TypesExt,
-};
+use naga_ext::{declare_function, naga_expr, BlockContext, ConstantsExt, ExpressionsExt, TypesExt};
 
 use super::{v128_instance_gen, V128Gen};
 
@@ -139,19 +136,19 @@ fn gen_read(
     };
     let mut ctx = BlockContext::from((module, function_handle));
 
-    let input_ref = naga_expr!(ctx => Global(buffer));
+    let input_ref = naga_expr!(&mut ctx => Global(buffer));
 
-    let read_word1 = naga_expr!(ctx => input_ref[word_address]);
-    let read_word2 = naga_expr!(ctx => input_ref[word_address + (U32(1))]);
-    let read_word3 = naga_expr!(ctx => input_ref[word_address + (U32(2))]);
-    let read_word4 = naga_expr!(ctx => input_ref[word_address + (U32(3))]);
-    let read_value = naga_expr!(ctx => v128_ty(
+    let read_word1 = naga_expr!(&mut ctx => input_ref[word_address]);
+    let read_word2 = naga_expr!(&mut ctx => input_ref[word_address + (U32(1))]);
+    let read_word3 = naga_expr!(&mut ctx => input_ref[word_address + (U32(2))]);
+    let read_word4 = naga_expr!(&mut ctx => input_ref[word_address + (U32(3))]);
+    let read_value = naga_expr!(&mut ctx => v128_ty(
         (Load(read_word1)),
         (Load(read_word2)),
         (Load(read_word3)),
         (Load(read_word4))
     ));
-    module.fn_mut(function_handle).body.push_return(read_value);
+    ctx.result(read_value);
 
     Ok(function_handle)
 }
@@ -170,16 +167,16 @@ fn gen_write(
     };
     let mut ctx = BlockContext::from((module, function_handle));
 
-    let output_ref = naga_expr!(ctx => Global(buffer));
+    let output_ref = naga_expr!(&mut ctx => Global(buffer));
 
-    let write_word_loc1 = naga_expr!(ctx => output_ref[word_address]);
-    let word1 = naga_expr!(ctx => value[const 0]);
-    let write_word_loc2 = naga_expr!(ctx => output_ref[word_address + (U32(1))]);
-    let word2 = naga_expr!(ctx => value[const 1]);
-    let write_word_loc3 = naga_expr!(ctx => output_ref[word_address + (U32(2))]);
-    let word3 = naga_expr!(ctx => value[const 2]);
-    let write_word_loc4 = naga_expr!(ctx => output_ref[word_address + (U32(3))]);
-    let word4 = naga_expr!(ctx => value[const 3]);
+    let write_word_loc1 = naga_expr!(&mut ctx => output_ref[word_address]);
+    let word1 = naga_expr!(&mut ctx => value[const 0]);
+    let write_word_loc2 = naga_expr!(&mut ctx => output_ref[word_address + (U32(1))]);
+    let word2 = naga_expr!(&mut ctx => value[const 1]);
+    let write_word_loc3 = naga_expr!(&mut ctx => output_ref[word_address + (U32(2))]);
+    let word3 = naga_expr!(&mut ctx => value[const 2]);
+    let write_word_loc4 = naga_expr!(&mut ctx => output_ref[word_address + (U32(3))]);
+    let word4 = naga_expr!(&mut ctx => value[const 3]);
 
     ctx.store(write_word_loc1, word1);
     ctx.store(write_word_loc2, word2);

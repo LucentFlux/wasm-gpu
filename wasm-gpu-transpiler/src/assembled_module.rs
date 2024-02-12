@@ -109,17 +109,20 @@ impl<'a> AssembledModule<'a> {
                 let mut base_function = base_functions.lookup_mut(&mut active_module, &ptr);
                 base_function.populate_base_function(function_data)?;
 
-                let handle = base_function.handle();
+                let handle = base_function.handle().clone();
                 let args = base_function.get_arg_tys().clone();
                 let res = base_function.get_res_ty().clone();
+
                 (handle, args, res)
             };
 
             //let stack_function = stack_functions.lookup_mut(&mut active_module, &ptr);
             //populate_stack_function(&mut module, function_data, &call_order, stack_functions.lookup(&ptr.to_func_ref()))?;
 
-            let mut entry_function = entry_functions.lookup_mut(&mut active_module, &ptr);
-            entry_function.populate_entry_function(base_handle, &base_args, &base_res)?;
+            {
+                let mut entry_function = entry_functions.lookup_mut(&mut active_module, &ptr);
+                entry_function.populate_entry_function(base_handle, &base_args, &base_res)?;
+            }
         }
 
         // Populate monofunctions

@@ -238,9 +238,9 @@ macro_rules! impl_native_bool_binexp {
                 };
                 let mut ctx = BlockContext::from((module, function_handle));
 
-                let t = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_true));
-                let f = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_false));
-                let res = naga_expr!(ctx => if (lhs $op rhs) {t} else {f});
+                let t = naga_expr!(&mut ctx => Constant(requirements.preamble.wasm_bool.const_true));
+                let f = naga_expr!(&mut ctx => Constant(requirements.preamble.wasm_bool.const_false));
+                let res = naga_expr!(&mut ctx => if (lhs $op rhs) {t} else {f});
                 ctx.result(res);
 
                 Ok(function_handle)
@@ -263,7 +263,7 @@ macro_rules! impl_native_inner_binexp {
                 };
                 let mut ctx = BlockContext::from((module, function_handle));
 
-                let res = naga_expr!(ctx => lhs $op rhs);
+                let res = naga_expr!(&mut ctx => lhs $op rhs);
                 ctx.result(res);
 
                 Ok(function_handle)
@@ -286,9 +286,9 @@ macro_rules! impl_native_unsigned_bool_binexp {
                 };
                 let mut ctx = BlockContext::from((module, function_handle));
 
-                let t = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_true));
-                let f = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_false));
-                let res = naga_expr!(ctx => if ((lhs as Uint) $op (rhs as Uint)) {t} else {f});
+                let t = naga_expr!(&mut ctx => Constant(requirements.preamble.wasm_bool.const_true));
+                let f = naga_expr!(&mut ctx => Constant(requirements.preamble.wasm_bool.const_false));
+                let res = naga_expr!(&mut ctx => if ((lhs as Uint) $op (rhs as Uint)) {t} else {f});
                 ctx.result(res);
 
                 Ok(function_handle)
@@ -311,7 +311,7 @@ macro_rules! impl_native_unsigned_inner_binexp {
                 };
                 let mut ctx = BlockContext::from((module, function_handle));
 
-                let res = naga_expr!(ctx => ((lhs as Uint) $op (rhs as Uint)) as Sint);
+                let res = naga_expr!(&mut ctx => ((lhs as Uint) $op (rhs as Uint)) as Sint);
                 ctx.result(res);
 
                 Ok(function_handle)
@@ -361,8 +361,7 @@ macro_rules! impl_dud_inner_binexp {
                 let (function_handle, lhs, _) = declare_function! {
                     module => fn [< $name _ $op_name >](lhs: *requirements.ty, rhs: *requirements.ty) -> *requirements.ty
                 };
-                let mut ctx = BlockContext::from((module, function_handle));
-
+                let ctx = BlockContext::from((module, function_handle));
                 ctx.result(lhs);
 
                 Ok(function_handle)
@@ -398,14 +397,14 @@ macro_rules! impl_bitwise_2vec32_numeric_ops {
                 };
                 let mut ctx = BlockContext::from((module, function_handle));
 
-                let t = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_true));
-                let f = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_false));
+                let t = naga_expr!(&mut ctx => Constant(requirements.preamble.wasm_bool.const_true));
+                let f = naga_expr!(&mut ctx => Constant(requirements.preamble.wasm_bool.const_false));
 
-                let lhs_high = naga_expr!(ctx => lhs[const 0]);
-                let lhs_low = naga_expr!(ctx => lhs[const 1]);
-                let rhs_high = naga_expr!(ctx => rhs[const 0]);
-                let rhs_low = naga_expr!(ctx => rhs[const 1]);
-                let res = naga_expr!(ctx => if ((lhs_low == rhs_low) & (lhs_high == rhs_high)) {t} else {f});
+                let lhs_high = naga_expr!(&mut ctx => lhs[const 0]);
+                let lhs_low = naga_expr!(&mut ctx => lhs[const 1]);
+                let rhs_high = naga_expr!(&mut ctx => rhs[const 0]);
+                let rhs_low = naga_expr!(&mut ctx => rhs[const 1]);
+                let res = naga_expr!(&mut ctx => if ((lhs_low == rhs_low) & (lhs_high == rhs_high)) {t} else {f});
                 ctx.result(res);
 
                 Ok(function_handle)
@@ -420,14 +419,14 @@ macro_rules! impl_bitwise_2vec32_numeric_ops {
                 };
                 let mut ctx = BlockContext::from((module, function_handle));
 
-                let t = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_true));
-                let f = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_false));
+                let t = naga_expr!(&mut ctx => Constant(requirements.preamble.wasm_bool.const_true));
+                let f = naga_expr!(&mut ctx => Constant(requirements.preamble.wasm_bool.const_false));
 
-                let lhs_high = naga_expr!(ctx => lhs[const 0]);
-                let lhs_low = naga_expr!(ctx => lhs[const 1]);
-                let rhs_high = naga_expr!(ctx => rhs[const 0]);
-                let rhs_low = naga_expr!(ctx => rhs[const 1]);
-                let res = naga_expr!(ctx => if ((lhs_low != rhs_low) | (lhs_high != rhs_high)) {t} else {f});
+                let lhs_high = naga_expr!(&mut ctx => lhs[const 0]);
+                let lhs_low = naga_expr!(&mut ctx => lhs[const 1]);
+                let rhs_high = naga_expr!(&mut ctx => rhs[const 0]);
+                let rhs_low = naga_expr!(&mut ctx => rhs[const 1]);
+                let res = naga_expr!(&mut ctx => if ((lhs_low != rhs_low) | (lhs_high != rhs_high)) {t} else {f});
                 ctx.result(res);
 
                 Ok(function_handle)
@@ -461,10 +460,10 @@ macro_rules! impl_load_and_store {
                 let loaded_value_ptr = ctx.local_expr(loaded_value_local);
 
                 // Test for unalignment
-                let is_aligned = naga_expr!(ctx => (address & U32(3)) == U32(0));
+                let is_aligned = naga_expr!(&mut ctx => (address & U32(3)) == U32(0));
                 ctx.test(is_aligned).then(|mut ctx| {
                     // Load aligned
-                    let aligned_address = naga_expr!(ctx => address >> U32(2));
+                    let aligned_address = naga_expr!(&mut ctx => address >> U32(2));
                     let load_fn = *requirements.read_memory;
                     let load_result = ctx.call_get_return(load_fn, vec![aligned_address]);
                     ctx.store(loaded_value_ptr, load_result);
@@ -472,7 +471,7 @@ macro_rules! impl_load_and_store {
                     // We can do things much faster if the address is word-aligned
                     // Otherwise we have to load twice and merge
                     // TODO: unaligned path
-                    let aligned_address = naga_expr!(ctx => address >> U32(2));
+                    let aligned_address = naga_expr!(&mut ctx => address >> U32(2));
                     let load_fn = *requirements.read_memory;
                     let load_result = ctx.call_get_return(load_fn, vec![aligned_address]);
                     ctx.store(loaded_value_ptr, load_result);
@@ -480,7 +479,7 @@ macro_rules! impl_load_and_store {
                 });
 
                 // Then unify load paths
-                let res = naga_expr!(ctx => Load(loaded_value_ptr));
+                let res = naga_expr!(&mut ctx => Load(loaded_value_ptr));
                 ctx.result(res);
 
                 Ok(function_handle)
@@ -500,16 +499,16 @@ macro_rules! impl_load_and_store {
 
                 // If we have trapped, don't store
                 let trap_state = requirements.preamble.trap_state;
-                let is_trapped = naga_expr!(ctx => Load(Global(trap_state)) != U32(0));
-                ctx.test(is_trapped).then(|mut ctx| {
+                let is_trapped = naga_expr!(&mut ctx => Load(Global(trap_state)) != U32(0));
+                ctx.test(is_trapped).then(|ctx| {
                     ctx.void_return();
                 });
 
                 // Test for unalignment
-                let is_aligned = naga_expr!(ctx => (address & U32(3)) == U32(0));
+                let is_aligned = naga_expr!(&mut ctx => (address & U32(3)) == U32(0));
                 ctx.test(is_aligned).then(|mut ctx| {
                     // Store aligned
-                    let aligned_address = naga_expr!(ctx => address >> U32(2));
+                    let aligned_address = naga_expr!(&mut ctx => address >> U32(2));
                     let store_fn = *requirements.write_memory;
                     ctx.call_void(store_fn, vec![aligned_address, value]);
                 }).otherwise(|mut ctx| {
@@ -517,7 +516,7 @@ macro_rules! impl_load_and_store {
                     // Otherwise we have to load twice, merge in value, and store back
 
                     // TODO: unaligned path
-                    let aligned_address = naga_expr!(ctx => address >> U32(2));
+                    let aligned_address = naga_expr!(&mut ctx => address >> U32(2));
                     let store_fn = *requirements.write_memory;
                     ctx.call_void(
                         store_fn,
@@ -546,7 +545,7 @@ macro_rules! impl_dud_integer_load {
                 };
                 let mut ctx = BlockContext::from((module, function_handle));
 
-                let default = naga_expr!(ctx => Constant(*requirements.default));
+                let default = naga_expr!(&mut ctx => Constant(*requirements.default));
                 ctx.result(default);
 
                 Ok(function_handle)

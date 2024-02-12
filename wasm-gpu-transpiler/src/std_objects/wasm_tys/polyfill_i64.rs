@@ -9,7 +9,7 @@ use super::{i64_instance_gen, I64Gen};
 fn gen_boolean_mono(
     module: &mut naga::Module,
     f64_ty: naga::Handle<naga::Type>,
-    wasm_bool: WasmBoolInstance,
+    wasm_bool: &WasmBoolInstance,
     name: &str,
     make: impl FnOnce(
         &mut BlockContext<'_>,
@@ -22,13 +22,13 @@ fn gen_boolean_mono(
     };
     let mut ctx = BlockContext::from((module, function_handle));
 
-    let t = naga_expr!(ctx => Constant(wasm_bool.const_true));
-    let f = naga_expr!(ctx => Constant(wasm_bool.const_false));
+    let t = naga_expr!(&mut ctx => Constant(wasm_bool.const_true));
+    let f = naga_expr!(&mut ctx => Constant(wasm_bool.const_false));
 
-    let value_high = naga_expr!(ctx => value[const 0]);
-    let value_low = naga_expr!(ctx => value[const 1]);
+    let value_high = naga_expr!(&mut ctx => value[const 0]);
+    let value_low = naga_expr!(&mut ctx => value[const 1]);
     let cond = make(&mut ctx, value_high, value_low);
-    let res = naga_expr!(ctx => if (cond) {t} else {f});
+    let res = naga_expr!(&mut ctx => if (cond) {t} else {f});
     ctx.result(res);
 
     Ok(function_handle)
@@ -37,7 +37,7 @@ fn gen_boolean_mono(
 fn gen_boolean_binary(
     module: &mut naga::Module,
     f64_ty: naga::Handle<naga::Type>,
-    wasm_bool: WasmBoolInstance,
+    wasm_bool: &WasmBoolInstance,
     name: &str,
     make: impl FnOnce(
         &mut BlockContext<'_>,
@@ -52,15 +52,15 @@ fn gen_boolean_binary(
     };
     let mut ctx = BlockContext::from((module, function_handle));
 
-    let t = naga_expr!(ctx => Constant(wasm_bool.const_true));
-    let f = naga_expr!(ctx => Constant(wasm_bool.const_false));
+    let t = naga_expr!(&mut ctx => Constant(wasm_bool.const_true));
+    let f = naga_expr!(&mut ctx => Constant(wasm_bool.const_false));
 
-    let lhs_high = naga_expr!(ctx => lhs[const 0]);
-    let lhs_low = naga_expr!(ctx => lhs[const 1]);
-    let rhs_high = naga_expr!(ctx => rhs[const 0]);
-    let rhs_low = naga_expr!(ctx => rhs[const 1]);
+    let lhs_high = naga_expr!(&mut ctx => lhs[const 0]);
+    let lhs_low = naga_expr!(&mut ctx => lhs[const 1]);
+    let rhs_high = naga_expr!(&mut ctx => rhs[const 0]);
+    let rhs_low = naga_expr!(&mut ctx => rhs[const 1]);
     let cond = make(&mut ctx, lhs_high, lhs_low, rhs_high, rhs_low);
-    let res = naga_expr!(ctx => if (cond) {t} else {f});
+    let res = naga_expr!(&mut ctx => if (cond) {t} else {f});
     ctx.result(res);
 
     Ok(function_handle)
@@ -176,14 +176,14 @@ impl I64Gen for PolyfillI64 {
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let lhs_high = naga_expr!(ctx => lhs[const 0]);
-        let lhs_low = naga_expr!(ctx => lhs[const 1]);
-        let rhs_high = naga_expr!(ctx => rhs[const 0]);
-        let rhs_low = naga_expr!(ctx => rhs[const 1]);
-        let carry_bit = naga_expr!(ctx => if (lhs_low > (Constant(requirements.preamble.word_max) - rhs_low)) {U32(1)} else {U32(0)});
-        let res_low = naga_expr!(ctx => lhs_low + rhs_low);
-        let res_high = naga_expr!(ctx => lhs_high + rhs_high + carry_bit);
-        let res = naga_expr!(ctx => i64_ty(res_high, res_low));
+        let lhs_high = naga_expr!(&mut ctx => lhs[const 0]);
+        let lhs_low = naga_expr!(&mut ctx => lhs[const 1]);
+        let rhs_high = naga_expr!(&mut ctx => rhs[const 0]);
+        let rhs_low = naga_expr!(&mut ctx => rhs[const 1]);
+        let carry_bit = naga_expr!(&mut ctx => if (lhs_low > (Constant(requirements.preamble.word_max) - rhs_low)) {U32(1)} else {U32(0)});
+        let res_low = naga_expr!(&mut ctx => lhs_low + rhs_low);
+        let res_high = naga_expr!(&mut ctx => lhs_high + rhs_high + carry_bit);
+        let res = naga_expr!(&mut ctx => i64_ty(res_high, res_low));
         ctx.result(res);
 
         Ok(function_handle)
@@ -199,19 +199,18 @@ impl I64Gen for PolyfillI64 {
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let lhs_high = naga_expr!(ctx => lhs[const 0]);
-        let lhs_low = naga_expr!(ctx => lhs[const 1]);
-        let rhs_high = naga_expr!(ctx => rhs[const 0]);
-        let rhs_low = naga_expr!(ctx => rhs[const 1]);
-        let carry_condition = naga_expr!(ctx => lhs_low < rhs_low);
-        let res_low = naga_expr!(ctx => if (carry_condition) {
+        let lhs_high = naga_expr!(&mut ctx => lhs[const 0]);
+        let lhs_low = naga_expr!(&mut ctx => lhs[const 1]);
+        let rhs_high = naga_expr!(&mut ctx => rhs[const 0]);
+        let rhs_low = naga_expr!(&mut ctx => rhs[const 1]);
+        let carry_condition = naga_expr!(&mut ctx => lhs_low < rhs_low);
+        let res_low = naga_expr!(&mut ctx => if (carry_condition) {
             (Constant(requirements.preamble.word_max) - rhs_low) + lhs_low + U32(1)
         } else {
             lhs_low - rhs_low
         });
-        let res_high =
-            naga_expr!(ctx => lhs_high - rhs_high - if (carry_condition) {U32(1)} else {U32(0)});
-        let res = naga_expr!(ctx => i64_ty(res_high, res_low));
+        let res_high = naga_expr!(&mut ctx => lhs_high - rhs_high - if (carry_condition) {U32(1)} else {U32(0)});
+        let res = naga_expr!(&mut ctx => i64_ty(res_high, res_low));
         ctx.result(res);
 
         Ok(function_handle)
@@ -243,7 +242,7 @@ impl I64Gen for PolyfillI64 {
         gen_boolean_mono(
             module,
             *requirements.ty,
-            requirements.preamble.wasm_bool,
+            &requirements.preamble.wasm_bool,
             "eqz",
             |ctx, high, low| {
                 naga_expr!(ctx =>
@@ -260,7 +259,7 @@ impl I64Gen for PolyfillI64 {
         gen_boolean_binary(
             module,
             *requirements.ty,
-            requirements.preamble.wasm_bool,
+            &requirements.preamble.wasm_bool,
             "lt_s",
             |ctx, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(ctx =>
@@ -277,7 +276,7 @@ impl I64Gen for PolyfillI64 {
         gen_boolean_binary(
             module,
             *requirements.ty,
-            requirements.preamble.wasm_bool,
+            &requirements.preamble.wasm_bool,
             "le_s",
             |ctx, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(ctx =>
@@ -294,7 +293,7 @@ impl I64Gen for PolyfillI64 {
         gen_boolean_binary(
             module,
             *requirements.ty,
-            requirements.preamble.wasm_bool,
+            &requirements.preamble.wasm_bool,
             "gt_s",
             |ctx, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(ctx =>
@@ -311,7 +310,7 @@ impl I64Gen for PolyfillI64 {
         gen_boolean_binary(
             module,
             *requirements.ty,
-            requirements.preamble.wasm_bool,
+            &requirements.preamble.wasm_bool,
             "ge_s",
             |ctx, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(ctx =>
@@ -328,7 +327,7 @@ impl I64Gen for PolyfillI64 {
         gen_boolean_binary(
             module,
             *requirements.ty,
-            requirements.preamble.wasm_bool,
+            &requirements.preamble.wasm_bool,
             "lt_u",
             |ctx, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(ctx =>
@@ -345,7 +344,7 @@ impl I64Gen for PolyfillI64 {
         gen_boolean_binary(
             module,
             *requirements.ty,
-            requirements.preamble.wasm_bool,
+            &requirements.preamble.wasm_bool,
             "le_u",
             |ctx, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(ctx =>
@@ -362,7 +361,7 @@ impl I64Gen for PolyfillI64 {
         gen_boolean_binary(
             module,
             *requirements.ty,
-            requirements.preamble.wasm_bool,
+            &requirements.preamble.wasm_bool,
             "gt_u",
             |ctx, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(ctx =>
@@ -379,7 +378,7 @@ impl I64Gen for PolyfillI64 {
         gen_boolean_binary(
             module,
             *requirements.ty,
-            requirements.preamble.wasm_bool,
+            &requirements.preamble.wasm_bool,
             "ge_u",
             |ctx, lhs_high, lhs_low, rhs_high, rhs_low| {
                 naga_expr!(ctx =>
@@ -434,10 +433,10 @@ impl I64Gen for PolyfillI64 {
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let low = naga_expr!(ctx => value[const 1] as Sint);
-        let high = naga_expr!(ctx => (low << U32(31)) >> U32(31));
-        let low = naga_expr!(ctx => (low << U32(24)) >> U32(24));
-        let res = naga_expr!(ctx => (*requirements.ty)(high as Uint, low as Uint));
+        let low = naga_expr!(&mut ctx => value[const 1] as Sint);
+        let high = naga_expr!(&mut ctx => (low << U32(31)) >> U32(31));
+        let low = naga_expr!(&mut ctx => (low << U32(24)) >> U32(24));
+        let res = naga_expr!(&mut ctx => (*requirements.ty)(high as Uint, low as Uint));
         ctx.result(res);
 
         Ok(function_handle)
@@ -452,10 +451,10 @@ impl I64Gen for PolyfillI64 {
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let low = naga_expr!(ctx => value[const 1] as Sint);
-        let high = naga_expr!(ctx => (low << U32(31)) >> U32(31));
-        let low = naga_expr!(ctx => (low << U32(16)) >> U32(16));
-        let res = naga_expr!(ctx => (*requirements.ty)(high as Uint, low as Uint));
+        let low = naga_expr!(&mut ctx => value[const 1] as Sint);
+        let high = naga_expr!(&mut ctx => (low << U32(31)) >> U32(31));
+        let low = naga_expr!(&mut ctx => (low << U32(16)) >> U32(16));
+        let res = naga_expr!(&mut ctx => (*requirements.ty)(high as Uint, low as Uint));
         ctx.result(res);
 
         Ok(function_handle)
@@ -470,9 +469,9 @@ impl I64Gen for PolyfillI64 {
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let low = naga_expr!(ctx => value[const 1]);
-        let high = naga_expr!(ctx => ((low as Sint) << U32(31)) >> U32(31));
-        let res = naga_expr!(ctx => (*requirements.ty)(high as Uint, low));
+        let low = naga_expr!(&mut ctx => value[const 1]);
+        let high = naga_expr!(&mut ctx => ((low as Sint) << U32(31)) >> U32(31));
+        let res = naga_expr!(&mut ctx => (*requirements.ty)(high as Uint, low));
         ctx.result(res);
 
         Ok(function_handle)
@@ -493,11 +492,11 @@ fn gen_read(
     };
     let mut ctx = BlockContext::from((module, function_handle));
 
-    let input_ref = naga_expr!(ctx => Global(buffer));
+    let input_ref = naga_expr!(&mut ctx => Global(buffer));
 
-    let read_word1 = naga_expr!(ctx => input_ref[word_address]);
-    let read_word2 = naga_expr!(ctx => input_ref[word_address + U32(1)]);
-    let read_value = naga_expr!(ctx => i64_ty((Load(read_word1)), (Load(read_word2))));
+    let read_word1 = naga_expr!(&mut ctx => input_ref[word_address]);
+    let read_word2 = naga_expr!(&mut ctx => input_ref[word_address + U32(1)]);
+    let read_value = naga_expr!(&mut ctx => i64_ty((Load(read_word1)), (Load(read_word2))));
     ctx.result(read_value);
 
     Ok(function_handle)
@@ -517,12 +516,12 @@ fn gen_write(
     };
     let mut ctx = BlockContext::from((module, function_handle));
 
-    let output_ref = naga_expr!(ctx => Global(buffer));
+    let output_ref = naga_expr!(&mut ctx => Global(buffer));
 
-    let write_word_loc1 = naga_expr!(ctx => output_ref[word_address]);
-    let word1 = naga_expr!(ctx => value[const 0] as Uint);
-    let write_word_loc2 = naga_expr!(ctx => output_ref[word_address + (U32(1))]);
-    let word2 = naga_expr!(ctx => value[const 1] as Uint);
+    let write_word_loc1 = naga_expr!(&mut ctx => output_ref[word_address]);
+    let word1 = naga_expr!(&mut ctx => value[const 0] as Uint);
+    let write_word_loc2 = naga_expr!(&mut ctx => output_ref[word_address + (U32(1))]);
+    let word2 = naga_expr!(&mut ctx => value[const 1] as Uint);
 
     ctx.store(write_word_loc1, word1);
     ctx.store(write_word_loc2, word2);

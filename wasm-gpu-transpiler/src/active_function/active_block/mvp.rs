@@ -4,7 +4,7 @@ use wasm_opcodes::proposals::MVPOperator;
 use wasmtime_environ::Trap;
 
 pub(super) fn eat_mvp_operator(
-    state: &mut ActiveBlock<'_, '_>,
+    state: &mut ActiveBlock<'_>,
     operator: &MVPOperator,
 ) -> build::Result<()> {
     match operator {
@@ -33,19 +33,13 @@ pub(super) fn eat_mvp_operator(
         MVPOperator::LocalSet { local_index } => {
             let local_ptr = state.local_ptr(*local_index);
             let value = state.pop();
-            state.append(naga::Statement::Store {
-                pointer: local_ptr,
-                value,
-            });
+            state.ctx.store(local_ptr, value);
             Ok(())
         }
         MVPOperator::LocalTee { local_index } => {
             let local_ptr = state.local_ptr(*local_index);
             let value = state.peek();
-            state.append(naga::Statement::Store {
-                pointer: local_ptr,
-                value,
-            });
+            state.ctx.store(local_ptr, value);
             Ok(())
         }
         MVPOperator::Select => unimplemented!(),

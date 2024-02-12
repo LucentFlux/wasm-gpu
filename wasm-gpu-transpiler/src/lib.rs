@@ -82,6 +82,7 @@ mod active_module;
 mod assembled_module;
 mod brain_function;
 mod function_lookup;
+mod linked_stack;
 mod std_objects;
 mod traps;
 mod typed;

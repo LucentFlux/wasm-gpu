@@ -16,19 +16,22 @@ use crate::Tuneables;
 pub(crate) struct ActiveModule<'a> {
     pub module: &'a mut naga::Module,
     pub std_objects: StdObjects,
-    pub uses_disjoint_memory: bool,
+    pub tuneables: &'a Tuneables,
 }
 
 impl<'a> ActiveModule<'a> {
     /// Collate all of the data required to build a module.
-    pub(crate) fn new(module: &'a mut naga::Module, tuneables: &Tuneables) -> build::Result<Self> {
+    pub(crate) fn new(
+        module: &'a mut naga::Module,
+        tuneables: &'a Tuneables,
+    ) -> build::Result<Self> {
         // Generate bindings used for all standard wasm things like types and globals
         let std_objects = StdObjects::from_tuneables(module, tuneables)?;
 
         Ok(Self {
             module,
             std_objects,
-            uses_disjoint_memory: tuneables.disjoint_memory,
+            tuneables,
         })
     }
 

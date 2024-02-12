@@ -102,9 +102,9 @@ impl I32Gen for NativeI32 {
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let t = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_true));
-        let f = naga_expr!(ctx => Constant(requirements.preamble.wasm_bool.const_false));
-        let res = naga_expr!(ctx => if (value == I32(0)) {t} else {f});
+        let t = naga_expr!(&mut ctx => Constant(requirements.preamble.wasm_bool.const_true));
+        let f = naga_expr!(&mut ctx => Constant(requirements.preamble.wasm_bool.const_false));
+        let res = naga_expr!(&mut ctx => if (value == I32(0)) {t} else {f});
         ctx.result(res);
 
         Ok(function_handle)
@@ -142,9 +142,10 @@ impl I32Gen for NativeI32 {
             arg2: None,
             arg3: None,
         });
-        let res = naga_expr!(ctx => I32(31) - res);
+        let res = naga_expr!(&mut ctx => I32(31) - res);
         // Check if last bit set
-        let res = naga_expr!(ctx => if ((value & I32(-2147483648)) != I32(0)) {I32(0)} else {res});
+        let res =
+            naga_expr!(&mut ctx => if ((value & I32(-2147483648)) != I32(0)) {I32(0)} else {res});
         ctx.result(res);
 
         Ok(function_handle)
@@ -166,7 +167,7 @@ impl I32Gen for NativeI32 {
             arg2: None,
             arg3: None,
         });
-        let res = naga_expr!(ctx => if (value == I32(0)) {I32(32)} else {res});
+        let res = naga_expr!(&mut ctx => if (value == I32(0)) {I32(32)} else {res});
         ctx.result(res);
 
         Ok(function_handle)
@@ -184,7 +185,7 @@ impl I32Gen for NativeI32 {
         let mut ctx = BlockContext::from((module, function_handle));
 
         // Div by 0 test
-        let is_0 = naga_expr!(ctx => rhs == I32(0));
+        let is_0 = naga_expr!(&mut ctx => rhs == I32(0));
         ctx.test(is_0).then(|mut ctx| {
             requirements.preamble.trap_values.emit_set_trap(
                 &mut ctx,
@@ -194,8 +195,8 @@ impl I32Gen for NativeI32 {
         });
 
         // Overflow test
-        let is_overflowing = naga_expr!(ctx => (lhs == I32(-2147483648)) & (rhs == I32(-1)));
-        ctx.test(is_0).then(|mut ctx| {
+        let is_overflowing = naga_expr!(&mut ctx => (lhs == I32(-2147483648)) & (rhs == I32(-1)));
+        ctx.test(is_overflowing).then(|mut ctx| {
             requirements.preamble.trap_values.emit_set_trap(
                 &mut ctx,
                 Trap::IntegerOverflow,
@@ -203,7 +204,7 @@ impl I32Gen for NativeI32 {
             );
         });
 
-        let res = naga_expr!(ctx => lhs/rhs);
+        let res = naga_expr!(&mut ctx => lhs/rhs);
         ctx.result(res);
 
         Ok(function_handle)
@@ -219,7 +220,7 @@ impl I32Gen for NativeI32 {
         let mut ctx = BlockContext::from((module, function_handle));
 
         // Div by 0 test
-        let is_0 = naga_expr!(ctx => rhs == I32(0));
+        let is_0 = naga_expr!(&mut ctx => rhs == I32(0));
         ctx.test(is_0).then(|mut ctx| {
             requirements.preamble.trap_values.emit_set_trap(
                 &mut ctx,
@@ -228,7 +229,7 @@ impl I32Gen for NativeI32 {
             );
         });
 
-        let res = naga_expr!(ctx => ((lhs as Uint)/(rhs as Uint))as Sint);
+        let res = naga_expr!(&mut ctx => ((lhs as Uint)/(rhs as Uint))as Sint);
         ctx.result(res);
 
         Ok(function_handle)
@@ -244,7 +245,7 @@ impl I32Gen for NativeI32 {
         let mut ctx = BlockContext::from((module, function_handle));
 
         // Div by 0 test
-        let is_0 = naga_expr!(ctx => rhs == I32(0));
+        let is_0 = naga_expr!(&mut ctx => rhs == I32(0));
         ctx.test(is_0).then(|mut ctx| {
             requirements.preamble.trap_values.emit_set_trap(
                 &mut ctx,
@@ -253,7 +254,7 @@ impl I32Gen for NativeI32 {
             );
         });
 
-        let res = naga_expr!(ctx => lhs%rhs);
+        let res = naga_expr!(&mut ctx => lhs%rhs);
         ctx.result(res);
 
         Ok(function_handle)
@@ -269,7 +270,7 @@ impl I32Gen for NativeI32 {
         let mut ctx = BlockContext::from((module, function_handle));
 
         // Div by 0 test
-        let is_0 = naga_expr!(ctx => rhs == I32(0));
+        let is_0 = naga_expr!(&mut ctx => rhs == I32(0));
         ctx.test(is_0).then(|mut ctx| {
             requirements.preamble.trap_values.emit_set_trap(
                 &mut ctx,
@@ -278,7 +279,7 @@ impl I32Gen for NativeI32 {
             );
         });
 
-        let res = naga_expr!(ctx => ((lhs as Uint)%(rhs as Uint))as Sint);
+        let res = naga_expr!(&mut ctx => ((lhs as Uint)%(rhs as Uint))as Sint);
         ctx.result(res);
 
         Ok(function_handle)
@@ -293,12 +294,12 @@ impl I32Gen for NativeI32 {
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let lhs = naga_expr!(ctx => lhs as Uint);
-        let rhs = naga_expr!(ctx => rhs % U32(32)); // Between -31 and 31
-        let rhs = naga_expr!(ctx => rhs + U32(32));
-        let rhs = naga_expr!(ctx => rhs % U32(32)); // Between 0 and 31
-        let res = naga_expr!(ctx => (lhs << rhs) | (lhs >> (U32(32) - rhs)));
-        let res = naga_expr!(ctx => res as Sint);
+        let lhs = naga_expr!(&mut ctx => lhs as Uint);
+        let rhs = naga_expr!(&mut ctx => rhs % U32(32)); // Between -31 and 31
+        let rhs = naga_expr!(&mut ctx => rhs + U32(32));
+        let rhs = naga_expr!(&mut ctx => rhs % U32(32)); // Between 0 and 31
+        let res = naga_expr!(&mut ctx => (lhs << rhs) | (lhs >> (U32(32) - rhs)));
+        let res = naga_expr!(&mut ctx => res as Sint);
         ctx.result(res);
 
         Ok(function_handle)
@@ -313,12 +314,12 @@ impl I32Gen for NativeI32 {
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let lhs = naga_expr!(ctx => lhs as Uint);
-        let rhs = naga_expr!(ctx => rhs % U32(32)); // Between -31 and 31
-        let rhs = naga_expr!(ctx => rhs + U32(32));
-        let rhs = naga_expr!(ctx => rhs % U32(32)); // Between 0 and 31
-        let res = naga_expr!(ctx => (lhs >> rhs) | (lhs << (U32(32) - rhs)));
-        let res = naga_expr!(ctx => res as Sint);
+        let lhs = naga_expr!(&mut ctx => lhs as Uint);
+        let rhs = naga_expr!(&mut ctx => rhs % U32(32)); // Between -31 and 31
+        let rhs = naga_expr!(&mut ctx => rhs + U32(32));
+        let rhs = naga_expr!(&mut ctx => rhs % U32(32)); // Between 0 and 31
+        let res = naga_expr!(&mut ctx => (lhs >> rhs) | (lhs << (U32(32) - rhs)));
+        let res = naga_expr!(&mut ctx => res as Sint);
         ctx.result(res);
 
         Ok(function_handle)
@@ -341,7 +342,7 @@ impl I32Gen for NativeI32 {
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let res = naga_expr!(ctx => (value << U32(24)) >> U32(24));
+        let res = naga_expr!(&mut ctx => (value << U32(24)) >> U32(24));
         ctx.result(res);
 
         Ok(function_handle)
@@ -356,7 +357,7 @@ impl I32Gen for NativeI32 {
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let res = naga_expr!(ctx => (value << U32(16)) >> U32(16));
+        let res = naga_expr!(&mut ctx => (value << U32(16)) >> U32(16));
         ctx.result(res);
 
         Ok(function_handle)
@@ -377,8 +378,8 @@ fn gen_read(
     };
     let mut ctx = BlockContext::from((module, function_handle));
 
-    let read_word = naga_expr!(ctx => Global(buffer)[word_address]);
-    let read_value = naga_expr!(ctx => Load(read_word) as Sint);
+    let read_word = naga_expr!(&mut ctx => Global(buffer)[word_address]);
+    let read_value = naga_expr!(&mut ctx => Load(read_word) as Sint);
     ctx.result(read_value);
 
     Ok(function_handle)
@@ -398,8 +399,8 @@ fn gen_write(
     };
     let mut ctx = BlockContext::from((module, function_handle));
 
-    let write_word_loc = naga_expr!(ctx => Global(buffer)[word_address]);
-    let word = naga_expr!(ctx => value as Uint);
+    let write_word_loc = naga_expr!(&mut ctx => Global(buffer)[word_address]);
+    let word = naga_expr!(&mut ctx => value as Uint);
     ctx.store(write_word_loc, word);
 
     Ok(function_handle)

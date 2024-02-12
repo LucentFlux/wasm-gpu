@@ -5,7 +5,7 @@ use crate::build;
 use super::{unary, ActiveBlock};
 
 pub(super) fn eat_sign_extension_operator(
-    state: &mut ActiveBlock<'_, '_>,
+    state: &mut ActiveBlock<'_>,
     operator: &SignExtensionOperator,
 ) -> build::Result<()> {
     match operator {

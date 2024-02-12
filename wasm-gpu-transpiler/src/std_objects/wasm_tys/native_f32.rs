@@ -100,19 +100,19 @@ fn subnormal_add(
     );
     ctx.test(is_subnormal).then(|mut ctx| {
         // Short-circuit if we're adding 0 to 0 (ignoring sign bit)
-        let is_adding_zeros = naga_expr!{ctx => 
+        let is_adding_zeros = naga_expr!{&mut ctx => 
             (bitcast<u32>(lhs) | bitcast<u32>(rhs) | U32(0x80000000)) == U32(0x80000000)
         };
 
         ctx.test(is_adding_zeros).then(|mut ctx| {
-            let new_res = naga_expr!{ctx => 
+            let new_res = naga_expr!{&mut ctx => 
                 bitcast<f32>(bitcast<u32>(lhs) & bitcast<u32>(rhs))
             };
 
             ctx.store(res_ptr, new_res);
         }).otherwise(|mut ctx| {
             // Short-circuit if we're adding n to -n
-            let is_adding_n_to_minus_n = naga_expr!{ctx => 
+            let is_adding_n_to_minus_n = naga_expr!{&mut ctx => 
                 (bitcast<u32>(lhs) ^ bitcast<u32>(rhs)) == U32(0x80000000)
             };
 
@@ -124,7 +124,7 @@ fn subnormal_add(
                 let lhs_scaled = scale_up_float(&mut ctx, lhs, 64);
                 let rhs_scaled = scale_up_float(&mut ctx, rhs, 64);
 
-                let scaled_new_res = naga_expr!{ctx => 
+                let scaled_new_res = naga_expr!{&mut ctx => 
                     lhs_scaled + rhs_scaled
                 };
 
@@ -158,29 +158,29 @@ fn subnormal_sub(
     };
     ctx.test(is_subnormal).then(|mut ctx| {
         // Short-circuit if we're subbing 0 from 0 (ignoring sign bit)
-        let is_subbing_zeros = naga_expr!{ctx => 
+        let is_subbing_zeros = naga_expr!{&mut ctx => 
             (bitcast<u32>(lhs) | bitcast<u32>(rhs) | U32(0x80000000)) == U32(0x80000000)
         };
-        ctx.test(is_subnormal).then(|mut ctx| {
-            let new_res = naga_expr!{ctx => 
+        ctx.test(is_subbing_zeros).then(|mut ctx| {
+            let new_res = naga_expr!{&mut ctx => 
                 bitcast<f32>(bitcast<u32>(lhs) & (bitcast<u32>(rhs) ^ U32(0x80000000)))
             };
             ctx.store(res_ptr, new_res);
         }).otherwise(|mut ctx| {
             // Short-circuit if we're subbing n from n
-            let is_subbing_n_from_n = naga_expr!{ctx => 
+            let is_subbing_n_from_n = naga_expr!{&mut ctx => 
                 bitcast<u32>(lhs) == bitcast<u32>(rhs)
             };
 
-            ctx.test(is_subnormal).then(|mut ctx| {
-                let zero = naga_expr!(ctx => F32(0.0));
+            ctx.test(is_subbing_n_from_n).then(|mut ctx| {
+                let zero = naga_expr!(&mut ctx => F32(0.0));
                 ctx.store(res_ptr, zero);
             }).otherwise(|mut ctx| {
                 // Scale both floats up
                 let lhs_scaled = scale_up_float(&mut ctx, lhs, 64);
                 let rhs_scaled = scale_up_float(&mut ctx, rhs, 64);
 
-                let scaled_new_res = naga_expr!{ctx => 
+                let scaled_new_res = naga_expr!{&mut ctx => 
                     lhs_scaled - rhs_scaled
                 };
 
@@ -228,7 +228,7 @@ fn subnormal_mult(
         is_nan_or_inf | is_zero
     };
     ctx.test(is_short_circuit).then(|mut ctx| {
-        let res = naga_expr!{ctx => 
+        let res = naga_expr!{&mut ctx => 
             if (is_nan_or_inf) {
                 if (is_zero) {
                     lhs * rhs
@@ -242,21 +242,21 @@ fn subnormal_mult(
         };
         ctx.store(res_ptr, res);
     }).otherwise(|mut ctx| {
-        let can_just_mult = naga_expr!(ctx =>
+        let can_just_mult = naga_expr!(&mut ctx =>
             (lhs_exp != U32(0)) & (rhs_exp != U32(0)) & ((lhs_exp + rhs_exp) > U32(127))
         );
         ctx.test(can_just_mult).then(|mut ctx| {
-            let res = naga_expr!(ctx => lhs * rhs);
+            let res = naga_expr!(&mut ctx => lhs * rhs);
             ctx.store(res_ptr, res);
         }).otherwise(|mut ctx| {
-            let is_lhs_smaller = naga_expr!(ctx =>
+            let is_lhs_smaller = naga_expr!(&mut ctx =>
                 lhs_exp <= rhs_exp
             );
             ctx.test(is_lhs_smaller).then(|mut ctx| {
                 // Scale lhs up since it won't go to inf
                 let lhs_scaled = scale_up_float(&mut ctx, lhs, 32);
 
-                let scaled_new_res = naga_expr!(ctx => lhs_scaled * rhs);
+                let scaled_new_res = naga_expr!(&mut ctx => lhs_scaled * rhs);
 
                 // Scale back down, possibly into subnormal range
                 let new_res = scale_down_float(&mut ctx, scaled_new_res, 32);
@@ -265,7 +265,7 @@ fn subnormal_mult(
             }).otherwise(|mut ctx| {
                 // Scale rhs up since it won't go to inf
                 let rhs_scaled = scale_up_float(&mut ctx, rhs, 32);
-                let scaled_new_res = naga_expr!(ctx => lhs * rhs_scaled);
+                let scaled_new_res = naga_expr!(&mut ctx => lhs * rhs_scaled);
 
                 // Scale back down, possibly into subnormal range
                 let new_res = scale_down_float(&mut ctx, scaled_new_res, 32);
@@ -309,7 +309,7 @@ fn subnormal_div(
         (res_exp_no_offset > I32(-102)) & !is_either_operand_subnormal_or_zero
     };
     ctx.test(can_divide_normally).then(|mut ctx| {
-        let res = naga_expr!(ctx => lhs / rhs);
+        let res = naga_expr!(&mut ctx => lhs / rhs);
         ctx.store(res_ptr, res);
     }).otherwise(|mut ctx| {
         // Either the lhs or rhs are subnormal, or the result exponent is small.
@@ -319,17 +319,17 @@ fn subnormal_div(
         ctx.test(is_rhs_subnormal_or_zero).then(|mut ctx| {
             // If the rhs is subnormal, when we scale up then we don't need to scale down the result
             let rhs_scaled = scale_up_float(&mut ctx, rhs, 32);
-            let res = naga_expr!(ctx => lhs_scaled / rhs_scaled);
+            let res = naga_expr!(&mut ctx => lhs_scaled / rhs_scaled);
             ctx.store(res_ptr, res);
         }).otherwise(|mut ctx| {
-            let is_rhs_tiny = naga_expr!(ctx => rhs_exp <= U32(64));
+            let is_rhs_tiny = naga_expr!(&mut ctx => rhs_exp <= U32(64));
             ctx.test(is_rhs_tiny).then(|mut ctx| {
-                let res_scaled = naga_expr!(ctx => lhs_scaled / rhs);
+                let res_scaled = naga_expr!(&mut ctx => lhs_scaled / rhs);
                 let res = scale_down_float(&mut ctx, res_scaled, 32);
                 ctx.store(res_ptr, res);
             }).otherwise(|mut ctx| {
                 let rhs_scaled = scale_down_float(&mut ctx, rhs, 32);
-                let res_scaled = naga_expr!(ctx => lhs_scaled / rhs_scaled);
+                let res_scaled = naga_expr!(&mut ctx => lhs_scaled / rhs_scaled);
                 let res = scale_down_float(&mut ctx, res_scaled, 64);
                 ctx.store(res_ptr, res);
             });
@@ -357,7 +357,7 @@ fn subnormal_sqrt(
     ctx.test(is_subnormal).then(|mut ctx| {
         let value_scaled = scale_up_float(&mut ctx, value, 64);
 
-        let res_scaled = naga_expr!(ctx => sqrt(value_scaled));
+        let res_scaled = naga_expr!(&mut ctx => sqrt(value_scaled));
 
         let res = scale_down_float(&mut ctx, res_scaled, 32);
 
@@ -385,7 +385,7 @@ fn subnormal_min(
     };
     ctx.test(is_subnormal).then(|mut ctx| {
         // Implement min manually
-        let new_res = naga_expr!{ctx =>
+        let new_res = naga_expr!{&mut ctx =>
             // If we flip the bits in a negative float, and the sign bits, the min is just the min of the integers of the representations
             // (ignoring NaNs, as they are fixed in the min body impl since WebGPU also ignores NaNs)
 
@@ -441,7 +441,7 @@ fn subnormal_max(
     };
     ctx.test(is_subnormal).then(|mut ctx| {
         // Implement min manually
-        let new_res = naga_expr!{ctx =>
+        let new_res = naga_expr!{&mut ctx =>
             // If we flip the sign bit, the min is just the min of the integers of the representations
             // (ignoring NaNs, as they are fixed in the min body impl since WebGPU also ignores NaNs)
 
@@ -576,7 +576,7 @@ impl F32Gen for NativeF32 {
         let mut ctx = BlockContext::from((module, function_handle));
 
         // Just unset sign bit
-        let res = naga_expr!(ctx => bitcast<f32>(bitcast<u32>(value) & U32(0x7FFFFFFF)));
+        let res = naga_expr!(&mut ctx => bitcast<f32>(bitcast<u32>(value) & U32(0x7FFFFFFF)));
         ctx.result(res);
 
         Ok(function_handle)
@@ -592,7 +592,7 @@ impl F32Gen for NativeF32 {
         let mut ctx = BlockContext::from((module, function_handle));
 
         // Just flip sign bit
-        let res = naga_expr!(ctx => bitcast<f32>(bitcast<u32>(value) ^ U32(0x80000000)));
+        let res = naga_expr!(&mut ctx => bitcast<f32>(bitcast<u32>(value) ^ U32(0x80000000)));
         ctx.result(res);
 
         Ok(function_handle)
@@ -608,7 +608,7 @@ impl F32Gen for NativeF32 {
         let mut ctx = BlockContext::from((module, function_handle));
 
         let res = if requirements.fp_options.emulate_subnormals {
-            naga_expr!(ctx =>
+            naga_expr!(&mut ctx =>
                 let value_u32 = bitcast<u32>(value);
                 let exp = (value_u32 >> U32(23)) & U32(0xFF);
                 if (exp == U32(0)) {
@@ -624,7 +624,7 @@ impl F32Gen for NativeF32 {
                 }
             )
         } else {
-            naga_expr!(ctx => ceil(value))
+            naga_expr!(&mut ctx => ceil(value))
         };
         ctx.result(res);
 
@@ -641,7 +641,7 @@ impl F32Gen for NativeF32 {
         let mut ctx = BlockContext::from((module, function_handle));
 
         let res = if requirements.fp_options.emulate_subnormals {
-            naga_expr!(ctx =>
+            naga_expr!(&mut ctx =>
                 let value_u32 = bitcast<u32>(value);
                 let exp = (value_u32 >> U32(23)) & U32(0xFF);
                 if (exp == U32(0)) {
@@ -657,7 +657,7 @@ impl F32Gen for NativeF32 {
                 }
             )
         } else {
-            naga_expr!(ctx => floor(value))
+            naga_expr!(&mut ctx => floor(value))
         };
         ctx.result(res);
 
@@ -674,7 +674,7 @@ impl F32Gen for NativeF32 {
         let mut ctx = BlockContext::from((module, function_handle));
 
         // No subnormal correction required because `trunc(±ε) == ±0.0`
-        let res = naga_expr!(ctx => trunc(value));
+        let res = naga_expr!(&mut ctx => trunc(value));
         ctx.result(res);
 
         Ok(function_handle)
@@ -690,7 +690,7 @@ impl F32Gen for NativeF32 {
         let mut ctx = BlockContext::from((module, function_handle));
 
         // No subnormal correction required because `nearest(±ε) == ±0.0`
-        let res = naga_expr!(ctx => round(value));
+        let res = naga_expr!(&mut ctx => round(value));
         ctx.result(res);
 
         Ok(function_handle)
@@ -707,7 +707,7 @@ impl F32Gen for NativeF32 {
 
         let res = if requirements.fp_options.emulate_subnormals {
             let subnormal_sqrt = subnormal_sqrt(&mut ctx, *requirements.ty, value);
-            naga_expr!(ctx =>
+            naga_expr!(&mut ctx =>
                 let value_u32 = bitcast<u32>(value);
                 let sign = value_u32 & U32(0x80000000);
                 if (sign != U32(0)) {
@@ -721,7 +721,7 @@ impl F32Gen for NativeF32 {
                 }
             )
         } else {
-            naga_expr!(ctx => sqrt(value))
+            naga_expr!(&mut ctx => sqrt(value))
         };
         ctx.result(res);
 
@@ -740,12 +740,14 @@ impl F32Gen for NativeF32 {
         let min = if requirements.fp_options.emulate_subnormals {
             subnormal_min(&mut ctx, *requirements.ty, lhs, rhs)
         } else {
-            naga_expr!(ctx => min(lhs, rhs))
+            naga_expr!(&mut ctx => min(lhs, rhs))
         };
 
         // Inbuilt `min` doesn't respect NaNs
-        let is_nan = naga_expr!(ctx => (((bitcast<u32>(lhs) & U32(0x7FFFFFFF)) > U32(0x7f800000)) | ((bitcast<u32>(rhs) & U32(0x7FFFFFFF)) > U32(0x7f800000))));
-        let res = naga_expr!(ctx => if (is_nan) {bitcast<f32>(U32(0x7fc00000))} else { min });
+        let is_nan = naga_expr!(&mut ctx => 
+            (((bitcast<u32>(lhs) & U32(0x7FFFFFFF)) > U32(0x7f800000)) | ((bitcast<u32>(rhs) & U32(0x7FFFFFFF)) > U32(0x7f800000)))
+        );
+        let res = naga_expr!(&mut ctx => if (is_nan) {bitcast<f32>(U32(0x7fc00000))} else { min });
         ctx.result(res);
 
         Ok(function_handle)
@@ -763,12 +765,12 @@ impl F32Gen for NativeF32 {
         let max = if requirements.fp_options.emulate_subnormals {
             subnormal_max(&mut ctx, *requirements.ty, lhs, rhs)
         } else {
-            naga_expr!(ctx => max(lhs, rhs))
+            naga_expr!(&mut ctx => max(lhs, rhs))
         };
 
         // Inbuilt `max` doesn't respect NaNs
-        let is_nan = naga_expr!(ctx => (((bitcast<u32>(lhs) & U32(0x7FFFFFFF)) > U32(0x7f800000)) | ((bitcast<u32>(rhs) & U32(0x7FFFFFFF)) > U32(0x7f800000))));
-        let res = naga_expr!(ctx => if (is_nan) {bitcast<f32>(U32(0x7fC00000))} else { max });
+        let is_nan = naga_expr!(&mut ctx => (((bitcast<u32>(lhs) & U32(0x7FFFFFFF)) > U32(0x7f800000)) | ((bitcast<u32>(rhs) & U32(0x7FFFFFFF)) > U32(0x7f800000))));
+        let res = naga_expr!(&mut ctx => if (is_nan) {bitcast<f32>(U32(0x7fC00000))} else { max });
         ctx.result(res);
 
         Ok(function_handle)
@@ -783,7 +785,7 @@ impl F32Gen for NativeF32 {
         };
         let mut ctx = BlockContext::from((module, function_handle));
 
-        let res = naga_expr!(ctx => sign(lhs) * sign(rhs) * lhs);
+        let res = naga_expr!(&mut ctx => sign(lhs) * sign(rhs) * lhs);
         ctx.result(res);
 
         Ok(function_handle)
@@ -801,7 +803,7 @@ impl F32Gen for NativeF32 {
         let res = if requirements.fp_options.emulate_subnormals {
             subnormal_add(&mut ctx, *requirements.ty, lhs, rhs)
         } else {
-            naga_expr!(ctx => lhs + rhs)
+            naga_expr!(&mut ctx => lhs + rhs)
         };
         ctx.result(res);
 
@@ -819,7 +821,7 @@ impl F32Gen for NativeF32 {
         let res = if requirements.fp_options.emulate_subnormals {
             subnormal_sub(&mut ctx, *requirements.ty, lhs, rhs)
         } else {
-            naga_expr!(ctx => lhs - rhs)
+            naga_expr!(&mut ctx => lhs - rhs)
         };
         ctx.result(res);
 
@@ -837,7 +839,7 @@ impl F32Gen for NativeF32 {
         let res = if requirements.fp_options.emulate_subnormals {
             subnormal_mult(&mut ctx, *requirements.ty, lhs, rhs)
         } else {
-            naga_expr!(ctx => lhs * rhs)
+            naga_expr!(&mut ctx => lhs * rhs)
         };
         ctx.result(res);
 
@@ -857,29 +859,29 @@ impl F32Gen for NativeF32 {
         let mut ctx = BlockContext::from((module, function_handle));
 
         if requirements.fp_options.emulate_div_beyond_max {
-            let lhs_exp = naga_expr!(ctx => (bitcast<u32>(lhs) >> U32(23)) & U32(0xFF));
-            let rhs_exp = naga_expr!(ctx => (bitcast<u32>(rhs) >> U32(23)) & U32(0xFF));
-            let is_lhs_beyond_max = naga_expr!(ctx => (lhs_exp >= U32(253)) & (lhs_exp != U32(255)));
-            let is_rhs_beyond_max = naga_expr!(ctx => (rhs_exp >= U32(253)) & (rhs_exp != U32(255)));
-            let is_both_beyond_max = naga_expr!(ctx => is_lhs_beyond_max & is_rhs_beyond_max);
+            let lhs_exp = naga_expr!(&mut ctx => (bitcast<u32>(lhs) >> U32(23)) & U32(0xFF));
+            let rhs_exp = naga_expr!(&mut ctx => (bitcast<u32>(rhs) >> U32(23)) & U32(0xFF));
+            let is_lhs_beyond_max = naga_expr!(&mut ctx => (lhs_exp >= U32(253)) & (lhs_exp != U32(255)));
+            let is_rhs_beyond_max = naga_expr!(&mut ctx => (rhs_exp >= U32(253)) & (rhs_exp != U32(255)));
+            let is_both_beyond_max = naga_expr!(&mut ctx => is_lhs_beyond_max & is_rhs_beyond_max);
 
             ctx.test(is_both_beyond_max).then(|mut ctx| {
                 let lhs_scaled = scale_down_float(&mut ctx, lhs, 32);
                 let rhs_scaled = scale_down_float(&mut ctx, rhs, 32);
-                let res = naga_expr!(ctx => lhs_scaled / rhs_scaled);
+                let res = naga_expr!(&mut ctx => lhs_scaled / rhs_scaled);
                 ctx.result(res);
             });
 
             ctx.test(is_lhs_beyond_max).then(|mut ctx| {
                 let lhs_scaled = scale_down_float(&mut ctx, lhs, 32);
-                let res_scaled = naga_expr!(ctx => lhs_scaled / rhs);
+                let res_scaled = naga_expr!(&mut ctx => lhs_scaled / rhs);
                 let res = scale_up_float(&mut ctx, res_scaled, 32);
                 ctx.result(res);
             });
 
             ctx.test(is_rhs_beyond_max).then(|mut ctx| {
                 let rhs_scaled = scale_down_float(&mut ctx, rhs, 32);
-                let res_scaled = naga_expr!(ctx => lhs / rhs_scaled);
+                let res_scaled = naga_expr!(&mut ctx => lhs / rhs_scaled);
                 let res = scale_up_float(&mut ctx, res_scaled, 32);
                 ctx.result(res);
             });
@@ -888,7 +890,7 @@ impl F32Gen for NativeF32 {
         let res = if requirements.fp_options.emulate_subnormals {
             subnormal_div(&mut ctx, *requirements.ty, lhs, rhs)
         } else {
-            naga_expr!(ctx => lhs / rhs)
+            naga_expr!(&mut ctx => lhs / rhs)
         };
         ctx.result(res);
 
@@ -907,7 +909,7 @@ impl F32Gen for NativeF32 {
         let mut ctx = BlockContext::from((module, function_handle));
 
         // No subnormal correction required because integers can't be subnormals
-        let res = naga_expr!(ctx => f32(value));
+        let res = naga_expr!(&mut ctx => f32(value));
         ctx.result(res);
 
         Ok(function_handle)
@@ -923,7 +925,7 @@ impl F32Gen for NativeF32 {
         let mut ctx = BlockContext::from((module, function_handle));
 
         // No subnormal correction required because integers can't be subnormals
-        let res = naga_expr!(ctx => f32(bitcast<u32>(value)));
+        let res = naga_expr!(&mut ctx => f32(bitcast<u32>(value)));
         ctx.result(res);
 
         Ok(function_handle)
@@ -950,8 +952,8 @@ fn gen_read(
     };
     let mut ctx = BlockContext::from((module, function_handle));
 
-    let read_word = naga_expr!(ctx => Global(buffer)[word_address]);
-    let read_value = naga_expr!(ctx => Load(read_word) as Float);
+    let read_word = naga_expr!(&mut ctx => Global(buffer)[word_address]);
+    let read_value = naga_expr!(&mut ctx => Load(read_word) as Float);
     ctx.result(read_value);
 
     Ok(function_handle)
@@ -971,8 +973,8 @@ fn gen_write(
     };
     let mut ctx = BlockContext::from((module, function_handle));
 
-    let write_word_loc = naga_expr!(ctx => Global(buffer)[word_address]);
-    let word = naga_expr!(ctx => value as Uint);
+    let write_word_loc = naga_expr!(&mut ctx => Global(buffer)[word_address]);
+    let word = naga_expr!(&mut ctx => value as Uint);
     ctx.store(write_word_loc, word);
 
     Ok(function_handle)
