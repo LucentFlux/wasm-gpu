@@ -11,10 +11,8 @@ To use the library, add the following to your `Cargo.toml`:
 ```toml
 wgpu = "0.19.0"
 wgpu-async = "0.19.0"
-wasm-gpu = "0.1.0"
+wasm-gpu = { git = "https://github.com/LucentFlux/wasm-gpu.git" }
 ```
-
-(note that this README hs been written before the package has been published, so the above may not be available yet.)
 
 `Wasm-GPU` runs using `wgpu` (and currently `wgpu-async`), so we need to first create a GPU context in which to run our modules:
 
