@@ -26,10 +26,7 @@ impl<T: wasm_types::WasmTyVec + wasmtime::WasmResults + Clone + PartialEq + Debu
 }
 
 async fn get_backend() -> (MemorySystem, wgpu_async::AsyncQueue) {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
-        dx12_shader_compiler: wgpu::Dx12Compiler::Fxc,
-    });
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -41,8 +38,8 @@ async fn get_backend() -> (MemorySystem, wgpu_async::AsyncQueue) {
     let (device, queue) = adapter
         .request_device(
             &wgpu::DeviceDescriptor {
-                features: wgpu::Features::empty(),
-                limits: adapter.limits(),
+                required_features: wgpu::Features::empty(),
+                required_limits: adapter.limits(),
                 label: None,
             },
             None,

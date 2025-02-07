@@ -1,6 +1,7 @@
 #![feature(macro_metavar_expr)]
 #![feature(slice_as_chunks)]
 #![feature(int_roundings)]
+#![feature(let_chains)]
 #![recursion_limit = "4096"]
 
 pub const WORKGROUP_SIZE: u32 = 256;

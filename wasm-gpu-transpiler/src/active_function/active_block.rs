@@ -649,35 +649,42 @@ impl<'b> ActiveBlock<'b> {
                     lower_conditional_depth: Some(relative_depth),
                     ..
                 } => {
+                    let mut r0_branching = naga::Block::default();
+                    on_r0_branching(&mut self, &mut r0_branching);
+
+                    let mut rp_branching = naga::Block::default();
+                    on_rp_branching(&mut self, &mut rp_branching);
+
                     // Get r0 break expression
                     let top_label = self.labels.peek();
+                    let r0_condition = top_label.is_set(&mut self.ctx);
+                    // Reset our break expression (after loading the value it contains)
+                    top_label.unset(&mut self.ctx);
+                    // Get rp break expression
+                    if let Some(parent_label) = self.labels.peek_nth(1) {
+                        let rp_break_expr = top_label.is_set(&mut self.ctx);
 
-                    top_label
-                        .if_is_set(&mut self.ctx)
-                        .then(|mut ctx| {
-                            // Reset our break expression if it were set.
-                            top_label.unset(&mut ctx);
-
-                            if let Some(parent_label) = self.labels.peek_nth(1) {
-                                parent_label
-                                    .if_is_set(&mut ctx)
-                                    .then(|mut ctx| {
-                                        let mut rp_branching = self.reborrow(ctx);
-                                        on_rp_branching(&mut rp_branching);
-                                    })
-                                    .otherwise(|mut ctx| {
-                                        let mut r0_branching = self.reborrow(ctx);
-                                        on_r0_branching(&mut r0_branching);
-                                    });
-                            } else {
-                                let mut r0_branching = self.reborrow(ctx);
-                                on_r0_branching(&mut r0_branching);
-                            }
-                        })
-                        .otherwise(|ctx| {
-                            // If we aren't branching, continue with the remainder of the body we're generating.
-                            self.ctx = ctx;
-                        });
+                        r0_branching = naga::Block::from_vec(vec![naga::Statement::If {
+                            condition: rp_condition,
+                            accept: rp_branching,
+                            reject: r0_branching,
+                        }]);
+                    }
+                    self.ctx.block.push(
+                        naga::Statement::If {
+                            condition: r0_condition,
+                            accept: r0_branching,
+                            reject: naga::Block::default(),
+                        },
+                        naga::Span::UNDEFINED,
+                    );
+                    // Then get the reject block back to continue populating
+                    self.ctx = match self.ctx.block.last_mut().expect("just pushed something") {
+                        naga::Statement::If { reject, .. } => reject,
+                        _ => unreachable!(
+                            "just pushed an if statement, so last item must be an if statement"
+                        ),
+                    }
                 }
             }
 
@@ -716,10 +723,10 @@ impl<'b> ActiveBlock<'b> {
                     let value = naga_expr!(active => Load(src.expression));
                     active.ctx.store(dst.expression, value);
                 }
-                active.ctx.resume_loop();
+                active.ctx.reborrow().resume_loop();
             },
             |active| {
-                active.ctx.stop_loop();
+                active.ctx.reborrow().stop_loop();
             },
         )
     }
@@ -730,23 +737,19 @@ impl<'b> ActiveBlock<'b> {
 
         // Deconstruct
         let Self {
-            ctx,
-            body_data,
-            labels,
-            arguments,
             results,
-            stack,
             exit_state,
+            ..
         } = self;
 
         return (results, exit_state);
     }
 
     /// Fills instructions until some control flow instruction
-    fn eat_basic_block<'a: 'c, 'c, 's>(
-        &'s mut self,
+    fn eat_basic_block<'a: 'c, 'c>(
+        &mut self,
         instructions: &mut impl Iterator<Item = &'c OperatorByProposal<'a>>,
-    ) -> build::Result<&'c ControlFlowOperator> {
+    ) -> build::Result<&'c ControlFlowOperator<'a>> {
         let mut last_op = None;
         while let Some(operation) = instructions.next() {
             match operation {
@@ -814,16 +817,12 @@ impl<'b> ActiveBlock<'b> {
 
     /// Calls trap, recording the given flag
     fn append_trap(&mut self, trap_id: Trap) -> build::Result<()> {
-        let mut ctx = self.into();
+        let trap_global = self.body_data.std_objects.preamble.trap_state;
         self.body_data
             .std_objects
             .preamble
             .trap_values
-            .emit_set_trap(
-                &mut ctx,
-                trap_id,
-                self.body_data.std_objects.preamble.trap_state,
-            );
+            .emit_set_trap(&mut self.ctx, trap_id, trap_global);
 
         Ok(())
     }
@@ -967,6 +966,6 @@ impl<'b> ActiveBlock<'b> {
 
 impl<'a, 'b> From<&'a mut ActiveBlock<'b>> for BlockContext<'a> {
     fn from(value: &'a mut ActiveBlock<'b>) -> Self {
-        value.ctx
+        value.ctx.reborrow()
     }
 }

@@ -37,10 +37,14 @@ impl BlockLabel {
         ctx.store(label_ptr, self.false_expr);
     }
 
-    pub(super) fn if_is_set<'a>(&self, ctx: &'a mut BlockContext<'_>) -> Test<'a> {
+    pub(super) fn is_set(&self, ctx: &mut BlockContext<'_>) -> naga::Handle<naga::Expression> {
         let label_ptr = self.inner.expression;
-        let label_value = naga_expr!(ctx => Load(label_ptr));
-        ctx.test(label_value)
+        naga_expr!(ctx => Load(label_ptr))
+    }
+
+    pub(super) fn if_is_set<'a>(&self, ctx: &'a mut BlockContext<'_>) -> Test<'a> {
+        let cond = self.is_set(ctx);
+        ctx.test(cond)
     }
 }
 
